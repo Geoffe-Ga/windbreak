@@ -30,8 +30,17 @@ _MIN_PPM = 0
 #: Highest legal parts-per-million probability (1.0 probability).
 _MAX_PPM = 1_000_000
 
+#: The triage-only stage tag (SPEC S8.4): a record backed solely by the cheap
+#: Stage-0 prior, never by the full pipeline's research. Named here because it
+#: participates in more than one ``__post_init__`` invariant (the closed-set
+#: membership check and the live-eligibility guard below).
+_TRIAGE_ONLY_STAGE = "triage_only"
+
+#: The full-pipeline stage tag (SPEC S8.4).
+_FULL_STAGE = "full"
+
 #: The closed set of triage stages a forecast record may carry (SPEC S8.4).
-_TRIAGE_STAGES: frozenset[str] = frozenset({"triage_only", "full"})
+_TRIAGE_STAGES: frozenset[str] = frozenset({_TRIAGE_ONLY_STAGE, _FULL_STAGE})
 
 #: The ppm-domain fields of :class:`ForecastRecord` sharing one range rule.
 _PPM_FIELDS: tuple[str, ...] = ("probability_ppm", "ci_low_ppm", "ci_high_ppm")
@@ -225,13 +234,17 @@ class ForecastRecord:
     eligible_for_live: bool
 
     def __post_init__(self) -> None:
-        """Validate the ppm ranges, identifiers, and triage closed set.
+        """Validate the ppm ranges, identifiers, and triage invariants.
 
         Raises:
             TypeError: If any ppm field is a ``bool`` or non-``int``.
             ValueError: If any ppm field is out of range, ``forecast_id`` or
-                ``market_ticker`` is empty, or ``triage_stage`` is
-                unrecognized. Each message names the offending field.
+                ``market_ticker`` is empty, ``triage_stage`` is unrecognized,
+                or ``triage_stage`` is ``"triage_only"`` while
+                ``eligible_for_live`` is ``True`` (a triage-only record was
+                never backed by the full pipeline's research, so it can never
+                be eligible to back a live order). Each message names the
+                offending field(s).
         """
         for field_name in _PPM_FIELDS:
             _require_ppm(getattr(self, field_name), field_name)
@@ -241,6 +254,11 @@ class ForecastRecord:
             allowed = ", ".join(sorted(_TRIAGE_STAGES))
             raise ValueError(
                 f"triage_stage must be one of {{{allowed}}}, got {self.triage_stage!r}"
+            )
+        if self.triage_stage == _TRIAGE_ONLY_STAGE and self.eligible_for_live:
+            raise ValueError(
+                f"triage_stage={self.triage_stage!r} records are permanently "
+                "live-ineligible; eligible_for_live must be False"
             )
 
 
