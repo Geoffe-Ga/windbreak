@@ -1,0 +1,12 @@
+[
+  {
+    "ticker": "KXFED-24DEC",
+    "quantity": 500,
+    "average_price": 4550
+  },
+  {
+    "ticker": "KXWEA-24DEC",
+    "quantity": 100,
+    "average_price": 1050
+  }
+]

@@ -1,10 +1,18 @@
 """Shared `OrderIntent`/`EvaluationContext` builders for `tests/riskkernel/*`
-(issue #30, RED).
+(issues #30/#31/#32, RED).
 
 `hedgekit/riskkernel/context.py` does not exist yet, so importing
 `EvaluationContext` and its four constituent dataclasses below fails
 collection with `ModuleNotFoundError: No module named
 'hedgekit.riskkernel.context'` -- the expected Gate 1 RED state for issue #30.
+
+Issue #32 (read-only exchange verification) adds a fifth required field,
+`EvaluationContext.verification: VerificationSnapshot | None` (no default,
+mirroring the `used_intent_ids` fail-loud precedent from issue #31), plus a
+new `RiskLimits.verification_ttl_seconds: int`. `hedgekit/riskkernel/verification.py`
+does not exist yet either, so the `VerificationOutcome`/`VerificationSnapshot`
+import below independently fails collection with `ModuleNotFoundError` --
+also the expected Gate 1 RED state for issue #32.
 
 Builder-placement choice: unlike the rest of this test suite (where each file
 duplicates its own small `make_intent`, e.g.
@@ -58,6 +66,7 @@ from hedgekit.riskkernel.context import (
     RiskLimits,
 )
 from hedgekit.riskkernel.modes import Mode
+from hedgekit.riskkernel.verification import VerificationOutcome, VerificationSnapshot
 
 #: The exchange ticker every default `OrderIntent`/`RiskLimits.instrument_whitelist`
 #: agree on, so the default context passes `instrument_whitelist` out of the box.
@@ -131,6 +140,11 @@ DEFAULT_NOW_EPOCH_S = 1_700_000_000
 #: check (floor, concentration, drawdown, loss) passes by default.
 _DEFAULT_EQUITY_MICROS = 1_000_000_000
 
+#: `RiskLimits.verification_ttl_seconds` default (issue #32): one hour, matching
+#: the other freshness ttls below, so `balance_reconciliation` /
+#: `position_reconciliation` / `open_order_reconciliation` pass by default.
+_DEFAULT_VERIFICATION_TTL_SECONDS = 3_600
+
 #: The permissive default `RiskLimits`: 100% caps, a wide price band, and
 #: generous ttls, so only the field a given test overrides can flip a real
 #: check's verdict.
@@ -153,6 +167,7 @@ _DEFAULT_LIMITS = RiskLimits(
     forecast_ttl_seconds=3_600,
     clock_skew_max_seconds=3_600,
     rounding_buffer=MoneyMicros(0),
+    verification_ttl_seconds=_DEFAULT_VERIFICATION_TTL_SECONDS,
 )
 
 #: The permissive default `AccountState`: flat $1,000 equity, zero
@@ -193,6 +208,43 @@ _DEFAULT_FEES = FeeBounds(
     max_settlement_fee=MoneyMicros(0),
 )
 
+#: The permissive default `VerificationSnapshot` (issue #32): a fresh CLEAN
+#: verification exactly at `DEFAULT_NOW_EPOCH_S` (zero age), every per-dimension
+#: ok flag `True`, zero cash drift, and fully-known balance semantics -- so
+#: `balance_reconciliation` / `position_reconciliation` / `open_order_reconciliation`
+#: all pass by default (including the LIVE-mode semantics gate, since
+#: `semantics_fully_known` is `True`), matching `make_context()`'s default
+#: `mode=Mode.LIVE`.
+_DEFAULT_VERIFICATION_SNAPSHOT = VerificationSnapshot(
+    outcome=VerificationOutcome.CLEAN,
+    balance_ok=True,
+    position_ok=True,
+    open_order_ok=True,
+    verified_at_epoch_s=DEFAULT_NOW_EPOCH_S,
+    exchange_verified_available_cash=MoneyMicros(_DEFAULT_EQUITY_MICROS),
+    cash_drift=MoneyMicros(0),
+    semantics_fully_known=True,
+)
+
+
+def make_verification_snapshot(**overrides: object) -> VerificationSnapshot:
+    """Build a fully-permissive `VerificationSnapshot`, any field overridable.
+
+    Mirrors `make_intent`'s single-dataclass-replace shape (issue #32): every
+    field keeps `_DEFAULT_VERIFICATION_SNAPSHOT`'s permissive default (see
+    above) unless explicitly overridden here, so a per-check test can flip
+    exactly one dimension (e.g. `balance_ok=False`) and know only that input
+    caused the verdict it observes.
+
+    Args:
+        **overrides: Field name to value, for any `VerificationSnapshot` field.
+
+    Returns:
+        A fully populated `VerificationSnapshot`.
+    """
+    return dataclasses.replace(_DEFAULT_VERIFICATION_SNAPSHOT, **overrides)
+
+
 #: Each nested dataclass's field names, reflected off the real classes (never
 #: retyped by hand) so override-routing can never drift from `context.py`.
 _LIMITS_FIELDS = frozenset(f.name for f in dataclasses.fields(RiskLimits))
@@ -200,13 +252,24 @@ _ACCOUNT_FIELDS = frozenset(f.name for f in dataclasses.fields(AccountState))
 _MARKET_FIELDS = frozenset(f.name for f in dataclasses.fields(MarketView))
 _FEES_FIELDS = frozenset(f.name for f in dataclasses.fields(FeeBounds))
 #: `EvaluationContext`'s own direct fields (not nested in one of the four
-#: value objects): `mode`/`now_epoch_s` from issue #30, plus the two
+#: value objects): `mode`/`now_epoch_s` from issue #30, the two
 #: ledger-uniqueness sets issue #31 adds (`used_intent_ids`,
 #: `used_idempotency_keys`), each defaulting to an empty `frozenset()` so
 #: every pre-issue-#31 test keeps passing `approval_token_uniqueness` /
-#: `idempotency_key_uniqueness` unless it deliberately overrides one.
+#: `idempotency_key_uniqueness` unless it deliberately overrides one, and the
+#: issue #32 `verification` snapshot (defaulting to
+#: `_DEFAULT_VERIFICATION_SNAPSHOT`, a permissive CLEAN snapshot, so every
+#: pre-issue-#32 test keeps passing `balance_reconciliation` /
+#: `position_reconciliation` / `open_order_reconciliation` unless it
+#: deliberately overrides `verification`).
 _CONTEXT_FIELDS = frozenset(
-    {"mode", "now_epoch_s", "used_intent_ids", "used_idempotency_keys"}
+    {
+        "mode",
+        "now_epoch_s",
+        "used_intent_ids",
+        "used_idempotency_keys",
+        "verification",
+    }
 )
 
 
@@ -225,7 +288,7 @@ def make_context(**overrides: object) -> EvaluationContext:
         **overrides: Field name to value, for any field of `RiskLimits`,
             `AccountState`, `MarketView`, `FeeBounds`, or `EvaluationContext`
             itself (`mode`, `now_epoch_s`, `used_intent_ids`,
-            `used_idempotency_keys`).
+            `used_idempotency_keys`, `verification`).
 
     Returns:
         A fully populated `EvaluationContext`.
@@ -265,10 +328,12 @@ def make_context(**overrides: object) -> EvaluationContext:
     now_epoch_s = overrides.get("now_epoch_s", DEFAULT_NOW_EPOCH_S)
     used_intent_ids = overrides.get("used_intent_ids", frozenset())
     used_idempotency_keys = overrides.get("used_idempotency_keys", frozenset())
+    verification = overrides.get("verification", _DEFAULT_VERIFICATION_SNAPSHOT)
     assert isinstance(mode, Mode)
     assert isinstance(now_epoch_s, int)
     assert isinstance(used_intent_ids, frozenset)
     assert isinstance(used_idempotency_keys, frozenset)
+    assert verification is None or isinstance(verification, VerificationSnapshot)
     return EvaluationContext(
         mode=mode,
         limits=limits,
@@ -278,4 +343,5 @@ def make_context(**overrides: object) -> EvaluationContext:
         now_epoch_s=now_epoch_s,
         used_intent_ids=used_intent_ids,
         used_idempotency_keys=used_idempotency_keys,
+        verification=verification,
     )

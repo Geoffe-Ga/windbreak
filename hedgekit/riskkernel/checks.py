@@ -1,14 +1,14 @@
 """Pre-trade veto checks for the Risk Kernel (SPEC S10.3).
 
-This module ships the 24 SPEC S10.3 pre-trade checks. Issues #30 and #31 give
-17 of them real logic -- instrument whitelist, mode/ceiling, the floor
-invariant, fee-bound presence, concentration, daily loss, trailing drawdown,
-velocity, quote/forecast freshness, price band, participation cap, approval-
-token and idempotency-key uniqueness (#31), clock skew, and reduce-only
-provability -- each reading a full :class:`EvaluationContext`. The remaining 7
-are deliberate stubs that still veto, each naming the GitHub issue that will
-replace it (:data:`_STUB_REASONS`), so an operator sees *why* a check is not
-yet live rather than a bare "not implemented".
+This module ships the 24 SPEC S10.3 pre-trade checks. Issues #30, #31, and #32
+give 20 of them real logic -- instrument whitelist, mode/ceiling, the floor
+invariant, balance/position/open-order reconciliation (#32), fee-bound presence,
+concentration, daily loss, trailing drawdown, velocity, quote/forecast
+freshness, price band, participation cap, approval-token and idempotency-key
+uniqueness (#31), clock skew, and reduce-only provability -- each reading a full
+:class:`EvaluationContext`. The remaining 4 are deliberate stubs that still veto,
+each naming the GitHub issue that will replace it (:data:`_STUB_REASONS`), so an
+operator sees *why* a check is not yet live rather than a bare "not implemented".
 
 Every check is a small, pure callable taking ``(intent, context)`` and
 returning a :class:`CheckResult`; :func:`evaluate_intent` runs the whole
@@ -51,6 +51,15 @@ _CLOSING_ACTIONS: frozenset[str] = frozenset({"sell_to_close"})
 #: The reason an intent whose action is neither an open nor a provable close is
 #: vetoed by every action-branching check -- the kernel cannot prove its risk.
 _UNPROVABLE_REASON = "unprovable"
+
+#: The trading modes in which unknown balance semantics block live trading: a
+#: verified balance cannot be trusted for a real order while any
+#: ``BalanceSemantics`` field is ``UNKNOWN`` (issue #32).
+_LIVE_TRADING_MODES: frozenset[Mode] = frozenset({Mode.LIVE_MICRO, Mode.LIVE})
+
+#: The distinct veto reason ``balance_reconciliation`` raises when live trading
+#: is attempted while balance semantics are not fully known.
+_SEMANTICS_UNKNOWN_REASON = "balance semantics not fully known in live mode"
 
 
 class _UnprovableCostError(Exception):
@@ -306,7 +315,7 @@ def _is_stale(timestamp: int | None, now: int, ttl_seconds: int) -> bool:
     return now - timestamp > ttl_seconds
 
 
-# --- The 17 real checks (SPEC S10.3) ---------------------------------------------
+# --- The 20 real checks (SPEC S10.3) ---------------------------------------------
 
 
 class _InstrumentWhitelist:
@@ -787,7 +796,93 @@ class _ReduceOnlyProvable:
         return _veto("close is not provably reduce-only")
 
 
-# --- The 7 deliberate stubs (each blocked on a later issue) -----------------------
+@dataclass(frozen=True, slots=True)
+class _ReconciliationCheck:
+    """A per-dimension reconciliation check over the verification snapshot (#32).
+
+    All three reconciliation dimensions share one shape: fail closed on a
+    missing or stale snapshot (reusing :func:`_is_stale`, exactly as the
+    freshness and clock-skew checks do), then veto when this check's own
+    per-dimension ``ok`` flag is False. The balance dimension alone additionally
+    refuses live trading (LIVE_MICRO / LIVE) while balance semantics are not
+    fully known; the position and open-order dimensions ignore semantics.
+
+    Attributes:
+        name: The SPEC S10.3 check name.
+        ok_attr: The :class:`VerificationSnapshot` boolean field this dimension
+            reads (``"balance_ok"`` / ``"position_ok"`` / ``"open_order_ok"``).
+        stale_reason: The veto reason for a missing or stale snapshot.
+        mismatch_reason: The veto reason when the dimension flag is False.
+        gate_semantics: Whether to additionally gate live trading on fully-known
+            balance semantics (only the balance dimension does).
+    """
+
+    name: str
+    ok_attr: str
+    stale_reason: str
+    mismatch_reason: str
+    gate_semantics: bool
+
+    def __call__(self, intent: OrderIntent, context: EvaluationContext) -> CheckResult:
+        """Approve iff a fresh snapshot marks this dimension reconciled.
+
+        Args:
+            intent: The order intent (unused).
+            context: The evaluation context supplying the verification snapshot,
+                the ttl, and the operating mode.
+
+        Returns:
+            A stale-reason veto on a missing or stale snapshot; the dimension's
+            mismatch-reason veto when its ``ok`` flag is False; for the balance
+            dimension, a distinct semantics veto in live modes when semantics
+            are not fully known; else an approval.
+        """
+        del intent
+        snapshot = context.verification
+        if snapshot is None or _is_stale(
+            snapshot.verified_at_epoch_s,
+            context.now_epoch_s,
+            context.limits.verification_ttl_seconds,
+        ):
+            return _veto(self.stale_reason)
+        if not getattr(snapshot, self.ok_attr):
+            return _veto(self.mismatch_reason)
+        if (
+            self.gate_semantics
+            and not snapshot.semantics_fully_known
+            and context.mode in _LIVE_TRADING_MODES
+        ):
+            return _veto(_SEMANTICS_UNKNOWN_REASON)
+        return _approve()
+
+
+#: The three issue-#32 reconciliation checks, one per verified dimension.
+_RECONCILIATION_CHECKS: tuple[_ReconciliationCheck, ...] = (
+    _ReconciliationCheck(
+        name="balance_reconciliation",
+        ok_attr="balance_ok",
+        stale_reason="balance verification stale or missing",
+        mismatch_reason="balance reconciliation mismatch",
+        gate_semantics=True,
+    ),
+    _ReconciliationCheck(
+        name="position_reconciliation",
+        ok_attr="position_ok",
+        stale_reason="position verification stale or missing",
+        mismatch_reason="position reconciliation mismatch",
+        gate_semantics=False,
+    ),
+    _ReconciliationCheck(
+        name="open_order_reconciliation",
+        ok_attr="open_order_ok",
+        stale_reason="open-order verification stale or missing",
+        mismatch_reason="open-order reconciliation mismatch",
+        gate_semantics=False,
+    ),
+)
+
+
+# --- The 4 deliberate stubs (each blocked on a later issue) -----------------------
 
 
 @dataclass(frozen=True, slots=True)
@@ -820,18 +915,17 @@ class _ExplicitVetoStub:
 #: issue that will replace each one. ``jurisdiction_product_eligibility`` has no
 #: tracking issue yet and instead names the metadata it awaits. (Issue #31
 #: promoted ``approval_token_uniqueness`` / ``idempotency_key_uniqueness`` out
-#: of this table into real checks.) Held as a tuple of pairs (not a dict
-#: literal) so a future ``token``/``key``-named entry could never sit as a
-#: string-valued literal dict key -- a shape bandit's B105 heuristic misreads as
-#: a hardcoded credential; the runtime lookup dict is built below.
+#: of this table into real checks; issue #32 promoted ``balance_reconciliation``
+#: / ``position_reconciliation`` / ``open_order_reconciliation`` out too.) Held
+#: as a tuple of pairs (not a dict literal) so a future ``token``/``key``-named
+#: entry could never sit as a string-valued literal dict key -- a shape bandit's
+#: B105 heuristic misreads as a hardcoded credential; the runtime lookup dict is
+#: built below.
 _STUB_REASON_ITEMS: tuple[tuple[str, str], ...] = (
     ("jurisdiction_product_eligibility", "awaiting NormalizedMarket metadata"),
-    ("balance_reconciliation", "blocked on #32 (balance reconciliation)"),
-    ("position_reconciliation", "blocked on #32 (position reconciliation)"),
-    ("open_order_reconciliation", "blocked on #32 (open-order reconciliation)"),
     ("human_ack_satisfied", "blocked on #34 (human acknowledgement)"),
-    ("exchange_status_ok", "blocked on #32 (exchange status feed)"),
-    ("pipeline_heartbeat_ok", "blocked on #32 (pipeline heartbeat)"),
+    ("exchange_status_ok", "blocked on #110 (exchange status feed)"),
+    ("pipeline_heartbeat_ok", "blocked on #110 (pipeline heartbeat)"),
 )
 
 #: Each stub check's name mapped to its blocking-issue veto reason.
@@ -869,11 +963,12 @@ _SPEC_10_3_CHECK_NAMES: tuple[str, ...] = (
     "reduce_only_provable",
 )
 
-#: The 17 real checks, keyed by SPEC S10.3 name for order-independent assembly.
+#: The 20 real checks, keyed by SPEC S10.3 name for order-independent assembly.
 _REAL_CHECKS: tuple[Check, ...] = (
     _InstrumentWhitelist(),
     _ModePermissionCeiling(),
     _FloorInvariant(),
+    *_RECONCILIATION_CHECKS,
     _FeeUpperBoundPresent(),
     _SettlementFeeUpperBound(),
     _ConcentrationLimits(),
@@ -890,7 +985,7 @@ _REAL_CHECKS: tuple[Check, ...] = (
     _ReduceOnlyProvable(),
 )
 
-#: The 7 stub checks, keyed by SPEC S10.3 name, each vetoing with its reason.
+#: The 4 stub checks, keyed by SPEC S10.3 name, each vetoing with its reason.
 _STUB_CHECKS: tuple[Check, ...] = tuple(
     _ExplicitVetoStub(name, reason) for name, reason in _STUB_REASONS.items()
 )

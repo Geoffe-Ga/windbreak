@@ -1,0 +1,797 @@
+"""Failing-first tests for hedgekit.riskkernel.verification (issue #32, RED).
+
+Issue #32 gives the Risk Kernel read-only exchange verification (SPEC S5.2 /
+S10.3): each cycle, `ReadOnlyVerifier.run_cycle` cross-checks a read-only
+connector's exchange-verified balances / positions / open orders against
+ledger-derived `LedgerExpectations`, classifies the result as
+`VerificationOutcome.CLEAN` / `DRIFT_WITHIN_TOLERANCE` / `BREACH`, fires
+`AlertType.JURISDICTION_UNKNOWN` for any held market whose jurisdiction status
+is unknown, fires `AlertType.RECONCILIATION_MISMATCH` on a breach, and records
+exactly one bare `Event` per cycle. `RiskKernel.run_verification_cycle`
+transitions the kernel to `Mode.HALT` on a breach (unless already HALT or
+KILLED, both illegal targets on the mode ladder), and `RiskKernel.evaluate_intent`
+-- when a verifier is configured -- stamps the latest snapshot onto the
+evaluated context and rewrites `account.exchange_verified_available_cash` /
+`reconciliation_uncertainty_buffer` from it, so verification feeds the floor.
+
+`hedgekit/riskkernel/verification.py` does not exist yet, so every import
+below fails collection with `ModuleNotFoundError: No module named
+'hedgekit.riskkernel.verification'` -- the expected Gate 1 RED state for
+issue #32.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from hedgekit.alerts.dispatch import AlertDispatcher, LoggingLedgerWriter
+from hedgekit.alerts.registry import AlertSeverity, AlertType, get_registration
+from hedgekit.connector.fake import FakeExchange
+from hedgekit.connector.models import (
+    BalanceSemantics,
+    BalanceSnapshot,
+    OpenOrder,
+    Position,
+)
+from hedgekit.numeric.types import ContractCentis, MoneyMicros, PricePips
+from hedgekit.riskkernel.modes import Mode, ModeStateMachine
+from hedgekit.riskkernel.process import (
+    InMemoryKernelLedgerWriter,
+    RiskKernel,
+    _default_clock,
+)
+from hedgekit.riskkernel.verification import (
+    LedgerExpectations,
+    ReadOnlyVerifier,
+    VerificationOutcome,
+    VerificationTolerances,
+)
+from tests.riskkernel.conftest import DEFAULT_NOW_EPOCH_S, make_context, make_intent
+
+#: `tests/fixtures/verification/<scenario>` -- each a full `FakeExchange`
+#: fixture directory copied from `tests/fixtures/exchange/` with exactly the
+#: fields the scenario needs tweaked (see each fixture dir's own JSON).
+_FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "verification"
+
+#: The baseline ledger-expected values shared by every scenario below unless
+#: a test deliberately overrides one: the "clean"/"drift"/"breach" fixture
+#: dirs all agree the ledger expects $95.00 available cash and a 500-centi
+#: KXFED-24DEC position, with zero open orders (`FakeExchange.get_open_orders`
+#: is hard-coded to return `()`, so the open-order dimension is driven purely
+#: from the expectations side -- see the open-order tests below).
+_BASELINE_EXPECTED_CASH = MoneyMicros(95_000_000)
+_BASELINE_EXPECTED_POSITIONS = {"KXFED-24DEC": ContractCentis(500)}
+
+#: Zero-drift tolerance singletons held at module scope (the scaled-int wrapper
+#: types are frozen, so one shared instance is safe) so the helper builders can
+#: default to them without a function call in an argument default (ruff B008).
+_ZERO_TOLERANCE_MICROS = MoneyMicros(0)
+_ZERO_TOLERANCE_CENTIS = ContractCentis(0)
+
+
+@dataclass
+class _StaticExpectationSource:
+    """A fake `ExpectationSource` that always returns one fixed snapshot."""
+
+    expectations: LedgerExpectations
+
+    def get_expectations(self) -> LedgerExpectations:
+        """Return the fixed `LedgerExpectations`, ignoring all state."""
+        return self.expectations
+
+
+@dataclass
+class _RecordingSink:
+    """A fake `AlertSink` that records every call without raising."""
+
+    name: str = "recording"
+    calls: list[tuple[AlertType, AlertSeverity, str]] = field(default_factory=list)
+
+    def send(
+        self, alert_type: AlertType, severity: AlertSeverity, message: str
+    ) -> None:
+        """Record the call."""
+        self.calls.append((alert_type, severity, message))
+
+
+def _fixture_path(name: str) -> Path:
+    """Return the absolute path to a named verification fixture directory.
+
+    Args:
+        name: The scenario directory name under `tests/fixtures/verification/`.
+
+    Returns:
+        The absolute `Path` to that directory.
+    """
+    return _FIXTURES_DIR / name
+
+
+def _make_verifier(
+    fixture_name: str,
+    *,
+    expected_available_cash: MoneyMicros = _BASELINE_EXPECTED_CASH,
+    expected_positions: dict[str, ContractCentis] | None = None,
+    expected_open_order_ids: frozenset[str] = frozenset(),
+    balance_tolerance: MoneyMicros = _ZERO_TOLERANCE_MICROS,
+    position_tolerance: ContractCentis = _ZERO_TOLERANCE_CENTIS,
+) -> tuple[ReadOnlyVerifier, InMemoryKernelLedgerWriter, _RecordingSink]:
+    """Build a `ReadOnlyVerifier` wired to a named fixture, plus its spies.
+
+    Args:
+        fixture_name: The scenario directory under `tests/fixtures/verification/`.
+        expected_available_cash: The ledger-expected available cash.
+        expected_positions: The ledger-expected per-ticker positions; defaults
+            to `_BASELINE_EXPECTED_POSITIONS`.
+        expected_open_order_ids: The ledger-expected open-order id set.
+        balance_tolerance: The balance-dimension tolerance.
+        position_tolerance: The position-dimension tolerance.
+
+    Returns:
+        A `(verifier, kernel_ledger_writer, alert_sink)` triple, so a test can
+        both run a cycle and inspect what it recorded/dispatched.
+    """
+    positions = (
+        _BASELINE_EXPECTED_POSITIONS
+        if expected_positions is None
+        else expected_positions
+    )
+    ledger_writer = InMemoryKernelLedgerWriter()
+    sink = _RecordingSink()
+    dispatcher = AlertDispatcher([sink], ledger_writer=LoggingLedgerWriter())
+    verifier = ReadOnlyVerifier(
+        connector=FakeExchange.from_fixture_dir(_fixture_path(fixture_name)),
+        expectation_source=_StaticExpectationSource(
+            LedgerExpectations(
+                expected_available_cash=expected_available_cash,
+                expected_positions=positions,
+                expected_open_order_ids=expected_open_order_ids,
+            )
+        ),
+        tolerances=VerificationTolerances(
+            balance_tolerance=balance_tolerance,
+            position_tolerance=position_tolerance,
+        ),
+        dispatcher=dispatcher,
+        ledger_writer=ledger_writer,
+    )
+    return verifier, ledger_writer, sink
+
+
+def _kernel_with_verifier(
+    fixture_name: str,
+    *,
+    mode: Mode = Mode.LIVE,
+    expected_available_cash: MoneyMicros = _BASELINE_EXPECTED_CASH,
+    expected_positions: dict[str, ContractCentis] | None = None,
+    balance_tolerance: MoneyMicros = _ZERO_TOLERANCE_MICROS,
+    position_tolerance: ContractCentis = _ZERO_TOLERANCE_CENTIS,
+) -> tuple[RiskKernel, InMemoryKernelLedgerWriter, _RecordingSink]:
+    """Build a `RiskKernel` wired to a verifier and a fixed injected clock.
+
+    Args:
+        fixture_name: The scenario directory under `tests/fixtures/verification/`.
+        mode: The kernel's starting operating mode.
+        expected_available_cash: The ledger-expected available cash.
+        expected_positions: The ledger-expected per-ticker positions.
+        balance_tolerance: The balance-dimension tolerance.
+        position_tolerance: The position-dimension tolerance.
+
+    Returns:
+        A `(kernel, kernel_ledger_writer, alert_sink)` triple. The kernel's
+        `clock` is a fixed lambda returning `DEFAULT_NOW_EPOCH_S`, never
+        `time.time`, so every cycle is deterministic.
+    """
+    verifier, ledger_writer, sink = _make_verifier(
+        fixture_name,
+        expected_available_cash=expected_available_cash,
+        expected_positions=expected_positions,
+        balance_tolerance=balance_tolerance,
+        position_tolerance=position_tolerance,
+    )
+    mode_machine = ModeStateMachine(mode_ceiling=Mode.LIVE, mode=mode)
+    kernel = RiskKernel(
+        ledger_writer,
+        mode_machine=mode_machine,
+        verifier=verifier,
+        clock=lambda: DEFAULT_NOW_EPOCH_S,
+    )
+    return kernel, ledger_writer, sink
+
+
+def _events_of_type(
+    writer: InMemoryKernelLedgerWriter, event_type: str
+) -> list[object]:
+    """Return every recorded event of one exact `event_type`, in order.
+
+    Args:
+        writer: The in-memory ledger writer to read from.
+        event_type: The exact `event_type` string to filter on.
+
+    Returns:
+        The matching events, in recorded order.
+    """
+    return [event for event in writer.events if event.event_type == event_type]
+
+
+# --- Clean pass ------------------------------------------------------------------
+
+
+def test_clean_pass_yields_clean_outcome_with_zero_drift() -> None:
+    """A `FakeExchange` snapshot that matches `LedgerExpectations` exactly
+    yields `VerificationOutcome.CLEAN`, every per-dimension `ok` flag `True`,
+    zero cash drift, and the snapshot carries the observed available cash.
+    """
+    verifier, _, _ = _make_verifier("clean")
+
+    snapshot = verifier.run_cycle(now_epoch_s=DEFAULT_NOW_EPOCH_S)
+
+    assert snapshot.outcome is VerificationOutcome.CLEAN
+    assert snapshot.balance_ok is True
+    assert snapshot.position_ok is True
+    assert snapshot.open_order_ok is True
+    assert snapshot.cash_drift == MoneyMicros(0)
+    assert snapshot.exchange_verified_available_cash == MoneyMicros(95_000_000)
+    assert snapshot.semantics_fully_known is True
+    assert snapshot.verified_at_epoch_s == DEFAULT_NOW_EPOCH_S
+
+
+def test_clean_pass_records_exactly_one_verification_passed_event() -> None:
+    """A clean cycle records exactly one `VerificationPassed` event, correctly
+    shaped, and dispatches no alert."""
+    verifier, writer, sink = _make_verifier("clean")
+
+    verifier.run_cycle(now_epoch_s=DEFAULT_NOW_EPOCH_S)
+
+    passed_events = _events_of_type(writer, "VerificationPassed")
+    assert len(passed_events) == 1
+    event = passed_events[0]
+    assert event.component == "riskkernel"
+    assert event.payload_schema_version == 1
+    assert sink.calls == []
+
+
+def test_clean_pass_through_the_kernel_never_halts() -> None:
+    """Running a clean verification cycle through `RiskKernel` never changes
+    the operating mode."""
+    kernel, _, _ = _kernel_with_verifier("clean", mode=Mode.LIVE)
+
+    kernel.run_verification_cycle()
+
+    assert kernel.mode is Mode.LIVE
+
+
+# --- Tolerable drift ---------------------------------------------------------------
+
+
+def test_drift_within_tolerance_yields_drift_outcome_and_nonzero_drift() -> None:
+    """A small balance mismatch that is still within `balance_tolerance`
+    yields `DRIFT_WITHIN_TOLERANCE`, `balance_ok=True`, and a nonzero
+    `cash_drift` reflecting the exact mismatch."""
+    verifier, _, sink = _make_verifier(
+        "drift_within_tolerance", balance_tolerance=MoneyMicros(1_000)
+    )
+
+    snapshot = verifier.run_cycle(now_epoch_s=DEFAULT_NOW_EPOCH_S)
+
+    assert snapshot.outcome is VerificationOutcome.DRIFT_WITHIN_TOLERANCE
+    assert snapshot.balance_ok is True
+    assert snapshot.cash_drift == MoneyMicros(500)
+    assert sink.calls == []
+
+
+def test_drift_within_tolerance_records_exactly_one_verification_drift_event() -> None:
+    """A tolerable-drift cycle records exactly one `VerificationDrift` event
+    and dispatches no alert (drift within tolerance is not a mismatch)."""
+    verifier, writer, sink = _make_verifier(
+        "drift_within_tolerance", balance_tolerance=MoneyMicros(1_000)
+    )
+
+    verifier.run_cycle(now_epoch_s=DEFAULT_NOW_EPOCH_S)
+
+    drift_events = _events_of_type(writer, "VerificationDrift")
+    assert len(drift_events) == 1
+    event = drift_events[0]
+    assert event.component == "riskkernel"
+    assert event.payload_schema_version == 1
+    assert sink.calls == []
+
+
+def test_drift_within_tolerance_never_halts_through_the_kernel() -> None:
+    """A tolerable-drift cycle through `RiskKernel` never changes the
+    operating mode."""
+    kernel, _, _ = _kernel_with_verifier(
+        "drift_within_tolerance", mode=Mode.LIVE, balance_tolerance=MoneyMicros(1_000)
+    )
+
+    kernel.run_verification_cycle()
+
+    assert kernel.mode is Mode.LIVE
+
+
+def test_drift_reduces_usable_equity_so_the_floor_check_flips() -> None:
+    """Metamorphic: given the *same* floor and the *same* `OrderIntent`, a
+    kernel wired to a clean verifier passes `floor_invariant`, while an
+    otherwise-identical kernel wired to a drifted verifier vetoes with
+    `"worst-case equity below floor"` -- proving the verification snapshot's
+    drift really does feed `account.exchange_verified_available_cash` /
+    `reconciliation_uncertainty_buffer`, and thus the floor computation.
+
+    Clean: cash 95_000_000, drift 0 -> equity 95_000_000; equity - cost
+    (5_000_000) == floor (90_000_000): passes at exact equality.
+    Drift: cash 94_999_500, drift 500 -> equity 94_999_000; equity - cost ==
+    89_999_000 < floor (90_000_000): vetoes.
+    """
+    floor = MoneyMicros(90_000_000)
+    intent = make_intent()
+    context = make_context(floor=floor)
+
+    clean_kernel, _, _ = _kernel_with_verifier("clean", mode=Mode.LIVE)
+    drift_kernel, _, _ = _kernel_with_verifier(
+        "drift_within_tolerance", mode=Mode.LIVE, balance_tolerance=MoneyMicros(1_000)
+    )
+    clean_kernel.run_verification_cycle()
+    drift_kernel.run_verification_cycle()
+
+    clean_decision = clean_kernel.evaluate_intent(intent, context)
+    drift_decision = drift_kernel.evaluate_intent(intent, context)
+
+    assert "worst-case equity below floor" not in clean_decision.reasons
+    assert "worst-case equity below floor" in drift_decision.reasons
+
+
+# --- Breach -> HALT ----------------------------------------------------------------
+
+
+def test_balance_breach_yields_breach_outcome() -> None:
+    """A balance mismatch beyond tolerance yields `BREACH` and
+    `balance_ok=False`."""
+    verifier, _, _ = _make_verifier(
+        "balance_breach", balance_tolerance=MoneyMicros(1_000)
+    )
+
+    snapshot = verifier.run_cycle(now_epoch_s=DEFAULT_NOW_EPOCH_S)
+
+    assert snapshot.outcome is VerificationOutcome.BREACH
+    assert snapshot.balance_ok is False
+    assert snapshot.cash_drift == MoneyMicros(5_000_000)
+
+
+def test_balance_breach_dispatches_reconciliation_mismatch_and_ledgers_it() -> None:
+    """A breach dispatches `AlertType.RECONCILIATION_MISMATCH` (severity
+    CRITICAL, per the alert registry) and records exactly one
+    `VerificationMismatch` event."""
+    verifier, writer, sink = _make_verifier(
+        "balance_breach", balance_tolerance=MoneyMicros(1_000)
+    )
+
+    verifier.run_cycle(now_epoch_s=DEFAULT_NOW_EPOCH_S)
+
+    mismatch_calls = [
+        call for call in sink.calls if call[0] is AlertType.RECONCILIATION_MISMATCH
+    ]
+    assert len(mismatch_calls) == 1
+    assert (
+        mismatch_calls[0][1]
+        == get_registration(AlertType.RECONCILIATION_MISMATCH).severity
+    )
+    mismatch_events = _events_of_type(writer, "VerificationMismatch")
+    assert len(mismatch_events) == 1
+    assert mismatch_events[0].component == "riskkernel"
+    assert mismatch_events[0].payload_schema_version == 1
+
+
+def test_breach_through_the_kernel_halts_and_ledgers_the_transition() -> None:
+    """A breach cycle run through `RiskKernel.run_verification_cycle`
+    transitions the kernel to `Mode.HALT` and records exactly one
+    `VerificationMismatchHalt` event, in addition to the verifier's own
+    `VerificationMismatch` event."""
+    kernel, writer, sink = _kernel_with_verifier(
+        "balance_breach", mode=Mode.LIVE, balance_tolerance=MoneyMicros(1_000)
+    )
+
+    kernel.run_verification_cycle()
+
+    assert kernel.mode is Mode.HALT
+    assert len(_events_of_type(writer, "VerificationMismatch")) == 1
+    halt_events = _events_of_type(writer, "VerificationMismatchHalt")
+    assert len(halt_events) == 1
+    assert halt_events[0].component == "riskkernel"
+    assert halt_events[0].payload_schema_version == 1
+    assert any(call[0] is AlertType.RECONCILIATION_MISMATCH for call in sink.calls)
+
+
+# --- HALT idempotency --------------------------------------------------------------
+
+
+def test_repeated_breach_while_already_halted_stays_halt_without_raising() -> None:
+    """A second breach cycle, run while the kernel is already `HALT`, leaves
+    the mode at `HALT` (a same-mode "transition" that `ModeStateMachine`
+    itself would reject), raises nothing, and never records a second
+    `VerificationMismatchHalt` event -- the halt only fires once, on the
+    actual transition."""
+    kernel, writer, _ = _kernel_with_verifier(
+        "balance_breach", mode=Mode.LIVE, balance_tolerance=MoneyMicros(1_000)
+    )
+
+    kernel.run_verification_cycle()
+    kernel.run_verification_cycle()
+
+    assert kernel.mode is Mode.HALT
+    assert len(_events_of_type(writer, "VerificationMismatchHalt")) == 1
+    assert len(_events_of_type(writer, "VerificationMismatch")) == 2
+
+
+def test_breach_while_killed_stays_killed_without_raising() -> None:
+    """A breach cycle run while the kernel is `KILLED` leaves the mode at
+    `KILLED` -- `HALT` is not a legal target from `KILLED` (a dead end on the
+    mode ladder) -- and raises no `IllegalModeTransitionError`."""
+    kernel, writer, _ = _kernel_with_verifier(
+        "balance_breach", mode=Mode.KILLED, balance_tolerance=MoneyMicros(1_000)
+    )
+
+    kernel.run_verification_cycle()
+
+    assert kernel.mode is Mode.KILLED
+    assert _events_of_type(writer, "VerificationMismatchHalt") == []
+
+
+# --- Position dimension (driven from expectations, over the "clean" fixture) ------
+#
+# The "clean" fixture's observed position is fixed at 500 centis of
+# KXFED-24DEC; every test below holds the balance/open-order dimensions at
+# their exact matching baseline and varies only `expected_positions` /
+# `position_tolerance`, isolating the position dimension precisely.
+
+
+def test_position_within_tolerance_yields_drift_outcome() -> None:
+    """A per-ticker position drift within `position_tolerance` is `ok` and
+    yields `DRIFT_WITHIN_TOLERANCE` (observed 500, expected 505, diff 5,
+    tolerance 10)."""
+    verifier, _, _ = _make_verifier(
+        "clean",
+        expected_positions={"KXFED-24DEC": ContractCentis(505)},
+        position_tolerance=ContractCentis(10),
+    )
+
+    snapshot = verifier.run_cycle(now_epoch_s=DEFAULT_NOW_EPOCH_S)
+
+    assert snapshot.position_ok is True
+    assert snapshot.outcome is VerificationOutcome.DRIFT_WITHIN_TOLERANCE
+
+
+def test_position_passes_at_exact_tolerance_boundary() -> None:
+    """A per-ticker position diff exactly equal to `position_tolerance`
+    passes (inclusive boundary, matching every other tolerance/ttl check in
+    this codebase): observed 500, expected 510, diff 10, tolerance 10."""
+    verifier, _, _ = _make_verifier(
+        "clean",
+        expected_positions={"KXFED-24DEC": ContractCentis(510)},
+        position_tolerance=ContractCentis(10),
+    )
+
+    snapshot = verifier.run_cycle(now_epoch_s=DEFAULT_NOW_EPOCH_S)
+
+    assert snapshot.position_ok is True
+
+
+def test_position_vetoes_one_centi_over_the_tolerance_boundary() -> None:
+    """One centi past the position tolerance boundary is a breach: observed
+    500, expected 511, diff 11, tolerance 10."""
+    verifier, _, _ = _make_verifier(
+        "clean",
+        expected_positions={"KXFED-24DEC": ContractCentis(511)},
+        position_tolerance=ContractCentis(10),
+    )
+
+    snapshot = verifier.run_cycle(now_epoch_s=DEFAULT_NOW_EPOCH_S)
+
+    assert snapshot.position_ok is False
+    assert snapshot.outcome is VerificationOutcome.BREACH
+
+
+def test_unexpected_ticker_held_is_a_breach() -> None:
+    """A ticker the exchange reports a position in, but the ledger expects
+    nothing for at all, is a breach: the observed 500-centi KXFED-24DEC
+    position diffs against an implicit zero expectation, far exceeding a
+    tight tolerance."""
+    verifier, _, _ = _make_verifier(
+        "clean",
+        expected_positions={},
+        position_tolerance=ContractCentis(10),
+    )
+
+    snapshot = verifier.run_cycle(now_epoch_s=DEFAULT_NOW_EPOCH_S)
+
+    assert snapshot.position_ok is False
+    assert snapshot.outcome is VerificationOutcome.BREACH
+
+
+# --- Open-order dimension (driven from expectations; FakeExchange always ()) ------
+
+
+def test_open_orders_exact_empty_match_passes() -> None:
+    """An empty expected-open-order-id set matches `FakeExchange`'s
+    hard-coded empty observed set exactly: `open_order_ok` is `True`."""
+    verifier, _, _ = _make_verifier("clean", expected_open_order_ids=frozenset())
+
+    snapshot = verifier.run_cycle(now_epoch_s=DEFAULT_NOW_EPOCH_S)
+
+    assert snapshot.open_order_ok is True
+
+
+def test_open_order_expected_but_absent_from_observed_is_a_breach() -> None:
+    """An expected open-order id absent from the (always-empty) observed set
+    is a breach -- open orders are discrete, so there is no tolerance: any
+    mismatch at all is a breach, driven purely from the expectations side
+    since `FakeExchange.get_open_orders` always returns `()`."""
+    verifier, writer, sink = _make_verifier(
+        "clean", expected_open_order_ids=frozenset({"order-not-on-exchange"})
+    )
+
+    snapshot = verifier.run_cycle(now_epoch_s=DEFAULT_NOW_EPOCH_S)
+
+    assert snapshot.open_order_ok is False
+    assert snapshot.outcome is VerificationOutcome.BREACH
+    assert any(call[0] is AlertType.RECONCILIATION_MISMATCH for call in sink.calls)
+    assert len(_events_of_type(writer, "VerificationMismatch")) == 1
+
+
+@dataclass
+class _ConnectorServingOpenOrders:
+    """A read-only connector delegating to a `FakeExchange` but serving fixed
+    positions and open orders.
+
+    `FakeExchange.get_open_orders` is hard-coded to `()`, so this thin wrapper
+    is the seam that exercises the verifier's *observed* open-order path (id and
+    ticker extraction) with a non-empty resting-order set, without adding any
+    trade-capable surface -- only the read-only methods `run_cycle` calls are
+    overridden; everything else falls through to the inner fake.
+    """
+
+    inner: FakeExchange
+    positions: tuple[Position, ...]
+    open_orders: tuple[OpenOrder, ...]
+
+    def get_positions(self) -> tuple[Position, ...]:
+        """Return the fixed positions."""
+        return self.positions
+
+    def get_open_orders(self) -> tuple[OpenOrder, ...]:
+        """Return the fixed open orders."""
+        return self.open_orders
+
+    def get_balances(self) -> BalanceSnapshot:
+        """Delegate balances to the inner fake exchange."""
+        return self.inner.get_balances()
+
+    def get_balance_semantics(self) -> BalanceSemantics:
+        """Delegate balance semantics to the inner fake exchange."""
+        return self.inner.get_balance_semantics()
+
+    def get_market(self, ticker: str) -> object:
+        """Delegate market lookup to the inner fake exchange."""
+        return self.inner.get_market(ticker)
+
+
+def test_observed_open_order_matches_and_flags_its_unknown_jurisdiction() -> None:
+    """A verifier reading a non-empty *observed* open-order set matches it by
+    id against the ledger's expected set (so `open_order_ok` is `True` when they
+    agree), and treats the order's market as a held market for the
+    jurisdiction-unknown alert.
+
+    The resting order rests in KXWEA-24DEC (jurisdiction "unknown" in the
+    fixture), while the sole position is the eligible KXFED-24DEC, so the one
+    `JURISDICTION_UNKNOWN` alert is attributable purely to the *order's* ticker
+    -- the observed-open-order code path FakeExchange's hard-coded `()` cannot
+    reach.
+    """
+    connector = _ConnectorServingOpenOrders(
+        inner=FakeExchange.from_fixture_dir(_fixture_path("jurisdiction_unknown")),
+        positions=(
+            Position(
+                ticker="KXFED-24DEC",
+                quantity=ContractCentis(500),
+                average_price=PricePips(4550),
+            ),
+        ),
+        open_orders=(
+            OpenOrder(
+                id="order-1",
+                ticker="KXWEA-24DEC",
+                side="yes",
+                price=PricePips(5000),
+                quantity=ContractCentis(100),
+            ),
+        ),
+    )
+    ledger_writer = InMemoryKernelLedgerWriter()
+    sink = _RecordingSink()
+    verifier = ReadOnlyVerifier(
+        connector=connector,
+        expectation_source=_StaticExpectationSource(
+            LedgerExpectations(
+                expected_available_cash=_BASELINE_EXPECTED_CASH,
+                expected_positions={"KXFED-24DEC": ContractCentis(500)},
+                expected_open_order_ids=frozenset({"order-1"}),
+            )
+        ),
+        tolerances=VerificationTolerances(
+            balance_tolerance=MoneyMicros(0),
+            position_tolerance=ContractCentis(0),
+        ),
+        dispatcher=AlertDispatcher([sink], ledger_writer=LoggingLedgerWriter()),
+        ledger_writer=ledger_writer,
+    )
+
+    snapshot = verifier.run_cycle(now_epoch_s=DEFAULT_NOW_EPOCH_S)
+
+    assert snapshot.open_order_ok is True
+    assert snapshot.outcome is VerificationOutcome.CLEAN
+    jurisdiction_calls = [
+        call for call in sink.calls if call[0] is AlertType.JURISDICTION_UNKNOWN
+    ]
+    assert len(jurisdiction_calls) == 1
+    assert "KXWEA-24DEC" in jurisdiction_calls[0][2]
+
+
+# --- BalanceSemantics: unknown field surfaced, live-mode gate is checks.py's job --
+
+
+def test_semantics_unknown_field_surfaces_as_not_fully_known() -> None:
+    """A `balance_semantics.json` with one field left `UNKNOWN` surfaces as
+    `semantics_fully_known=False` on the snapshot -- reconciliation itself
+    still passes (balances/positions/open-orders all match), since the
+    live-mode trading gate on unknown semantics is `checks.balance_reconciliation`'s
+    job (see `tests/riskkernel/test_checks.py`), not the verifier's."""
+    verifier, _, sink = _make_verifier("semantics_unknown_field")
+
+    snapshot = verifier.run_cycle(now_epoch_s=DEFAULT_NOW_EPOCH_S)
+
+    assert snapshot.semantics_fully_known is False
+    assert snapshot.outcome is VerificationOutcome.CLEAN
+    assert sink.calls == []
+
+
+# --- Jurisdiction unknown: WARNING alert, no HALT ---------------------------------
+
+
+def test_held_position_in_unknown_jurisdiction_dispatches_warning_alert() -> None:
+    """A held position (KXWEA-24DEC, jurisdiction "unknown" in the fixture's
+    `markets.json`) dispatches exactly one `AlertType.JURISDICTION_UNKNOWN`
+    alert (severity WARNING, per the alert registry) -- reconciliation itself
+    stays clean (both positions match their expectations exactly), and no
+    `RECONCILIATION_MISMATCH` alert fires."""
+    verifier, writer, sink = _make_verifier(
+        "jurisdiction_unknown",
+        expected_positions={
+            "KXFED-24DEC": ContractCentis(500),
+            "KXWEA-24DEC": ContractCentis(100),
+        },
+    )
+
+    snapshot = verifier.run_cycle(now_epoch_s=DEFAULT_NOW_EPOCH_S)
+
+    assert snapshot.outcome is VerificationOutcome.CLEAN
+    jurisdiction_calls = [
+        call for call in sink.calls if call[0] is AlertType.JURISDICTION_UNKNOWN
+    ]
+    assert len(jurisdiction_calls) == 1
+    assert (
+        jurisdiction_calls[0][1]
+        == get_registration(AlertType.JURISDICTION_UNKNOWN).severity
+    )
+    assert "KXWEA-24DEC" in jurisdiction_calls[0][2]
+    assert not any(call[0] is AlertType.RECONCILIATION_MISMATCH for call in sink.calls)
+    assert _events_of_type(writer, "VerificationMismatch") == []
+
+
+def test_jurisdiction_unknown_alert_never_halts_the_kernel() -> None:
+    """A jurisdiction-unknown alert alone (outcome still CLEAN) never changes
+    the kernel's operating mode -- only a `BREACH` outcome halts."""
+    verifier, ledger_writer, _ = _make_verifier(
+        "jurisdiction_unknown",
+        expected_positions={
+            "KXFED-24DEC": ContractCentis(500),
+            "KXWEA-24DEC": ContractCentis(100),
+        },
+    )
+    mode_machine = ModeStateMachine(mode_ceiling=Mode.LIVE, mode=Mode.LIVE)
+    kernel = RiskKernel(
+        ledger_writer,
+        mode_machine=mode_machine,
+        verifier=verifier,
+        clock=lambda: DEFAULT_NOW_EPOCH_S,
+    )
+
+    kernel.run_verification_cycle()
+
+    assert kernel.mode is Mode.LIVE
+
+
+# --- run(): the verification cycle fires once per beat when configured -----------
+
+
+def test_kernel_run_invokes_the_verification_cycle_once_per_beat() -> None:
+    """`RiskKernel.run(max_beats=N, ...)` invokes the verification cycle
+    exactly N times when a verifier is configured -- one `VerificationPassed`
+    event per beat, on top of the heartbeat events."""
+    kernel, writer, _ = _kernel_with_verifier("clean", mode=Mode.LIVE)
+
+    kernel.run(max_beats=3, heartbeat_interval=0)
+
+    assert len(_events_of_type(writer, "VerificationPassed")) == 3
+
+
+def test_default_clock_returns_a_nonnegative_int_off_the_float_path() -> None:
+    """The kernel's default clock (used when no `clock` is injected) returns a
+    whole-integer epoch second -- never a float -- so a verifier-configured
+    kernel built without an explicit clock stays on the SPEC S6.1 no-float
+    path."""
+    now = _default_clock()
+
+    assert isinstance(now, int)
+    assert now > 0
+
+
+def test_kernel_run_without_a_verifier_never_records_verification_events() -> None:
+    """A `RiskKernel` built with no `verifier` (the pre-issue-#32 shape) never
+    records any verification event, even across several beats -- the
+    verifier-less kernel behaves exactly as before."""
+    writer = InMemoryKernelLedgerWriter()
+    kernel = RiskKernel(writer)
+
+    kernel.run(max_beats=3, heartbeat_interval=0)
+
+    assert _events_of_type(writer, "VerificationPassed") == []
+    assert _events_of_type(writer, "VerificationDrift") == []
+    assert _events_of_type(writer, "VerificationMismatch") == []
+
+
+# --- evaluate_intent: fail-closed before the first cycle --------------------------
+
+
+def test_evaluate_intent_stamps_none_verification_before_the_first_cycle() -> None:
+    """With a verifier configured but `run_verification_cycle` never yet
+    called, `evaluate_intent` stamps `verification=None` onto the effective
+    context (fail-closed) rather than trusting the caller-supplied snapshot --
+    so every reconciliation check vetoes on the missing snapshot."""
+    kernel, _, _ = _kernel_with_verifier("clean", mode=Mode.LIVE)
+    intent = make_intent()
+    context = make_context()
+
+    decision = kernel.evaluate_intent(intent, context)
+
+    assert decision.vetoed is True
+    assert "balance verification stale or missing" in decision.reasons
+    assert "position verification stale or missing" in decision.reasons
+    assert "open-order verification stale or missing" in decision.reasons
+
+
+# --- Payload hygiene: every verification event payload is int/str only -----------
+
+
+def test_every_verification_event_payload_is_int_str_or_bool_never_float() -> None:
+    """Every payload value recorded by a verification event, across a clean,
+    a tolerable-drift, and a breach cycle, is an `int`, `str`, or `bool` --
+    never a `float`. Drift must be expressed as `.value` ints (SPEC S6.1)."""
+    scenarios = [
+        ("clean", {}),
+        ("drift_within_tolerance", {"balance_tolerance": MoneyMicros(1_000)}),
+        ("balance_breach", {"balance_tolerance": MoneyMicros(1_000)}),
+    ]
+    all_events: list[object] = []
+    for fixture_name, tolerance_kwargs in scenarios:
+        verifier, writer, _ = _make_verifier(fixture_name, **tolerance_kwargs)
+        verifier.run_cycle(now_epoch_s=DEFAULT_NOW_EPOCH_S)
+        all_events.extend(
+            event
+            for event in writer.events
+            if event.event_type.startswith("Verification")
+        )
+
+    assert all_events, "expected at least one verification event to inspect"
+    for event in all_events:
+        for value in event.payload.values():
+            assert not isinstance(value, float), f"{event.event_type}: {value!r}"
+            assert isinstance(value, (int, str, bool)), f"{event.event_type}: {value!r}"
