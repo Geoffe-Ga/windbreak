@@ -11,12 +11,11 @@ market snapshot and screening decision per market through an
 """
 
 from hedgekit.connector.fake import FakeExchange
+from hedgekit.connector.fees import FeeModel, UnknownFeeModelError
 from hedgekit.connector.interface import MarketConnector, UnknownMarketError
 from hedgekit.connector.models import (
-    BalanceSemantics,
     BalanceSnapshot,
     ExchangeStatus,
-    FeeModel,
     Fill,
     NormalizedMarket,
     OpenOrder,
@@ -24,6 +23,17 @@ from hedgekit.connector.models import (
     OrderBookSnapshot,
     Position,
     market_to_payload,
+)
+from hedgekit.connector.semantics import (
+    BalanceSemantics,
+    CancelCollateralRelease,
+    FeeDebitTiming,
+    FeeRounding,
+    HaltedMarketBehavior,
+    OrderCollateralInAvailable,
+    OrderCollateralInTotal,
+    PartialFillRepresentation,
+    UnsettledProceeds,
 )
 from hedgekit.connector.snapshot import (
     MARKET_SNAPSHOT_EVENT,
@@ -40,12 +50,16 @@ __all__ = [
     "SCREEN_DECISION_EVENT",
     "BalanceSemantics",
     "BalanceSnapshot",
+    "CancelCollateralRelease",
     "ConnectorEvent",
     "EventLedgerWriter",
     "ExchangeStatus",
     "FakeExchange",
+    "FeeDebitTiming",
     "FeeModel",
+    "FeeRounding",
     "Fill",
+    "HaltedMarketBehavior",
     "InMemoryEventLedgerWriter",
     "LoggingEventLedgerWriter",
     "MarketConnector",
@@ -54,7 +68,12 @@ __all__ = [
     "OpenOrder",
     "OrderBookLevel",
     "OrderBookSnapshot",
+    "OrderCollateralInAvailable",
+    "OrderCollateralInTotal",
+    "PartialFillRepresentation",
     "Position",
+    "UnknownFeeModelError",
     "UnknownMarketError",
+    "UnsettledProceeds",
     "market_to_payload",
 ]

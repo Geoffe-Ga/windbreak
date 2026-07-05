@@ -1,0 +1,20 @@
+{
+  "balance_before_order": {
+    "balance": 100000000,
+    "available_balance": 100000000,
+    "fetched_at": "2024-12-01T14:59:00Z"
+  },
+  "order_placed": {
+    "order_id": "order-abc123",
+    "ticker": "KXFED-24DEC",
+    "side": "yes",
+    "action": "buy",
+    "count": 50,
+    "yes_price": 45
+  },
+  "balance_after_order": {
+    "balance": 100000000,
+    "available_balance": 77500000,
+    "fetched_at": "2024-12-01T15:00:00Z"
+  }
+}

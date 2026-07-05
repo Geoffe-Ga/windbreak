@@ -11,6 +11,12 @@ guarded by ``scripts/lint_no_floats.py``.
 ``__post_init__`` so a malformed upstream payload fails loudly at construction.
 :func:`market_to_payload` renders a market into a JSON-safe mapping (datetimes
 as ISO-8601 ``Z`` strings, no float leaf anywhere) for ledger/event emission.
+
+The two richest facets -- :class:`BalanceSemantics` (balance-interpretation
+enums) and :class:`FeeModel` (fee schedules and their integer fee bounds) --
+live in the sibling :mod:`hedgekit.connector.semantics` and
+:mod:`hedgekit.connector.fees` modules and are re-exported here so callers can
+keep importing the whole SPEC S6.2 surface from one place.
 """
 
 from __future__ import annotations
@@ -18,6 +24,9 @@ from __future__ import annotations
 from dataclasses import dataclass, fields
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
+
+from hedgekit.connector.fees import FeeModel as FeeModel
+from hedgekit.connector.semantics import BalanceSemantics as BalanceSemantics
 
 if TYPE_CHECKING:
     from typing import Literal
@@ -193,31 +202,6 @@ class ExchangeStatus:
 
 
 @dataclass(frozen=True, slots=True)
-class BalanceSemantics:
-    """Answers to the SPEC S6.2 balance-interpretation questions.
-
-    Each field records whether a given accounting behavior holds on the venue,
-    as ``"yes"``, ``"no"``, or ``"unknown"`` when the venue does not document it.
-
-    Attributes:
-        collateral_in_total: Whether posted collateral is included in the total.
-        collateral_excluded_from_available: Whether collateral is excluded from
-            the available balance.
-        fee_debited_at_execution: Whether fees are debited at execution time.
-        partial_fills_represented: Whether partial fills are represented.
-        cancel_releases_collateral: Whether cancelling releases collateral.
-        unsettled_proceeds_visible: Whether unsettled proceeds are visible.
-    """
-
-    collateral_in_total: Literal["yes", "no", "unknown"]
-    collateral_excluded_from_available: Literal["yes", "no", "unknown"]
-    fee_debited_at_execution: Literal["yes", "no", "unknown"]
-    partial_fills_represented: Literal["yes", "no", "unknown"]
-    cancel_releases_collateral: Literal["yes", "no", "unknown"]
-    unsettled_proceeds_visible: Literal["yes", "no", "unknown"]
-
-
-@dataclass(frozen=True, slots=True)
 class BalanceSnapshot:
     """A point-in-time account balance.
 
@@ -285,23 +269,6 @@ class Fill:
     price: PricePips
     quantity: ContractCentis
     ts: datetime
-
-
-@dataclass(frozen=True, slots=True)
-class FeeModel:
-    """A market's applicable fee schedule, in parts-per-million.
-
-    Attributes:
-        schedule_id: The schedule's identifier.
-        maker_fee_ppm: Maker fee, in ppm.
-        taker_fee_ppm: Taker fee, in ppm.
-        settlement_fee_ppm: Settlement fee, in ppm.
-    """
-
-    schedule_id: str
-    maker_fee_ppm: int
-    taker_fee_ppm: int
-    settlement_fee_ppm: int
 
 
 def _iso_z(moment: datetime) -> str:

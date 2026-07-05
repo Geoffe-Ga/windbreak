@@ -1,0 +1,18 @@
+{
+  "settlement": {
+    "ticker": "KXFED-24DEC",
+    "market_result": "yes",
+    "yes_count": 100,
+    "no_count": 0,
+    "revenue": 10000,
+    "settled_time": "2024-12-18T19:05:00Z"
+  },
+  "balance_before_settlement": {
+    "balance": 89000000,
+    "fetched_at": "2024-12-18T19:04:59Z"
+  },
+  "balance_after_settlement": {
+    "balance": 189000000,
+    "fetched_at": "2024-12-18T19:05:01Z"
+  }
+}
