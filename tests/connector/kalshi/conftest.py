@@ -55,6 +55,12 @@ from hedgekit.connector.snapshot import InMemoryEventLedgerWriter
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
+    #: Factory signature for building a fresh ScriptedFaultSession per test;
+    #: aliased so the fixture signature fits one line (ruff/black agree).
+    ScriptedFaultSessionFactory = Callable[
+        [list["QueuedFaultResponse"]], "ScriptedFaultSession"
+    ]
+
 #: Directory holding the recorded Kalshi API JSON fixtures, resolved
 #: relative to this conftest's own directory so it works regardless of cwd.
 _FIXTURE_DIR = Path(__file__).resolve().parents[2] / "fixtures" / "exchange" / "kalshi"
@@ -421,9 +427,7 @@ class FakeIntClock:
 
 
 @pytest.fixture
-def scripted_fault_session() -> (
-    Callable[[list[QueuedFaultResponse]], ScriptedFaultSession]
-):
+def scripted_fault_session() -> ScriptedFaultSessionFactory:
     """Provide a factory building a fresh `ScriptedFaultSession` per test.
 
     A factory (rather than a single pre-built instance) because each test
