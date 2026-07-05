@@ -8,6 +8,12 @@ on:
 permissions:
   contents: read
 
+# Serialize gh-pages deploys: burst merges to main previously raced the
+# peaceiris push and lost (non-fast-forward reject). Newest run wins. Issue #127.
+concurrency:
+  group: metrics-deploy
+  cancel-in-progress: true
+
 jobs:
   generate-metrics:
     runs-on: ubuntu-latest
