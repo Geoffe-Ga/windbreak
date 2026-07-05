@@ -145,9 +145,8 @@ def test_every_single_bit_flip_of_the_signature_fails_verification() -> None:
                 registry=_fresh_registry(),
             )
 
-            assert (
-                result.valid is False
-            ), f"byte {byte_index} bit {bit_index} unexpectedly verified"
+            detail = f"byte {byte_index} bit {bit_index} unexpectedly verified"
+            assert result.valid is False, detail
 
 
 # --- (b) each claims field perturbed, re-checked against the original signature -
