@@ -1,18 +1,48 @@
 """Shared component: market eligibility screening.
 
 This package screens normalized markets for tradeability. It carries no
-credentials and touches only public market metadata (SPEC S5.2). For issue #16
-it ships a single :class:`StubScreener` whose only rule is jurisdiction: a
-market whose ``jurisdiction_status`` is not ``"eligible"`` is blocked. The full
-filter suite (liquidity, fees, resolution quality, and more) is issue #6's job.
-Screening decisions derive from money-path values, so this package is guarded
-against floats by ``scripts/lint_no_floats.py``.
+credentials and touches only public market metadata (SPEC S5.2). Its centrepiece
+is the real §16 :class:`Screener`, which runs the four pure
+:mod:`hedgekit.screener.filters` filters (category blocklist plus the
+fail-closed legally-risky-category path, 24h-volume floor, book-depth floor, and
+whole-day resolution-horizon window) against a
+:class:`~hedgekit.config.ScreenerConfig`, and ledgers exactly one
+``SCREEN_DECISION`` event per market carrying each filter's ``passed`` verdict
+and ``measured`` quantity. Legally-risky categories (e.g. ``sports``) fail closed
+until an operator supplies a :class:`LegalRiskAcknowledgement`, which also emits
+a ``LEGAL_RISK_ACK`` event.
+
+:class:`StubScreener` and :class:`ScreenDecision` remain exported for the
+snapshot task until the live wiring lands (a follow-up: no 24h-volume source
+feeds :class:`~hedgekit.screener.filters.BookStats` yet). Screening decisions
+derive from money-path values, so this package is guarded against floats by
+``scripts/lint_no_floats.py``.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+from hedgekit.screener.filters import (
+    CATEGORY_BLOCKLIST,
+    HORIZON_DAYS,
+    LEGALLY_RISKY_CATEGORIES,
+    MIN_DEPTH,
+    MIN_VOLUME_24H,
+    BookStats,
+    FilterResult,
+    category_filter,
+    horizon_filter,
+    min_depth_filter,
+    min_volume_filter,
+)
+from hedgekit.screener.screener import (
+    LEGAL_RISK_ACK_EVENT,
+    LegalRiskAcknowledgement,
+    Screener,
+    ScreenResult,
+)
 
 if TYPE_CHECKING:
     from typing import Literal
@@ -72,4 +102,22 @@ class StubScreener:
         )
 
 
-__all__ = ["ScreenDecision", "StubScreener"]
+__all__ = [
+    "CATEGORY_BLOCKLIST",
+    "HORIZON_DAYS",
+    "LEGALLY_RISKY_CATEGORIES",
+    "LEGAL_RISK_ACK_EVENT",
+    "MIN_DEPTH",
+    "MIN_VOLUME_24H",
+    "BookStats",
+    "FilterResult",
+    "LegalRiskAcknowledgement",
+    "ScreenDecision",
+    "ScreenResult",
+    "Screener",
+    "StubScreener",
+    "category_filter",
+    "horizon_filter",
+    "min_depth_filter",
+    "min_volume_filter",
+]
