@@ -61,7 +61,7 @@ See [Troubleshooting](troubleshooting.md) for detailed examples.
 
 ## 4. Stay Green - Never Request Review with Failing Checks
 
-Follow the 4-gate workflow rigorously.
+Follow the gated workflow rigorously (3 automated gates + a manual pre-v1.0.0 mutation gate).
 
 **The Rule**:
 - 🚫 **NEVER** create PR while CI is red
@@ -71,8 +71,11 @@ Follow the 4-gate workflow rigorously.
 **The Process**:
 1. Gate 1: Local checks pass (`./scripts/check-all.sh` → exit 0)
 2. Gate 2: CI pipeline green (all jobs ✅)
-3. Gate 3: Mutation score ≥80%
-4. Gate 4: Code review LGTM
+3. Gate 3: Code review LGTM
+
+**Manual pre-release gate** (before a v1.0.0 ship, NOT automated): Mutation
+score ≥80% via `./scripts/mutation.sh` or `mutation-gate.yml` (owner directive,
+issue #107).
 
 See [Workflow](workflow.md) for complete documentation.
 
@@ -85,7 +88,7 @@ Quality thresholds are immutable. Meet them, don't lower them.
 **Standards**:
 - Test Coverage: ≥90%
 - Docstring Coverage: ≥95%
-- Mutation Score: ≥80%
+- Mutation Score: ≥80% (manual pre-v1.0.0 release gate, not an automated check)
 - Cyclomatic Complexity: ≤10 per function
 - Pylint Score: ≥9.0
 
