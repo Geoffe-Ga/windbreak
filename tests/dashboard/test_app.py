@@ -46,6 +46,37 @@ TEST_TOKEN = "test-token"  # pragma: allowlist secret
 _REQUEST_TIMEOUT_SECONDS = 5.0
 
 
+def _build_http_only_opener() -> urllib.request.OpenerDirector:
+    """Build a URL opener that speaks only ``http``/``https``.
+
+    Unlike ``urllib.request.urlopen`` (and the default opener from
+    ``build_opener``), this director registers no ``FileHandler`` or
+    ``FTPHandler``, so a ``file://`` or ``ftp://`` URL raises ``URLError``
+    instead of silently reading the filesystem. The dashboard tests only
+    ever talk to a loopback ``http://`` server, so restricting the scheme
+    surface keeps the helper from becoming an accidental file reader.
+
+    Returns:
+        An ``OpenerDirector`` wired with the HTTP handler chain only,
+        including ``HTTPErrorProcessor`` so 4xx/5xx responses still surface
+        as ``urllib.error.HTTPError`` for callers to assert on.
+    """
+    opener = urllib.request.OpenerDirector()
+    for handler in (
+        urllib.request.HTTPHandler,
+        urllib.request.HTTPSHandler,
+        urllib.request.HTTPDefaultErrorHandler,
+        urllib.request.HTTPRedirectHandler,
+        urllib.request.HTTPErrorProcessor,
+    ):
+        opener.add_handler(handler())
+    return opener
+
+
+#: Shared opener restricted to HTTP(S); see :func:`_build_http_only_opener`.
+_HTTP_ONLY_OPENER = _build_http_only_opener()
+
+
 @dataclasses.dataclass
 class _StatusHolder:
     """Mutable holder whose `.current` value an injected `status_source` reads.
@@ -108,7 +139,7 @@ def _get(
     url = f"http://{host}:{port}{path}"
     request = urllib.request.Request(url, headers=headers or {})
     try:
-        with urllib.request.urlopen(
+        with _HTTP_ONLY_OPENER.open(
             request, timeout=_REQUEST_TIMEOUT_SECONDS
         ) as response:
             body = response.read().decode("utf-8")
