@@ -11,12 +11,18 @@ wall-clock time or floats (this module sits on the money path guarded by
 * :class:`CircuitBreaker` -- a CLOSED / OPEN / HALF_OPEN state machine on an
   injected integer clock: it refuses calls for a cooldown after tripping, then
   admits a single probe whose outcome closes or re-opens it.
-* :class:`ResilientCaller` -- composes a token acquisition, a bounded retry
-  loop with exponential backoff plus seeded jitter, and the breaker around one
-  ``fn`` call. A Kalshi ``5xx``/``429`` or any non-API transport exception is
-  retried; a non-retryable ``4xx`` surfaces immediately without a breaker hit;
-  exhausting every attempt re-raises the last error and counts as exactly one
-  consecutive breaker failure for the whole ``call()``.
+* :class:`ResilientCaller` -- composes per-attempt token acquisition, a bounded
+  retry loop with exponential backoff plus seeded jitter, and the breaker around
+  one ``fn`` call. One token is spent per *physical* attempt, so a retry storm
+  cannot outrun the configured request budget. A Kalshi ``5xx``/``429`` or any
+  non-API transport exception is retried; a non-retryable ``4xx`` surfaces
+  immediately without a breaker hit; exhausting every attempt re-raises the last
+  error and counts as exactly one consecutive breaker failure for the whole
+  ``call()``.
+
+:func:`build_default_resilient_caller` is the production seam that wires a caller
+on real ``time``/``secrets`` timing, so a ``KalshiClient`` built with no explicit
+caller still gets live rate limiting, retries, and breaker protection by default.
 
 An API error is recognized structurally -- by carrying an integer
 ``status_code`` attribute (as ``KalshiApiError`` does) -- so this generic
@@ -26,15 +32,21 @@ resilience layer stays decoupled from any one exchange's client module.
 from __future__ import annotations
 
 import logging
+import secrets
+import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Final, TypeVar, cast
 
-from hedgekit.connector.snapshot import ConnectorEvent, utc_now_iso
+from hedgekit.connector.snapshot import (
+    ConnectorEvent,
+    LoggingEventLedgerWriter,
+    utc_now_iso,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from datetime import datetime
     from random import Random
 
     from hedgekit.connector.snapshot import EventLedgerWriter
@@ -136,6 +148,24 @@ class ResiliencePolicy:
             _require_at_least(name, getattr(self, name), 0)
 
 
+#: Production defaults for a Kalshi connector's resilient caller: a modest
+#: burst with a steady one-token-per-second refill, three transport attempts
+#: per logical call, bounded exponential backoff with a little jitter, and a
+#: five-strike breaker with a thirty-second cooldown. Wired on by default by
+#: :func:`build_default_resilient_caller`; tunable per client via
+#: ``KalshiClient``'s ``resilience_policy`` argument.
+DEFAULT_RESILIENCE_POLICY: Final = ResiliencePolicy(
+    bucket_capacity=10,
+    refill_interval_seconds=1,
+    max_attempts=3,
+    base_backoff_seconds=1,
+    max_backoff_seconds=30,
+    max_jitter_seconds=1,
+    failure_threshold=5,
+    cooldown_seconds=30,
+)
+
+
 class CircuitState(Enum):
     """The three states of a :class:`CircuitBreaker`."""
 
@@ -225,14 +255,27 @@ class CircuitBreaker:
         return self._failures
 
     def before_call(self) -> None:
-        """Gate a call: transition OPEN->HALF_OPEN after cooldown, else refuse.
+        """Gate a call, admitting exactly one HALF_OPEN probe at a time.
+
+        A CLOSED breaker admits every call. An OPEN breaker refuses until its
+        cooldown elapses, at which point the *first* caller transitions it to
+        HALF_OPEN and is admitted as the single recovery probe. While that
+        probe is still in flight (state HALF_OPEN, not yet resolved by
+        :meth:`record_success` / :meth:`record_failure`), every *other* caller
+        is refused -- so a burst of callers arriving together after the cooldown
+        cannot all stampede the recovering venue at once (the "half-open breaker
+        race" this guard closes).
 
         Raises:
-            ConnectorHaltError: If the breaker is OPEN and its cooldown has not yet
-                elapsed.
+            ConnectorHaltError: If the breaker is OPEN and its cooldown has not
+                yet elapsed, or if a HALF_OPEN probe is already in flight.
         """
-        if self._state is not CircuitState.OPEN:
+        if self._state is CircuitState.CLOSED:
             return
+        if self._state is CircuitState.HALF_OPEN:
+            raise ConnectorHaltError(
+                "connector circuit breaker is half-open; a probe is already in flight"
+            )
         if self._clock() - self._opened_at >= self._cooldown:
             self._state = CircuitState.HALF_OPEN
             return
@@ -245,13 +288,17 @@ class CircuitBreaker:
         self._just_opened = False
 
     def record_failure(self) -> None:
-        """Count a failure, tripping OPEN at the threshold or from a probe."""
+        """Count a failure, tripping OPEN at the threshold or from a failed probe.
+
+        ``failure_count`` is a running tally of consecutive failures, reset only
+        by a success: a HALF_OPEN probe failure increments it too, so a re-trip's
+        ledgered ``consecutive_failures`` reflects the true unbroken streak
+        (threshold + the failed probe) rather than a stale snapshot of the first
+        trip's count.
+        """
         self._just_opened = False
-        if self._state is CircuitState.HALF_OPEN:
-            self._trip_open()
-            return
         self._failures += 1
-        if self._failures >= self._threshold:
+        if self._state is CircuitState.HALF_OPEN or self._failures >= self._threshold:
             self._trip_open()
 
     def just_opened(self) -> bool:
@@ -361,7 +408,6 @@ class ResilientCaller:
                 last error after exhausting every retryable attempt.
         """
         self._breaker.before_call()
-        self._bucket.acquire()
         try:
             result = self._run_attempts(fn)
         except Exception as exc:
@@ -372,6 +418,11 @@ class ResilientCaller:
 
     def _run_attempts(self, fn: Callable[[], T]) -> T:
         """Run the bounded attempt loop, backing off between retryable failures.
+
+        A token is acquired from the bucket before *every* physical attempt, so
+        the rate limiter bounds real request rate per transport attempt (a
+        retried call consumes one token per attempt, not one per logical call) --
+        a retry storm can never outrun the configured request budget.
 
         Args:
             fn: The zero-argument transport call to run.
@@ -385,6 +436,7 @@ class ResilientCaller:
         """
         last_error: Exception | None = None
         for attempt in range(self._policy.max_attempts):
+            self._bucket.acquire()
             try:
                 return fn()
             except Exception as exc:  # classified structurally, then retried
@@ -451,3 +503,58 @@ class ResilientCaller:
                 ledger_exc,
                 extra={"component": "connector.resilience"},
             )
+
+
+def _monotonic_seconds() -> int:
+    """Return a whole-second monotonic reading for bucket refill / breaker timing."""
+    return int(time.monotonic())
+
+
+def _utc_now() -> datetime:
+    """Return the current UTC time, the default caller's event-stamp clock."""
+    return datetime.now(UTC)
+
+
+def build_default_resilient_caller(
+    ledger_writer: EventLedgerWriter | None = None,
+    *,
+    policy: ResiliencePolicy = DEFAULT_RESILIENCE_POLICY,
+    clock: Callable[[], int] = _monotonic_seconds,
+    sleeper: Callable[[int], None] = time.sleep,
+    rng: Random | None = None,
+    wall_clock: Callable[[], datetime] = _utc_now,
+) -> ResilientCaller:
+    """Build a :class:`ResilientCaller` wired to real runtime timing by default.
+
+    This is the production composition seam :class:`~hedgekit.connector.kalshi.\
+client.KalshiClient` uses to turn rate limiting, retries, and the circuit
+    breaker *on by default*: a client built with no explicit caller still gets
+    live protection. The timing seams default to real ``time`` / ``secrets``
+    sources but stay injectable so a test can drive this exact same default
+    construction deterministically (fake clock, recording sleeper, seeded RNG).
+
+    Args:
+        ledger_writer: Sink for ``CONNECTOR_HALT`` events; a
+            :class:`~hedgekit.connector.snapshot.LoggingEventLedgerWriter` when
+            None.
+        policy: The rate-limit / retry / breaker tunables; the shared
+            :data:`DEFAULT_RESILIENCE_POLICY` when unspecified.
+        clock: Integer time source for bucket refill and breaker cooldown;
+            whole-second :func:`time.monotonic` by default.
+        sleeper: Whole-second sleep for backoff and rate-limit waits;
+            :func:`time.sleep` by default.
+        rng: Backoff-jitter source; a fresh :class:`secrets.SystemRandom` (an
+            unpredictable :class:`random.Random`) when None.
+        wall_clock: "Now" as a datetime, stamped on ledgered events.
+
+    Returns:
+        A caller owning a fresh token bucket and circuit breaker for the policy.
+    """
+    return ResilientCaller(
+        policy,
+        ledger_writer if ledger_writer is not None else LoggingEventLedgerWriter(),
+        clock=clock,
+        sleeper=sleeper,
+        rng=rng if rng is not None else secrets.SystemRandom(),
+        wall_clock=wall_clock,
+    )

@@ -131,9 +131,16 @@ def test_non_2xx_status_raises_kalshi_api_error_naming_the_status(
 
     ``300`` pins the upper boundary of the accepted range: a redirect status is
     outside 2xx and must fail closed, guarding the ``status_code <= 299`` bound.
+
+    Resilience is disabled (`resilience=None`) so this exercises the *raw*
+    transport status handling: a retryable ``5xx`` surfaces on the first attempt
+    with no backoff sleep. The retry/breaker behavior around ``5xx`` is covered
+    end-to-end in `test_client_resilience.py`.
     """
     session = _RecordingSession(_FakeResponse(status_code, {"error": "nope"}))
-    client = KalshiClient(base_url="https://example.kalshi.test", session=session)
+    client = KalshiClient(
+        base_url="https://example.kalshi.test", session=session, resilience=None
+    )
 
     with pytest.raises(KalshiApiError, match=str(status_code)):
         client.get("markets")

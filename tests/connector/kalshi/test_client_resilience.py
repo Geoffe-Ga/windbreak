@@ -4,34 +4,17 @@ Ties `hedgekit.connector.resilience` and `hedgekit.connector.validation`
 into `KalshiClient` / `KalshiConnector`, exercised through the fake sessions
 in `tests/connector/kalshi/conftest.py`:
 
-* `KalshiClient.get()` runs the transport+parse through an injected
-  `ResilientCaller` when one is wired (passthrough when `resilience=None`,
-  so the pre-existing `test_client.py` suite's un-wired construction keeps
-  working), then always runs the (on-by-default) `SchemaValidator` -- a
-  `SchemaAnomalyHaltError` from that validator step runs *outside* the retry
-  loop: it is never retried and never counted against the circuit breaker.
-* `KalshiConnector._ensure_operational()` fetches exchange status at the
-  top of `get_order_book` / `list_markets`; a non-`"open"` status ledgers
-  one `CONNECTOR_HALT` (`reason="maintenance"`) and raises
-  `MaintenanceHaltError` before any further transport happens.
-
-`hedgekit.connector.resilience` / `hedgekit.connector.validation` do not
-exist yet, so importing them fails collection with `ModuleNotFoundError` --
-the expected Gate 1 RED state for issue #20.
-
-Heads-up for the implementer (flagged, not silently worked around): wiring
-an on-by-default `SchemaValidator` into `KalshiClient.get()` will also run
-against the pre-existing `tests/connector/kalshi/test_client.py` suite's
-*synthetic* payloads (e.g. `{"ok": True}` returned for `.get("markets", ...,
-"orderbook")` / `.get("markets", params=...)`). Those two payloads are not
-schema-shaped at all, so once the default validator lands, `test_get_joins_
-quoted_segments_onto_base_url` and `test_get_forwards_params_and_int_timeout`
-will start raising `SchemaAnomalyHaltError` where they previously returned
-`{"ok": True}` uninspected. This test file's own payloads are all either the
-real recorded fixtures or the dedicated `faults/` fixtures, so it does not
-hit that conflict -- but it is real and needs a deliberate call (e.g.
-updating those two payloads to a schema-clean `{"markets": [], "cursor":
-""}` shape) when this issue is implemented.
+* `KalshiClient.get()` runs the transport+parse through a `ResilientCaller`
+  (on by default -- see `build_default_resilient_caller` -- or an injected one;
+  `resilience=None` opts out to raw single-attempt transport), then always
+  runs the (on-by-default) `SchemaValidator` -- a `SchemaAnomalyHaltError`
+  from that validator step runs *outside* the retry loop: it is never retried
+  and never counted against the circuit breaker. Retryable `5xx` / `429` /
+  malformed-body faults are retried, then either recover or fail closed.
+* `KalshiConnector._ensure_operational()` fetches exchange status at the top
+  of every snapshot fetch (`list_markets` / `get_market` / `get_order_book`);
+  a non-`"open"` status ledgers one `CONNECTOR_HALT` (`reason="maintenance"`)
+  and raises `MaintenanceHaltError` before any further transport happens.
 """
 
 from __future__ import annotations
@@ -44,6 +27,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from hedgekit.connector.interface import UnknownMarketError
 from hedgekit.connector.kalshi.adapter import KalshiConnector
 from hedgekit.connector.kalshi.client import KalshiApiError, KalshiClient
 from hedgekit.connector.resilience import (
@@ -52,6 +36,7 @@ from hedgekit.connector.resilience import (
     MaintenanceHaltError,
     ResiliencePolicy,
     ResilientCaller,
+    build_default_resilient_caller,
 )
 from hedgekit.connector.validation import (
     SCHEMA_ANOMALY_EVENT,
@@ -313,6 +298,205 @@ def test_persistent_5xx_exhausts_retries_and_eventually_trips_the_breaker(
     assert len(ledger.events_by_type(CONNECTOR_HALT_EVENT)) == 1
 
 
+def test_get_recovers_after_a_429_then_a_200(
+    scripted_fault_session: Callable[[list[Any]], Any],
+    queued_fault_response: Callable[..., Any],
+    ledger: InMemoryEventLedgerWriter,
+    fake_int_clock: Callable[[], int],
+    recording_sleeper: Callable[[int], None],
+    seeded_rng: random.Random,
+    clock: Callable[[], datetime],
+) -> None:
+    """A `429` rate-limit response is retried end-to-end, then a `200` succeeds."""
+    orderbook_payload = _read_fixture("orderbook_KXFED-24DEC.json")
+    session = scripted_fault_session(
+        [
+            queued_fault_response(429, {"error": "slow down"}),
+            queued_fault_response(200, orderbook_payload),
+        ]
+    )
+    resilience = ResilientCaller(
+        _resilience_policy(max_attempts=3),
+        ledger,
+        clock=fake_int_clock,
+        sleeper=recording_sleeper,
+        rng=seeded_rng,
+        wall_clock=clock,
+    )
+    client = KalshiClient(
+        base_url=_FAKE_BASE_URL, timeout=5, session=session, resilience=resilience
+    )
+
+    response = client.get("markets", "KXFED-24DEC", "orderbook")
+
+    assert response.payload == orderbook_payload
+    assert len(session.calls) == 2  # 429 retried, then 200
+
+
+def test_get_recovers_after_a_malformed_body_then_a_200(
+    scripted_fault_session: Callable[[list[Any]], Any],
+    queued_fault_response: Callable[..., Any],
+    ledger: InMemoryEventLedgerWriter,
+    fake_int_clock: Callable[[], int],
+    recording_sleeper: Callable[[int], None],
+    seeded_rng: random.Random,
+    clock: Callable[[], datetime],
+) -> None:
+    """A malformed/truncated body (`.json()` raises) is retried end-to-end.
+
+    Drives the transport's real `response.json()` call through `KalshiClient`
+    via `QueuedFaultResponse.json_raises`: the parse failure surfaces as a
+    retryable transport error, so the next `200` recovers transparently.
+    """
+    orderbook_payload = _read_fixture("orderbook_KXFED-24DEC.json")
+    session = scripted_fault_session(
+        [
+            queued_fault_response(
+                200, json_raises=ValueError("Expecting value: line 1 column 1 (char 0)")
+            ),
+            queued_fault_response(200, orderbook_payload),
+        ]
+    )
+    resilience = ResilientCaller(
+        _resilience_policy(max_attempts=3),
+        ledger,
+        clock=fake_int_clock,
+        sleeper=recording_sleeper,
+        rng=seeded_rng,
+        wall_clock=clock,
+    )
+    client = KalshiClient(
+        base_url=_FAKE_BASE_URL, timeout=5, session=session, resilience=resilience
+    )
+
+    response = client.get("markets", "KXFED-24DEC", "orderbook")
+
+    assert response.payload == orderbook_payload
+    assert len(session.calls) == 2  # malformed body retried, then 200
+
+
+def test_persistent_malformed_body_exhausts_retries_and_surfaces(
+    scripted_fault_session: Callable[[list[Any]], Any],
+    queued_fault_response: Callable[..., Any],
+    ledger: InMemoryEventLedgerWriter,
+    fake_int_clock: Callable[[], int],
+    recording_sleeper: Callable[[int], None],
+    seeded_rng: random.Random,
+    clock: Callable[[], datetime],
+) -> None:
+    """A body that never parses fails closed: the parse error surfaces, no data."""
+    session = scripted_fault_session(
+        [
+            queued_fault_response(200, json_raises=ValueError("truncated body"))
+            for _ in range(3)
+        ]
+    )
+    resilience = ResilientCaller(
+        _resilience_policy(max_attempts=3),
+        ledger,
+        clock=fake_int_clock,
+        sleeper=recording_sleeper,
+        rng=seeded_rng,
+        wall_clock=clock,
+    )
+    client = KalshiClient(
+        base_url=_FAKE_BASE_URL, timeout=5, session=session, resilience=resilience
+    )
+
+    with pytest.raises(ValueError, match="truncated body"):
+        client.get("markets", "KXFED-24DEC", "orderbook")
+
+    assert len(session.calls) == 3  # every attempt made, then surfaced
+
+
+# =============================================================================
+# Resilience is on by default: a plain KalshiClient is protected (issue #20)
+# =============================================================================
+
+
+def test_default_client_trips_the_breaker_under_a_5xx_storm(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A plain client (no injected caller) gets live breaker protection.
+
+    Constructs `KalshiClient` with *no* explicit `ResilientCaller` -- only a
+    tuned `resilience_policy` -- so the on-by-default caller is what protects
+    it. A persistent 5xx storm exhausts retries on each call, trips the breaker
+    on the second, and refuses the third live with `ConnectorHaltError`. The
+    zero-second backoff/jitter keeps the real `time.sleep` instantaneous.
+    """
+    caplog.set_level(logging.INFO)
+    session = _SingleRouteSession(500, {"error": "boom"})
+    policy = _resilience_policy(
+        max_attempts=2,
+        failure_threshold=2,
+        cooldown_seconds=3_600,
+        base_backoff_seconds=0,
+        max_backoff_seconds=0,
+        max_jitter_seconds=0,
+        bucket_capacity=1_000,
+    )
+    client = KalshiClient(
+        base_url=_FAKE_BASE_URL,
+        timeout=5,
+        session=session,
+        resilience_policy=policy,
+    )
+
+    with pytest.raises(KalshiApiError):
+        client.get("exchange", "status")  # call #1: 1st breaker failure
+    with pytest.raises(KalshiApiError):
+        client.get("exchange", "status")  # call #2: trips the breaker OPEN
+    with pytest.raises(ConnectorHaltError):
+        client.get("exchange", "status")  # call #3: refused live, no transport
+
+    assert any(CONNECTOR_HALT_EVENT in record.getMessage() for record in caplog.records)
+
+
+def test_default_client_token_bucket_gates_real_client_requests(
+    scripted_fault_session: Callable[[list[Any]], Any],
+    queued_fault_response: Callable[..., Any],
+    ledger: InMemoryEventLedgerWriter,
+    fake_int_clock: Callable[[], int],
+    recording_sleeper: Callable[[int], None],
+    seeded_rng: random.Random,
+    clock: Callable[[], datetime],
+) -> None:
+    """The default-built caller's token bucket gates real `KalshiClient.get`s.
+
+    Uses the exact `build_default_resilient_caller` seam the client wires by
+    default, with injected timing so it is deterministic: a single-token bucket
+    lets the first request through and forces the second to wait one full refill
+    interval -- proving rate limiting governs real client traffic, not just a
+    standalone `TokenBucket`.
+    """
+    orderbook_payload = _read_fixture("orderbook_KXFED-24DEC.json")
+    session = scripted_fault_session(
+        [
+            queued_fault_response(200, orderbook_payload),
+            queued_fault_response(200, orderbook_payload),
+        ]
+    )
+    caller = build_default_resilient_caller(
+        ledger,
+        policy=_resilience_policy(
+            bucket_capacity=1, refill_interval_seconds=5, max_attempts=1
+        ),
+        clock=fake_int_clock,
+        sleeper=recording_sleeper,
+        rng=seeded_rng,
+        wall_clock=clock,
+    )
+    client = KalshiClient(
+        base_url=_FAKE_BASE_URL, timeout=5, session=session, resilience=caller
+    )
+
+    client.get("markets", "KXFED-24DEC", "orderbook")  # consumes the sole token
+    client.get("markets", "KXFED-24DEC", "orderbook")  # bucket empty: waits a refill
+
+    assert recording_sleeper.calls == [5]
+
+
 # =============================================================================
 # SchemaValidator wired through KalshiClient.get(): drift halts outside retry
 # =============================================================================
@@ -450,6 +634,54 @@ def test_list_markets_raises_maintenance_halt_when_not_open(
     (event,) = ledger.events_by_type(CONNECTOR_HALT_EVENT)
     assert event.payload["reason"] == "maintenance"
     assert not any(url.endswith("/markets") for url in session.calls)
+
+
+@pytest.mark.parametrize(
+    ("exchange_active", "trading_active"),
+    [(True, False), (False, False)],  # paused, closed
+)
+def test_get_market_raises_maintenance_halt_when_not_open(
+    ledger: InMemoryEventLedgerWriter,
+    clock: Callable[[], datetime],
+    exchange_active: bool,
+    trading_active: bool,
+) -> None:
+    """`get_market` (a single-ticker snapshot) also halts while not `"open"`.
+
+    Closes the fail-closed gap where single-ticker lookups could fetch live
+    data during a maintenance window while `list_markets`/`get_order_book`
+    correctly halted.
+    """
+    session = _MaintenanceSession(
+        exchange_active=exchange_active, trading_active=trading_active
+    )
+    client = KalshiClient(base_url=_FAKE_BASE_URL, timeout=5, session=session)
+    connector = KalshiConnector(client, ledger, clock=clock)
+
+    with pytest.raises(MaintenanceHaltError):
+        connector.get_market("KXFED-24DEC")
+
+    (event,) = ledger.events_by_type(CONNECTOR_HALT_EVENT)
+    assert event.payload["reason"] == "maintenance"
+    assert not any(url.endswith("/markets") for url in session.calls)
+
+
+def test_get_market_proceeds_normally_when_exchange_is_open(
+    ledger: InMemoryEventLedgerWriter, clock: Callable[[], datetime]
+) -> None:
+    """An `"open"` exchange status lets `get_market` fetch normally (or 404)."""
+    session = _MaintenanceSession(exchange_active=True, trading_active=True)
+    client = KalshiClient(base_url=_FAKE_BASE_URL, timeout=5, session=session)
+    connector = KalshiConnector(client, ledger, clock=clock)
+
+    # The clean `/markets` route serves an empty page, so the ticker is absent
+    # (UnknownMarketError) -- but never a MaintenanceHaltError, and the venue
+    # was consulted (the market fetch was reached).
+    with pytest.raises(UnknownMarketError):
+        connector.get_market("KXFED-24DEC")
+
+    assert ledger.events_by_type(CONNECTOR_HALT_EVENT) == ()
+    assert any(url.endswith("/markets") for url in session.calls)
 
 
 def test_get_order_book_proceeds_normally_when_exchange_is_open(

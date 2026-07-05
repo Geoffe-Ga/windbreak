@@ -423,6 +423,12 @@ class KalshiConnector:
     def get_market(self, ticker: str) -> NormalizedMarket:
         """Return the normalized binary market for ``ticker``.
 
+        A single-ticker snapshot fetch, so it suspends on a maintenance window
+        exactly like :meth:`list_markets` / :meth:`get_order_book`: it consults
+        exchange status first and fails closed if the venue is not open, rather
+        than returning live market data from a paused/closed exchange (SPEC §3
+        principle 3).
+
         Args:
             ticker: The market ticker to look up.
 
@@ -430,10 +436,12 @@ class KalshiConnector:
             The normalized market.
 
         Raises:
+            MaintenanceHaltError: If the exchange is not open for trading.
             UnknownMarketError: If the ticker is refused, not offered, or its
                 payload is malformed (fail closed: the malformed binary is
                 ledgered as a ``MARKET_MALFORMED`` event before raising).
         """
+        self._ensure_operational()
         for raw in self._raw_markets():
             if raw.get("ticker") != ticker:
                 continue
@@ -537,6 +545,12 @@ class KalshiConnector:
         its ``/series/{ticker}`` document, and normalizes the schedule. Both a
         market ticker (``"KXFED-24DEC"``) and its bare series (``"KXFED"``)
         resolve to the same fee model.
+
+        Deliberately *not* gated by the maintenance-window check: a fee schedule
+        is static reference data, not a live market-data snapshot, so it stays
+        readable while the exchange is paused/closed (it never returns tradeable
+        prices). Only the snapshot-fetching methods (``list_markets`` /
+        ``get_market`` / ``get_order_book``) suspend during maintenance.
 
         Args:
             market_or_series: A market ticker or a bare series ticker.

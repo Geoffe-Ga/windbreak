@@ -469,8 +469,17 @@ def _connector_over(
     ledger: InMemoryEventLedgerWriter,
     clock: Callable[[], datetime],
 ) -> KalshiConnector:
-    """Wire a `KalshiConnector` over a paginated fake session."""
-    client = KalshiClient(base_url="https://fake.test", timeout=5, session=session)
+    """Wire a `KalshiConnector` over a paginated fake session.
+
+    Resilience is disabled (`resilience=None`): these adapter tests exercise
+    pagination/normalization logic, not rate limiting, and one drives the
+    1000-page safety cap -- the on-by-default token bucket would otherwise
+    throttle that runaway walk with real sleeps. Resilience wiring is covered
+    end-to-end in `test_client_resilience.py`.
+    """
+    client = KalshiClient(
+        base_url="https://fake.test", timeout=5, session=session, resilience=None
+    )
     return KalshiConnector(client, ledger, clock=clock)
 
 

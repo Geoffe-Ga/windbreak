@@ -118,7 +118,20 @@ tests (`tests/connector/test_validation.py`,
   orderbook schema's `cosmetic` allowlist, so validating this payload must
   only log a warning -- no ledger event, no raise.
 
-The 5xx / 429 / malformed-JSON fault cases are session-scripted (see
-`ScriptedFaultSession` in `tests/connector/kalshi/conftest.py`) rather than
-fixture files, since they are HTTP-transport-level faults, not payload-shape
-drift.
+The 5xx / 429 / malformed-JSON (and truncated-body) fault cases are
+session-scripted (see `ScriptedFaultSession` / `QueuedFaultResponse` in
+`tests/connector/kalshi/conftest.py`) rather than fixture files, since they are
+HTTP-transport-level faults, not payload-shape drift. Each is exercised
+end-to-end through a real `KalshiClient` in
+`tests/connector/kalshi/test_client_resilience.py`:
+
+* **5xx** — `test_get_recovers_after_two_5xx_then_a_200` (transparent retry to
+  recovery) and `test_persistent_5xx_exhausts_retries_and_eventually_trips_the_breaker`
+  (retry exhaustion → circuit-breaker halt).
+* **429** — `test_get_recovers_after_a_429_then_a_200` (rate-limit backpressure
+  retried like a 5xx).
+* **Malformed / truncated body** — `QueuedFaultResponse(json_raises=...)` makes
+  the transport's real `response.json()` raise;
+  `test_get_recovers_after_a_malformed_body_then_a_200` proves recovery and
+  `test_persistent_malformed_body_exhausts_retries_and_surfaces` proves it fails
+  closed (the parse error surfaces; no partial data is returned).

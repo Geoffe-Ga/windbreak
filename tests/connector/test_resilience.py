@@ -44,12 +44,12 @@ Pinned contract details not fully specified by the architect's design:
   (`failure_threshold`, `cooldown_seconds`, `clock` for `CircuitBreaker`)
   are not spelled out beyond `ResilientCaller`'s; this suite pins them as
   the natural, minimal standalone seam.
-* `TokenBucket` is tested fully standalone here, *not* wired through
-  `ResilientCaller.call()`: the design doesn't specify whether rate
-  limiting happens inside `ResilientCaller` per attempt or is wired
-  elsewhere, so no test asserts that integration -- every `ResilientCaller`
-  test below sets `bucket_capacity` generously high so no rate-limit sleep
-  can appear alongside the backoff sleeps being pinned.
+* `TokenBucket` is tested both standalone here *and* wired through
+  `ResilientCaller`: a token is acquired before every *physical* attempt
+  (`test_per_attempt_token_acquisition_gates_each_retry` pins this), so a
+  retry storm cannot outrun the configured request budget. The backoff-timing
+  tests below still set `bucket_capacity` generously high so no rate-limit
+  sleep is interleaved with the backoff sleeps being pinned exactly.
 """
 
 from __future__ import annotations
@@ -63,6 +63,7 @@ import pytest
 from hedgekit.connector.kalshi.client import KalshiApiError
 from hedgekit.connector.resilience import (
     CONNECTOR_HALT_EVENT,
+    DEFAULT_RESILIENCE_POLICY,
     CircuitBreaker,
     CircuitState,
     ConnectorHaltError,
@@ -70,6 +71,7 @@ from hedgekit.connector.resilience import (
     ResiliencePolicy,
     ResilientCaller,
     TokenBucket,
+    build_default_resilient_caller,
 )
 from hedgekit.connector.snapshot import InMemoryEventLedgerWriter
 
@@ -381,6 +383,29 @@ def test_record_success_while_half_open_closes_breaker_and_resets_counter(
     breaker.record_failure()  # only the 1st failure since the reset
     assert breaker.state is CircuitState.CLOSED
     breaker.before_call()  # still fine -- proves the counter reset, not carried over
+
+
+def test_half_open_admits_only_a_single_probe(
+    fake_int_clock: _FakeIntClock,
+) -> None:
+    """Once cooldown elapses, exactly one probe is admitted; others are refused.
+
+    This is the "half-open breaker race" guard: after the cooldown, the first
+    `before_call()` transitions the breaker to `HALF_OPEN` and admits its caller
+    as the sole recovery probe. A second caller arriving before that probe
+    resolves (state still `HALF_OPEN`) must be refused, so a burst of callers
+    cannot all stampede the recovering venue at once.
+    """
+    breaker = CircuitBreaker(1, 30, clock=fake_int_clock)
+    breaker.record_failure()  # threshold=1 -> OPEN at clock=0
+
+    fake_int_clock.advance(30)  # cooldown elapsed
+    breaker.before_call()  # first caller: -> HALF_OPEN, admitted as the probe
+    assert breaker.state is CircuitState.HALF_OPEN
+
+    with pytest.raises(ConnectorHaltError):
+        breaker.before_call()  # second caller refused: a probe is already in flight
+    assert breaker.state is CircuitState.HALF_OPEN  # still awaiting the one probe
 
 
 def test_record_failure_while_half_open_reopens_and_ledgers_a_fresh_cooldown(
@@ -707,6 +732,153 @@ def test_cooldown_elapsed_half_open_probe_failure_reopens_the_breaker(
 
     with pytest.raises(ConnectorHaltError):
         caller.call(always_fails)  # immediately OPEN again (fresh cooldown)
+
+
+def test_per_attempt_token_acquisition_gates_each_retry(
+    fake_int_clock: _FakeIntClock,
+    recording_sleeper: _RecordingSleeper,
+    ledger: InMemoryEventLedgerWriter,
+) -> None:
+    """A token is spent per *physical* attempt, so retries consume the budget.
+
+    A 2-token bucket and three retryable attempts: the first two attempts drain
+    the bucket, and the third finds it empty and sleeps one full refill interval
+    (`refill_interval_seconds=10`). With `base_backoff_seconds=0` the backoff
+    sleeps are all `0`, so the single `10` in the recorded sleeps is
+    unambiguously the rate-limit wait -- proving tokens are charged per attempt,
+    not once per logical `call()`.
+    """
+    policy = _policy(
+        bucket_capacity=2,
+        refill_interval_seconds=10,
+        max_attempts=3,
+        base_backoff_seconds=0,
+        max_backoff_seconds=0,
+        max_jitter_seconds=0,
+        failure_threshold=99,  # keep the breaker out of the way
+    )
+    caller = ResilientCaller(
+        policy,
+        ledger,
+        clock=fake_int_clock,
+        sleeper=recording_sleeper,
+        rng=random.Random(1),
+        wall_clock=_wall_clock,
+    )
+
+    def always_500() -> None:
+        raise KalshiApiError(500)
+
+    with pytest.raises(KalshiApiError):
+        caller.call(always_500)
+
+    assert recording_sleeper.calls == [0, 0, 10]
+
+
+def test_half_open_probe_failure_ledgers_the_running_consecutive_failure_count(
+    fake_int_clock: _FakeIntClock,
+    recording_sleeper: _RecordingSleeper,
+    ledger: InMemoryEventLedgerWriter,
+) -> None:
+    """A re-trip's ledgered failure count is the true streak, not a stale copy.
+
+    With `failure_threshold=3`, three failing `call()`s trip the breaker and
+    ledger `consecutive_failures=3`. After the cooldown, a single failed
+    half-open probe re-trips it -- and the second `CONNECTOR_HALT` must report
+    `4` (the unbroken streak of 3 + the failed probe), not a stale `3`.
+    """
+    policy = _policy(
+        max_attempts=1,
+        failure_threshold=3,
+        cooldown_seconds=30,
+        base_backoff_seconds=0,
+        max_jitter_seconds=0,
+        bucket_capacity=1_000,
+    )
+    caller = ResilientCaller(
+        policy,
+        ledger,
+        clock=fake_int_clock,
+        sleeper=recording_sleeper,
+        rng=random.Random(1),
+        wall_clock=_wall_clock,
+    )
+
+    def always_fails() -> None:
+        raise KalshiApiError(500)
+
+    for _ in range(3):  # three call()s reach failure_threshold=3 -> trip OPEN
+        with pytest.raises(KalshiApiError):
+            caller.call(always_fails)
+
+    (first_halt,) = ledger.events_by_type(CONNECTOR_HALT_EVENT)
+    assert first_halt.payload["consecutive_failures"] == 3
+
+    fake_int_clock.advance(30)  # cooldown elapsed -> next call is the probe
+    with pytest.raises(KalshiApiError):
+        caller.call(always_fails)  # HALF_OPEN probe fails -> re-trip
+
+    halts = ledger.events_by_type(CONNECTOR_HALT_EVENT)
+    assert len(halts) == 2
+    assert halts[1].payload["consecutive_failures"] == 4
+
+
+# =============================================================================
+# build_default_resilient_caller: the on-by-default production seam
+# =============================================================================
+
+
+def test_build_default_resilient_caller_returns_a_usable_caller() -> None:
+    """The default factory builds a working `ResilientCaller` with no arguments."""
+    caller = build_default_resilient_caller()
+
+    assert isinstance(caller, ResilientCaller)
+    assert caller.call(lambda: "ok") == "ok"  # happy path: no sleep, no failure
+
+
+def test_build_default_resilient_caller_honors_injected_timing_and_policy(
+    fake_int_clock: _FakeIntClock,
+    recording_sleeper: _RecordingSleeper,
+    ledger: InMemoryEventLedgerWriter,
+) -> None:
+    """Injected seams drive the same default construction deterministically.
+
+    A single-token bucket forces the second attempt to wait a full refill
+    interval through the injected recording sleeper -- proving the factory wires
+    the supplied policy and timing rather than only the real `time` sources.
+    """
+    policy = _policy(
+        bucket_capacity=1,
+        refill_interval_seconds=5,
+        max_attempts=2,
+        base_backoff_seconds=0,
+        max_backoff_seconds=0,
+        max_jitter_seconds=0,
+        failure_threshold=99,
+    )
+    caller = build_default_resilient_caller(
+        ledger,
+        policy=policy,
+        clock=fake_int_clock,
+        sleeper=recording_sleeper,
+        rng=random.Random(1),
+        wall_clock=_wall_clock,
+    )
+
+    def always_500() -> None:
+        raise KalshiApiError(500)
+
+    with pytest.raises(KalshiApiError):
+        caller.call(always_500)
+
+    assert recording_sleeper.calls == [0, 5]  # backoff 0, then the rate-limit wait
+
+
+def test_default_resilience_policy_is_a_valid_positive_budget() -> None:
+    """The shared default policy is a sane, constructible budget."""
+    assert DEFAULT_RESILIENCE_POLICY.max_attempts >= 1
+    assert DEFAULT_RESILIENCE_POLICY.bucket_capacity >= 1
+    assert DEFAULT_RESILIENCE_POLICY.failure_threshold >= 1
 
 
 # =============================================================================

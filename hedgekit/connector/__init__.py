@@ -41,6 +41,7 @@ from hedgekit.connector.models import (
 from hedgekit.connector.paper import PaperExchange, PaperOrderIntent
 from hedgekit.connector.resilience import (
     CONNECTOR_HALT_EVENT,
+    DEFAULT_RESILIENCE_POLICY,
     CircuitBreaker,
     CircuitState,
     ConnectorHaltError,
@@ -48,6 +49,7 @@ from hedgekit.connector.resilience import (
     ResiliencePolicy,
     ResilientCaller,
     TokenBucket,
+    build_default_resilient_caller,
 )
 from hedgekit.connector.semantics import (
     BalanceSemantics,
@@ -82,6 +84,7 @@ __all__ = [
     "CONNECTOR_HALT_EVENT",
     "DEFAULT_FEE_HAIRCUT_PPM",
     "DEFAULT_MAX_PARTICIPATION_PPM",
+    "DEFAULT_RESILIENCE_POLICY",
     "MARKET_SNAPSHOT_EVENT",
     "PAPER_FILL_MODEL_VERSION",
     "SCHEMA_ANOMALY_EVENT",
@@ -129,6 +132,7 @@ __all__ = [
     "UnknownFeeModelError",
     "UnknownMarketError",
     "UnsettledProceeds",
+    "build_default_resilient_caller",
     "ensure_fresh",
     "is_fresh",
     "kalshi_default_schema_registry",
