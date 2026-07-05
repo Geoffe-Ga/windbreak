@@ -1,0 +1,24 @@
+{
+  "events": [
+    {
+      "event_ticker": "KXFED",
+      "title": "Federal Reserve rate decisions",
+      "mutually_exclusive": true
+    },
+    {
+      "event_ticker": "KXWEA",
+      "title": "NYC December snowfall",
+      "mutually_exclusive": false
+    },
+    {
+      "event_ticker": "FAKE",
+      "title": "Fake perpetual event",
+      "mutually_exclusive": false
+    },
+    {
+      "event_ticker": "KXSCALAR",
+      "title": "Fake scalar event",
+      "mutually_exclusive": false
+    }
+  ]
+}
