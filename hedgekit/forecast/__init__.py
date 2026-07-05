@@ -17,19 +17,37 @@ from hedgekit.forecast.cassettes import (
     RecordingCassette,
     ReplayCassette,
 )
+from hedgekit.forecast.citations import (
+    FAILURE_CONTENT_HASH_MISMATCH,
+    FAILURE_PUBLICATION_DATE_INVALID,
+    FAILURE_QUOTE_NOT_FOUND,
+    FAILURE_UNKNOWN_SOURCE_TYPE,
+    FAILURE_UNREACHABLE,
+    KNOWN_SOURCE_TYPES,
+    CitationVerdict,
+    content_hash_of,
+    count_verified,
+    verify_citation,
+    verify_citations,
+)
 from hedgekit.forecast.coherence import (
     OTHER_BUCKET_KEY,
     GroupCoherenceResult,
     forecast_group,
 )
 from hedgekit.forecast.ensemble import VoteAggregate, aggregate_votes
-from hedgekit.forecast.pipeline import run_pipeline
+from hedgekit.forecast.pipeline import (
+    ABSTENTION_NO_VERIFIED_CITATIONS,
+    DEFAULT_MIN_VERIFIED_CITATIONS,
+    run_pipeline,
+)
 from hedgekit.forecast.records import (
     BaselineQuoteSnapshot,
     Citation,
     ForecastRecord,
     ModelVote,
     forecast_record_to_payload,
+    is_live_eligible,
 )
 from hedgekit.forecast.sandbox import (
     EgressDeniedError,
@@ -51,11 +69,20 @@ from hedgekit.forecast.triage import (
 )
 
 __all__ = [
+    "ABSTENTION_NO_VERIFIED_CITATIONS",
+    "DEFAULT_MIN_VERIFIED_CITATIONS",
+    "FAILURE_CONTENT_HASH_MISMATCH",
+    "FAILURE_PUBLICATION_DATE_INVALID",
+    "FAILURE_QUOTE_NOT_FOUND",
+    "FAILURE_UNKNOWN_SOURCE_TYPE",
+    "FAILURE_UNREACHABLE",
+    "KNOWN_SOURCE_TYPES",
     "OTHER_BUCKET_KEY",
     "TRIAGE_THRESHOLD_PPM",
     "BaselineQuoteSnapshot",
     "CassetteMissError",
     "Citation",
+    "CitationVerdict",
     "EgressDeniedError",
     "FetchTransport",
     "ForbiddenLiveTransport",
@@ -78,9 +105,14 @@ __all__ = [
     "VoteAggregate",
     "aggregate_votes",
     "build_research_tools",
+    "content_hash_of",
+    "count_verified",
     "forecast_group",
     "forecast_record_to_payload",
+    "is_live_eligible",
     "run_pipeline",
     "run_triaged_pipeline",
     "tool_registry",
+    "verify_citation",
+    "verify_citations",
 ]

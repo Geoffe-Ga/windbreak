@@ -105,6 +105,72 @@ def _require_non_empty(value: str, field_name: str) -> None:
         raise ValueError(f"{field_name} must be non-empty")
 
 
+def _require_non_negative_count(value: int, field_name: str) -> None:
+    """Guard that a count field is a true, non-negative integer.
+
+    Mirrors :func:`_require_ppm`'s bool/int convention: a stray ``bool`` (an
+    ``int`` subclass) must never masquerade as a citation count, so it is
+    rejected before the range check.
+
+    Args:
+        value: The candidate count.
+        field_name: The owning field's name, surfaced in the error message.
+
+    Raises:
+        TypeError: If ``value`` is a ``bool`` or is not an ``int``.
+        ValueError: If ``value`` is negative.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(
+            f"{field_name} must be a non-bool int, got {type(value).__name__}"
+        )
+    if value < 0:
+        raise ValueError(f"{field_name} must be non-negative, got {value}")
+
+
+def is_live_eligible(
+    *,
+    verified_citation_count: int,
+    min_verified_citations: int,
+    triage_stage: str,
+    coherence_flag: bool,
+    abstention_reason: str | None,
+) -> bool:
+    """Decide whether a forecast may back a live order (SPEC S8.8).
+
+    Live eligibility requires enough independently verified citations *and* the
+    absence of every ineligibility trigger. Four independent conditions each
+    force ineligibility: a triage-only stage (never backed by full research), a
+    raised coherence flag (an incoherent forecast), a set abstention reason (the
+    engine declined to stand behind the estimate), or a verified-citation count
+    below the configured minimum.
+
+    Args:
+        verified_citation_count: How many citations independently verified.
+        min_verified_citations: The minimum verified citations required.
+        triage_stage: The record's triage stage (``"triage_only"`` or
+            ``"full"``).
+        coherence_flag: Whether the forecast was flagged incoherent.
+        abstention_reason: Why the engine abstained, or ``None``.
+
+    Returns:
+        ``True`` if the forecast is live-eligible, else ``False``.
+
+    Raises:
+        TypeError: If either count field is a ``bool`` or non-``int``.
+        ValueError: If either count field is negative.
+    """
+    _require_non_negative_count(verified_citation_count, "verified_citation_count")
+    _require_non_negative_count(min_verified_citations, "min_verified_citations")
+    ineligible = (
+        triage_stage == _TRIAGE_ONLY_STAGE
+        or coherence_flag
+        or abstention_reason is not None
+        or verified_citation_count < min_verified_citations
+    )
+    return not ineligible
+
+
 @dataclass(frozen=True, slots=True)
 class ModelVote:
     """One ensemble member's structured probability vote (SPEC S6.3 / S8.6).
@@ -240,13 +306,14 @@ class ForecastRecord:
             TypeError: If any ppm field is a ``bool`` or non-``int``.
             ValueError: If any ppm field is out of range, ``forecast_id`` or
                 ``market_ticker`` is empty, ``triage_stage`` is unrecognized,
-                or the record is ``eligible_for_live`` while either
-                live-ineligibility trigger holds. Two independent triggers each
+                or the record is ``eligible_for_live`` while any
+                live-ineligibility trigger holds. Three independent triggers each
                 force live-ineligibility: ``triage_stage == "triage_only"`` (a
                 triage-only record was never backed by the full pipeline's
-                research) and ``coherence_flag`` being ``True`` (an incoherent
-                forecast must never back a live order). Each message names the
-                offending field(s).
+                research), ``coherence_flag`` being ``True`` (an incoherent
+                forecast must never back a live order), and ``abstention_reason``
+                being non-``None`` (the engine declined to stand behind the
+                estimate). Each message names the offending field(s).
         """
         for field_name in _PPM_FIELDS:
             _require_ppm(getattr(self, field_name), field_name)
@@ -265,6 +332,10 @@ class ForecastRecord:
         if self.coherence_flag and self.eligible_for_live:
             raise ValueError(
                 "eligible_for_live must be False when coherence_flag is True"
+            )
+        if self.abstention_reason is not None and self.eligible_for_live:
+            raise ValueError(
+                "eligible_for_live must be False when abstention_reason is set"
             )
 
 

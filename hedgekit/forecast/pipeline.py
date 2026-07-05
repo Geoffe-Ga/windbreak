@@ -22,15 +22,26 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, Final, NamedTuple
 
 from hedgekit.forecast.cassettes import LlmRequest
+from hedgekit.forecast.citations import (
+    content_hash_of,
+    count_verified,
+    verify_citations,
+)
 from hedgekit.forecast.ensemble import aggregate_votes
-from hedgekit.forecast.records import Citation, ForecastRecord, ModelVote
+from hedgekit.forecast.records import (
+    Citation,
+    ForecastRecord,
+    ModelVote,
+    is_live_eligible,
+)
 
 if TYPE_CHECKING:
     from hedgekit.connector.models import NormalizedMarket
     from hedgekit.forecast.cassettes import LlmTransport
+    from hedgekit.forecast.citations import CitationVerdict
     from hedgekit.forecast.ensemble import VoteAggregate
     from hedgekit.forecast.records import BaselineQuoteSnapshot
     from hedgekit.forecast.sandbox import ResearchTools
@@ -78,6 +89,25 @@ _RESEARCH_COST_MICROS = 3_000_000
 #: Hours per day and seconds per hour, for the integer horizon computation.
 _HOURS_PER_DAY = 24
 _SECONDS_PER_HOUR = 3_600
+
+#: Default minimum independently-verified citations a full record needs to be
+#: live-eligible (SPEC S16 ``ForecastConfig.min_verified_citations`` default).
+DEFAULT_MIN_VERIFIED_CITATIONS: Final = 3
+
+#: Abstention reason stamped when a full run gathers zero verified citations.
+ABSTENTION_NO_VERIFIED_CITATIONS: Final = "no_verified_citations"
+
+#: Maximum words retained in a citation's quoted excerpt (SPEC S8.5 quote
+#: length cap).
+_MAX_QUOTE_WORDS: Final = 25
+
+#: Deterministic rationale stamped on every zero-verified-citation abstention
+#: record (mirrors ``triage._TRIAGE_RATIONALE_MD``).
+_ABSTENTION_RATIONALE_MD = (
+    "## Abstained forecast\n\n"
+    "The full pipeline ran, but no gathered citation could be independently "
+    "verified, so the engine abstained. This record is live-ineligible.\n"
+)
 
 
 class _EnsembleMember(NamedTuple):
@@ -138,18 +168,6 @@ def _fingerprint(text: str) -> str:
         A lowercase, 64-character sha256 hex digest.
     """
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def _content_hash(text: str) -> str:
-    """Return a namespaced sha256 content hash for citation provenance.
-
-    Args:
-        text: The content to hash.
-
-    Returns:
-        A ``sha256:``-prefixed hex digest.
-    """
-    return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _iso_z(moment: datetime) -> str:
@@ -248,7 +266,6 @@ def decompose_subquestions(market: NormalizedMarket) -> tuple[str, ...]:
 
 
 def bounded_web_research(
-    market: NormalizedMarket,
     subquestions: tuple[str, ...],
     *,
     tools: ResearchTools,
@@ -258,16 +275,28 @@ def bounded_web_research(
     Each subquestion is searched for a candidate URL, whose content is fetched
     through the egress-allowlisted :meth:`ResearchTools.fetch` -- so a search
     result off the allowlist raises :class:`EgressDeniedError` here, on the pipeline
-    path itself. The resulting citations are deterministic (the fixture
-    transports derive URL and content from their inputs) and integer-free.
+    path itself (a policy violation fails the run closed, never silently). An
+    *unreachable* source (the transport raising an ``OSError`` such as
+    ``ConnectionError``) is not a policy violation but a dead link, so it is
+    skipped: it simply contributes no citation, letting the downstream
+    verification stage abstain on an evidence-free run. Each citation's
+    ``content_hash`` and ``quoted_text`` are derived from that one fetched
+    content (the excerpt is its first ``_MAX_QUOTE_WORDS`` words, SPEC S8.5), so
+    a citation self-verifies against a stable refetch of the same URL. That
+    self-verification assumes whitespace-normalized content: the excerpt is
+    space-joined, while :func:`hedgekit.forecast.citations.verify_citation`'s
+    quote check is a raw substring test, so a live fetch returning runs of
+    whitespace or newlines would need normalizing before the substring check
+    (the current deterministic-stub sources are single-spaced, so this holds
+    today). The resulting citations are deterministic (the fixture transports
+    derive URL and content from their inputs) and integer-free.
 
     Args:
-        market: The market under forecast.
         subquestions: The decomposed subquestions to research.
         tools: The sandboxed research tools (search/fetch capabilities).
 
     Returns:
-        One deterministic citation per subquestion that yielded a candidate URL.
+        One deterministic citation per reachable subquestion candidate URL.
     """
     citations: list[Citation] = []
     for subquestion in subquestions:
@@ -275,12 +304,15 @@ def bounded_web_research(
         if not urls:
             continue
         url = urls[0]
-        content = tools.fetch(url)
+        try:
+            content = tools.fetch(url)
+        except OSError:
+            continue
         citations.append(
             Citation(
                 url=url,
-                content_hash=_content_hash(content),
-                quoted_text=f"Evidence for {market.ticker}: {subquestion}",
+                content_hash=content_hash_of(content),
+                quoted_text=" ".join(content.split()[:_MAX_QUOTE_WORDS]),
                 publication_date=_CITATION_PUBLICATION_DATE,
                 source_type="research_note",
             )
@@ -288,18 +320,36 @@ def bounded_web_research(
     return tuple(citations)
 
 
-def assess_source_reliability(citations: tuple[Citation, ...]) -> tuple[str, ...]:
-    """Stage 6: note the reliability of each gathered source.
+def _source_note(verdict: CitationVerdict) -> str:
+    """Render one truthful source-quality note from a citation verdict.
 
     Args:
-        citations: The gathered citations.
+        verdict: The citation's verification verdict.
 
     Returns:
-        One source-quality note per citation.
+        A note naming the source type and URL, prefixed ``verified`` when the
+        citation verified or ``unverified (<failure>)`` when it did not.
     """
-    return tuple(
-        f"verified {citation.source_type} at {citation.url}" for citation in citations
-    )
+    citation = verdict.citation
+    if verdict.verified:
+        return f"verified {citation.source_type} at {citation.url}"
+    return f"unverified ({verdict.failure}) {citation.source_type} at {citation.url}"
+
+
+def assess_source_reliability(verdicts: tuple[CitationVerdict, ...]) -> tuple[str, ...]:
+    """Stage 6: note the verified reliability of each gathered source.
+
+    The note is truthful about verification: a verdict that failed to verify is
+    labelled ``unverified`` with its failure code, never silently reported as
+    verified.
+
+    Args:
+        verdicts: The per-citation verification verdicts.
+
+    Returns:
+        One source-quality note per verdict.
+    """
+    return tuple(_source_note(verdict) for verdict in verdicts)
 
 
 def adversarial_counterargument(subquestions: tuple[str, ...]) -> str:
@@ -491,6 +541,7 @@ def build_forecast_record(
     source_notes: tuple[str, ...],
     rationale: str,
     coherence_sum: int | None,
+    eligible_for_live: bool = True,
 ) -> ForecastRecord:
     """Assemble and validate the final :class:`ForecastRecord`.
 
@@ -506,6 +557,8 @@ def build_forecast_record(
         source_notes: The source-quality notes.
         rationale: The rationale markdown.
         coherence_sum: The coherence group sum, or None.
+        eligible_for_live: Whether the record may back a live order; defaults to
+            ``True`` and is overridden by the caller's live-eligibility gate.
 
     Returns:
         A schema-valid, immutable forecast record.
@@ -531,7 +584,60 @@ def build_forecast_record(
         coherence_group_sum_ppm=coherence_sum,
         coherence_flag=coherence_sum is not None,
         abstention_reason=None,
-        eligible_for_live=True,
+        eligible_for_live=eligible_for_live,
+    )
+
+
+def _build_abstention_record(
+    *,
+    market: NormalizedMarket,
+    baseline: BaselineQuoteSnapshot,
+    created_at: datetime,
+    question_hash: str,
+    citations: tuple[Citation, ...],
+    abstention_reason: str,
+) -> ForecastRecord:
+    """Assemble a schema-valid abstention record (mirrors the triage-only one).
+
+    The baseline collapses the point estimate and both confidence bounds onto
+    the same ppm value (no ensemble ran), the gathered citations are retained
+    for audit, and the record is permanently live-ineligible with its
+    abstention reason set.
+
+    Args:
+        market: The market under forecast.
+        baseline: The baseline quote snapshot.
+        created_at: The forecast creation instant.
+        question_hash: The normalized-question hash.
+        citations: The gathered citations, retained for audit.
+        abstention_reason: Why the engine abstained.
+
+    Returns:
+        A schema-valid, immutable abstention forecast record.
+    """
+    baseline_ppm = _baseline_probability_ppm(baseline)
+    return ForecastRecord(
+        forecast_id=_forecast_id(question_hash, baseline.snapshot_id, created_at),
+        market_ticker=market.ticker,
+        normalized_question_hash=question_hash,
+        probability_ppm=baseline_ppm,
+        ci_low_ppm=baseline_ppm,
+        ci_high_ppm=baseline_ppm,
+        model_votes=(),
+        vote_dispersion_ppm=0,
+        rationale_markdown=_ABSTENTION_RATIONALE_MD,
+        citations=citations,
+        source_quality_notes=(),
+        research_cost_micros=_RESEARCH_COST_MICROS,
+        triage_stage="full",
+        created_at=created_at,
+        forecast_horizon_hours=_forecast_horizon_hours(market, created_at),
+        market_price_baseline_pips=baseline.price_pips,
+        baseline_quote_snapshot_id=baseline.snapshot_id,
+        coherence_group_sum_ppm=None,
+        coherence_flag=False,
+        abstention_reason=abstention_reason,
+        eligible_for_live=False,
     )
 
 
@@ -542,6 +648,7 @@ def run_pipeline(
     transport: LlmTransport,
     created_at: datetime,
     research_tools: ResearchTools,
+    min_verified_citations: int = DEFAULT_MIN_VERIFIED_CITATIONS,
 ) -> ForecastRecord:
     """Run the twelve-stage pipeline into a schema-valid forecast record.
 
@@ -550,8 +657,12 @@ def run_pipeline(
     or empty transport fails the run closed rather than reaching a network.
     Stage 5 reaches the web only through ``research_tools``, whose egress
     allowlist can make the run raise :class:`EgressDeniedError` before any vote.
-    Given identical inputs and ``created_at``, two runs produce equal records
-    and byte-identical payloads.
+    Each gathered citation is then independently re-verified (SPEC S8.8); when
+    *zero* verify, the run abstains -- returning a live-ineligible abstention
+    record *before* the vote stage, so ``transport`` is never touched. Otherwise
+    live eligibility is gated on the verified count meeting
+    ``min_verified_citations``. Given identical inputs and ``created_at``, two
+    runs produce equal records and byte-identical payloads.
 
     Args:
         market: The market under forecast.
@@ -561,6 +672,9 @@ def run_pipeline(
             (keyword-only; never ``datetime.now()``).
         research_tools: The sandboxed research tools threaded into stage 5's
             bounded web research (keyword-only).
+        min_verified_citations: The minimum independently-verified citations a
+            record needs to be live-eligible (keyword-only). Abstention on zero
+            verified citations takes absolute precedence over this knob.
 
     Returns:
         The produced, immutable forecast record.
@@ -569,8 +683,19 @@ def run_pipeline(
     criteria = extract_resolution_criteria(market)
     base_rate_ppm = outside_view_base_rate(baseline)
     subquestions = decompose_subquestions(market)
-    citations = bounded_web_research(market, subquestions, tools=research_tools)
-    source_notes = assess_source_reliability(citations)
+    citations = bounded_web_research(subquestions, tools=research_tools)
+    verdicts = verify_citations(research_tools, citations, as_of=created_at)
+    verified_count = count_verified(verdicts)
+    if verified_count == 0:
+        return _build_abstention_record(
+            market=market,
+            baseline=baseline,
+            created_at=created_at,
+            question_hash=question_hash,
+            citations=citations,
+            abstention_reason=ABSTENTION_NO_VERIFIED_CITATIONS,
+        )
+    source_notes = assess_source_reliability(verdicts)
     counterpoints = adversarial_counterargument(subquestions)
     votes = collect_model_votes(market, baseline, transport=transport)
     aggregate = aggregate_median(votes)
@@ -593,4 +718,11 @@ def run_pipeline(
         source_notes=source_notes,
         rationale=rationale,
         coherence_sum=coherence_sum,
+        eligible_for_live=is_live_eligible(
+            verified_citation_count=verified_count,
+            min_verified_citations=min_verified_citations,
+            triage_stage="full",
+            coherence_flag=coherence_sum is not None,
+            abstention_reason=None,
+        ),
     )
