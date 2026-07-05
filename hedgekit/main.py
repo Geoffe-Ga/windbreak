@@ -27,6 +27,17 @@ if TYPE_CHECKING:
 #: of the SPEC mode machine; hedgekit ships research-only for now.
 MODE_RESEARCH = "RESEARCH"
 
+#: The four SPEC processes ``hedgekit run --process`` can represent, in SPEC
+#: order. Each invocation stands in for exactly one; the chosen token is
+#: stamped as the ``component`` on every heartbeat and shutdown log line. The
+#: gateway token is underscore-separated (``order_gateway``) to match its
+#: Python package name, even though its compose/systemd unit names are
+#: hyphenated (``order-gateway``).
+PROCESS_CHOICES = ("pipeline", "riskkernel", "order_gateway", "dashboard")
+
+#: Default process represented when ``--process`` is omitted.
+_DEFAULT_PROCESS = "pipeline"
+
 #: Seconds between heartbeats when ``--heartbeat-interval`` is omitted.
 _DEFAULT_HEARTBEAT_INTERVAL = 5.0
 
@@ -127,6 +138,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Stop after this many heartbeats (default: run until signalled).",
     )
+    run_parser.add_argument(
+        "--process",
+        choices=PROCESS_CHOICES,
+        default=_DEFAULT_PROCESS,
+        help="Which SPEC process this invocation represents (default: %(default)s).",
+    )
     alert_parser = subparsers.add_parser("alert-test")
     alert_parser.add_argument(
         "type",
@@ -147,6 +164,7 @@ def run_loop(
     max_beats: int | None = None,
     stop_event: threading.Event | None = None,
     state: ShutdownState | None = None,
+    component: str = _DEFAULT_PROCESS,
 ) -> None:
     """Emit heartbeats until stopped by the stop event or a beat budget.
 
@@ -160,6 +178,10 @@ def run_loop(
         state: Optional shared shutdown state. When a signal handler has
             recorded a signal name on it, that name becomes the shutdown
             reason; otherwise the generic ``signal`` reason is used.
+        component: Which SPEC process (one of :data:`PROCESS_CHOICES`) this
+            loop represents. Stamped as the ``component`` extra on every
+            heartbeat and shutdown log record; the rendered message text is
+            unchanged.
     """
     if stop_event is None:
         stop_event = state.stop_event if state is not None else threading.Event()
@@ -175,10 +197,15 @@ def run_loop(
             reason = _REASON_MAX_BEATS
             break
         seq += 1
-        _LOGGER.info("mode=%s heartbeat seq=%d", MODE_RESEARCH, seq)
+        _LOGGER.info(
+            "mode=%s heartbeat seq=%d",
+            MODE_RESEARCH,
+            seq,
+            extra={"component": component},
+        )
         stop_event.wait(interval_seconds)
 
-    _LOGGER.info("shutdown reason=%s", reason)
+    _LOGGER.info("shutdown reason=%s", reason, extra={"component": component})
 
 
 def _install_signal_handlers(state: ShutdownState) -> None:
@@ -241,6 +268,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         max_beats=args.max_beats,
         stop_event=state.stop_event,
         state=state,
+        component=args.process,
     )
     return 0
 
