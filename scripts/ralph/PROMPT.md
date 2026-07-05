@@ -104,6 +104,13 @@ drives Gates 3–4. The taxonomy you dispatch is mapped in
 
 ## Hard constraints
 - One issue per call. Never chain.
+- **No blocking waits — never hang the lane.** Never write an unbounded shell
+  polling loop (`until <cond>; do …; sleep N; done`, `while ! <cond>; do sleep N; done`,
+  or open-ended sleep-and-retry). Waiting on CI/review/merge is the
+  orchestrator's job — return instead. If you must wait on something you
+  started (server boot, file creation), use a bounded retry with a fixed
+  attempt count and a loud failure when exhausted, or the tool's own
+  `--timeout` flag. See "No blocking waits" in `shared/house-rules.md`.
 - Never write to `main` directly (except `scripts/ralph/state.json`, which the
   orchestrator handles).
 - Never force-push. Rewrite on a fresh branch if needed.

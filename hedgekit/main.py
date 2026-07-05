@@ -12,13 +12,14 @@ import argparse
 import logging
 import math
 import signal
-import sys
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from hedgekit.alerts import AlertDispatcher, AlertType, LoggingLedgerWriter, cli_token
 from hedgekit.ledger import rebuild_command
+from hedgekit.logging_setup import configure_logging
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -31,8 +32,11 @@ MODE_RESEARCH = "RESEARCH"
 #: Seconds between heartbeats when ``--heartbeat-interval`` is omitted.
 _DEFAULT_HEARTBEAT_INTERVAL = 5.0
 
-#: Log-record format for the console handler installed by :func:`main`.
-_LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
+#: Default alert body dispatched by the ``alert-test`` subcommand.
+_DEFAULT_ALERT_MESSAGE = "test alert"
+
+#: Maps each alert's CLI token back to its :class:`AlertType` member.
+_TOKEN_TO_ALERT_TYPE = {cli_token(alert_type): alert_type for alert_type in AlertType}
 
 #: Shutdown reason logged when the loop exhausts its ``--max-beats`` budget.
 _REASON_MAX_BEATS = "max_beats"
@@ -100,14 +104,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     Returns:
         A parser with a required ``run`` subcommand exposing
-        ``--heartbeat-interval`` and ``--max-beats``, plus a ``rebuild``
-        subcommand exposing ``--ledger-path`` and ``--output-dir``.
+        ``--heartbeat-interval`` and ``--max-beats``, a ``rebuild`` subcommand
+        exposing ``--ledger-path`` and ``--output-dir``, and a developer-only
+        ``alert-test`` subcommand.
     """
     parser = argparse.ArgumentParser(
         prog="hedgekit",
         description="hedgekit always-on forecast trader CLI.",
     )
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    # ``metavar`` keeps the auto-generated ``{run,alert-test}`` choice list --
+    # which would otherwise leak the hidden ``alert-test`` command -- out of the
+    # top-level usage line. The ``alert-test`` parser below is registered without
+    # a ``help`` argument, so argparse creates no pseudo-action for it and it is
+    # omitted from the detailed subcommand listing (a developer-only command).
+    subparsers = parser.add_subparsers(dest="command", required=True, metavar="command")
     run_parser = subparsers.add_parser("run", help="Start the heartbeat loop.")
     run_parser.add_argument(
         "--heartbeat-interval",
@@ -135,6 +145,17 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         required=True,
         help="Directory to write the read-model files into.",
+    )
+    alert_parser = subparsers.add_parser("alert-test")
+    alert_parser.add_argument(
+        "type",
+        choices=[cli_token(alert_type) for alert_type in AlertType],
+        help="Alert type (as a CLI token) to emit a test alert for.",
+    )
+    alert_parser.add_argument(
+        "--message",
+        default=_DEFAULT_ALERT_MESSAGE,
+        help="Alert body to dispatch (default: %(default)s).",
     )
     return parser
 
@@ -199,6 +220,26 @@ def _install_signal_handlers(state: ShutdownState) -> None:
     signal.signal(signal.SIGTERM, _handle)
 
 
+def _run_alert_test(args: argparse.Namespace) -> int:
+    """Dispatch a single test alert through the log-only fallback.
+
+    With no real sinks configured, the dispatcher's fallback fires and the
+    ledger writer logs the resulting :class:`~hedgekit.alerts.AlertEmitted`
+    event, both observable as JSON on stderr.
+
+    Args:
+        args: Parsed ``alert-test`` arguments carrying ``type`` and
+            ``message``.
+
+    Returns:
+        The process exit code (always 0).
+    """
+    alert_type = _TOKEN_TO_ALERT_TYPE[args.type]
+    dispatcher = AlertDispatcher(sinks=[], ledger_writer=LoggingLedgerWriter())
+    dispatcher.dispatch(alert_type, args.message)
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Parse arguments and run the requested hedgekit command.
 
@@ -209,14 +250,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         The process exit code (0 on success).
     """
     args = build_parser().parse_args(argv)
+    configure_logging(level=logging.INFO)
     if args.command == "rebuild":
         return rebuild_command(args)
-    logging.basicConfig(
-        stream=sys.stderr,
-        force=True,
-        level=logging.INFO,
-        format=_LOG_FORMAT,
-    )
+    if args.command == "alert-test":
+        return _run_alert_test(args)
     state = ShutdownState()
     _install_signal_handlers(state)
     run_loop(
