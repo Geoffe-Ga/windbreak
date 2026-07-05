@@ -75,6 +75,7 @@ if TYPE_CHECKING:
     from hedgekit.connector.models import NormalizedMarket
     from hedgekit.forecast.cassettes import LlmRequest, LlmTransport
     from hedgekit.forecast.records import BaselineQuoteSnapshot
+    from hedgekit.forecast.sandbox import ResearchTools
 
     #: See the module docstring's "Transport-reuse choice" note: the
     #: conftest-provided factory *is* `FakeVoteTransport`, callable with an
@@ -232,6 +233,7 @@ def test_stop_path_never_runs_full_pipeline_and_records_triage_only(
     baseline: BaselineQuoteSnapshot,
     created_at: datetime,
     make_fake_vote_transport: FakeVoteTransportFactory,
+    research_tools: ResearchTools,
 ) -> None:
     """A within-band prior stops before the full pipeline and ledgers a STOP.
 
@@ -248,6 +250,7 @@ def test_stop_path_never_runs_full_pipeline_and_records_triage_only(
         full_transport=ForbiddenLiveTransport(),
         ledger=ledger,
         created_at=created_at,
+        research_tools=research_tools,
     )
 
     assert record.triage_stage == "triage_only"
@@ -282,6 +285,7 @@ def test_proceed_path_runs_full_pipeline_and_accumulates_both_costs(
     baseline: BaselineQuoteSnapshot,
     created_at: datetime,
     make_fake_vote_transport: FakeVoteTransportFactory,
+    research_tools: ResearchTools,
 ) -> None:
     """A far-from-baseline prior proceeds to the full pipeline and ledgers a PROCEED."""
     ledger = InMemoryTriageLedger()
@@ -293,6 +297,7 @@ def test_proceed_path_runs_full_pipeline_and_accumulates_both_costs(
         full_transport=make_fake_vote_transport(),
         ledger=ledger,
         created_at=created_at,
+        research_tools=research_tools,
     )
 
     assert record.triage_stage == "full"
@@ -319,6 +324,7 @@ def test_operator_flagged_forces_full_pipeline_despite_below_threshold_prior(
     baseline: BaselineQuoteSnapshot,
     created_at: datetime,
     make_fake_vote_transport: FakeVoteTransportFactory,
+    research_tools: ResearchTools,
 ) -> None:
     """`operator_flagged=True` forces the full pipeline inside the triage band."""
     ledger = InMemoryTriageLedger()
@@ -331,6 +337,7 @@ def test_operator_flagged_forces_full_pipeline_despite_below_threshold_prior(
         ledger=ledger,
         created_at=created_at,
         operator_flagged=True,
+        research_tools=research_tools,
     )
 
     assert record.triage_stage == "full"
@@ -344,6 +351,7 @@ def test_refresh_triggered_forces_full_pipeline_despite_below_threshold_prior(
     baseline: BaselineQuoteSnapshot,
     created_at: datetime,
     make_fake_vote_transport: FakeVoteTransportFactory,
+    research_tools: ResearchTools,
 ) -> None:
     """`refresh_triggered=True` forces the full pipeline inside the triage band."""
     ledger = InMemoryTriageLedger()
@@ -356,6 +364,7 @@ def test_refresh_triggered_forces_full_pipeline_despite_below_threshold_prior(
         ledger=ledger,
         created_at=created_at,
         refresh_triggered=True,
+        research_tools=research_tools,
     )
 
     assert record.triage_stage == "full"
@@ -372,6 +381,7 @@ def test_run_triaged_pipeline_is_byte_deterministic_for_identical_inputs(
     baseline: BaselineQuoteSnapshot,
     created_at: datetime,
     make_fake_vote_transport: FakeVoteTransportFactory,
+    research_tools: ResearchTools,
 ) -> None:
     """Two proceed-path runs with fresh fakes/ledgers produce identical output."""
     ledger_a = InMemoryTriageLedger()
@@ -384,6 +394,7 @@ def test_run_triaged_pipeline_is_byte_deterministic_for_identical_inputs(
         full_transport=make_fake_vote_transport(),
         ledger=ledger_a,
         created_at=created_at,
+        research_tools=research_tools,
     )
     record_b = run_triaged_pipeline(
         market,
@@ -392,6 +403,7 @@ def test_run_triaged_pipeline_is_byte_deterministic_for_identical_inputs(
         full_transport=make_fake_vote_transport(),
         ledger=ledger_b,
         created_at=created_at,
+        research_tools=research_tools,
     )
 
     assert record_a == record_b
@@ -410,6 +422,7 @@ def test_run_triaged_pipeline_stop_path_is_byte_deterministic_for_identical_inpu
     baseline: BaselineQuoteSnapshot,
     created_at: datetime,
     make_fake_vote_transport: FakeVoteTransportFactory,
+    research_tools: ResearchTools,
 ) -> None:
     """Two stop-path runs with fresh fakes/ledgers produce identical output.
 
@@ -428,6 +441,7 @@ def test_run_triaged_pipeline_stop_path_is_byte_deterministic_for_identical_inpu
         full_transport=ForbiddenLiveTransport(),
         ledger=ledger_a,
         created_at=created_at,
+        research_tools=research_tools,
     )
     record_b = run_triaged_pipeline(
         market,
@@ -436,6 +450,7 @@ def test_run_triaged_pipeline_stop_path_is_byte_deterministic_for_identical_inpu
         full_transport=ForbiddenLiveTransport(),
         ledger=ledger_b,
         created_at=created_at,
+        research_tools=research_tools,
     )
 
     assert record_a == record_b
@@ -455,6 +470,7 @@ def test_proceed_path_cassette_replay_matches_recording(
     baseline: BaselineQuoteSnapshot,
     created_at: datetime,
     make_fake_vote_transport: FakeVoteTransportFactory,
+    research_tools: ResearchTools,
     tmp_path: Path,
 ) -> None:
     """Recording `full_transport`, then replaying it, reproduces the same record.
@@ -473,6 +489,7 @@ def test_proceed_path_cassette_replay_matches_recording(
         full_transport=recorder,
         ledger=InMemoryTriageLedger(),
         created_at=created_at,
+        research_tools=research_tools,
     )
 
     replay = ReplayCassette.from_path(cassette_path)
@@ -483,6 +500,7 @@ def test_proceed_path_cassette_replay_matches_recording(
         full_transport=replay,
         ledger=InMemoryTriageLedger(),
         created_at=created_at,
+        research_tools=research_tools,
     )
 
     assert replayed == recorded

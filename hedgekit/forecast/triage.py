@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     from hedgekit.connector.models import NormalizedMarket
     from hedgekit.forecast.cassettes import LlmTransport
     from hedgekit.forecast.records import BaselineQuoteSnapshot
+    from hedgekit.forecast.sandbox import ResearchTools
 
 #: Stage-0 divergence threshold, in ppm (SPEC S16 default). The full pipeline
 #: runs only when the prior is at least this far from the baseline.
@@ -457,6 +458,7 @@ def _run_proceed_path(
     created_at: datetime,
     ledger: TriageLedgerWriter,
     full_transport: LlmTransport,
+    research_tools: ResearchTools,
 ) -> ForecastRecord:
     """Handle the PROCEED path: run the full pipeline and fold in triage cost.
 
@@ -467,12 +469,18 @@ def _run_proceed_path(
         created_at: The forecast creation instant.
         ledger: The triage-event ledger writer.
         full_transport: The transport for the full pipeline's vote stage.
+        research_tools: The sandboxed research tools threaded into the full
+            pipeline's Stage-5 bounded web research.
 
     Returns:
         The full forecast record with the Stage-0 cost folded into its total.
     """
     full_record = run_pipeline(
-        market, baseline, transport=full_transport, created_at=created_at
+        market,
+        baseline,
+        transport=full_transport,
+        created_at=created_at,
+        research_tools=research_tools,
     )
     folded = replace(
         full_record,
@@ -494,6 +502,7 @@ def run_triaged_pipeline(
     full_transport: LlmTransport,
     ledger: TriageLedgerWriter,
     created_at: datetime,
+    research_tools: ResearchTools,
     triage_threshold_ppm: int = TRIAGE_THRESHOLD_PPM,
     operator_flagged: bool = False,
     refresh_triggered: bool = False,
@@ -515,6 +524,8 @@ def run_triaged_pipeline(
             untouched on the STOP path.
         ledger: The triage-event ledger writer.
         created_at: The injected creation instant, for determinism.
+        research_tools: The sandboxed research tools threaded into the full
+            pipeline's Stage-5 bounded web research; untouched on the STOP path.
         triage_threshold_ppm: The divergence threshold forcing the full run.
         operator_flagged: Whether an operator forces a full run.
         refresh_triggered: Whether a refresh forces a full run.
@@ -546,6 +557,7 @@ def run_triaged_pipeline(
             created_at=created_at,
             ledger=ledger,
             full_transport=full_transport,
+            research_tools=research_tools,
         )
     return _run_stop_path(
         market, baseline, context, created_at=created_at, ledger=ledger
