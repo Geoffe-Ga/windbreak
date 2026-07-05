@@ -65,6 +65,7 @@ source_modules =
     hedgekit.order_gateway
     hedgekit.pipeline
     hedgekit.screener
+    hedgekit.tokens
     hedgekit.main
     hedgekit.logging_setup
 forbidden_modules =

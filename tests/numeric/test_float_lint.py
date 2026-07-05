@@ -2,8 +2,9 @@
 
 The AST float-lint is the enforcement mechanism behind SPEC S6.1's "no
 floats in the money path" rule: `hedgekit/numeric`, `hedgekit/ledger`,
-`hedgekit/riskkernel`, `hedgekit/connector`, `hedgekit/screener`, and
-`hedgekit/forecast` must never contain a float literal, a `float`
+`hedgekit/riskkernel`, `hedgekit/connector`, `hedgekit/screener`,
+`hedgekit/forecast`, and `hedgekit/tokens` must never contain a float literal,
+a `float`
 annotation (including forward-ref
 string annotations), a true-division operator, or a `float(...)` cast. This
 module loads the script directly by path
@@ -16,8 +17,10 @@ Issue #16 extends the money-path denylist with `hedgekit/connector` (the
 exchange-facing numeric types: prices, quantities, balances) and
 `hedgekit/screener` (jurisdiction/eligibility decisions derived from those
 same values); issue #22 then appends `hedgekit/forecast` (the pipeline's
-probability/money-bearing record fields). `EXPECTED_DENYLISTED_PACKAGES`
-below is updated to the six entries the implementations must append to the
+probability/money-bearing record fields); issue #31 appends `hedgekit/tokens`
+(the shared approval-token package's money-bearing claims fields).
+`EXPECTED_DENYLISTED_PACKAGES` below is updated to the seven entries the
+implementations must append to the
 script's own `DENYLISTED_PACKAGES`; until each append lands,
 `test_denylisted_packages_constant` fails on a tuple mismatch -- the
 expected Gate 1 RED state for each issue (layered on top of issue #12's own
@@ -51,7 +54,9 @@ LINT_SCRIPT_PATH = REPO_ROOT / "scripts" / "lint_no_floats.py"
 #: `hedgekit/connector` and `hedgekit/screener` to the original three
 #: money-path packages from issue #12. Issue #22 appends `hedgekit/forecast`
 #: (the pipeline's probability/money-bearing record fields), bringing the
-#: total to six.
+#: total to six. Issue #31 appends `hedgekit/tokens` (the shared approval-token
+#: package, whose claims carry money-bearing scaled-integer fields), bringing
+#: the total to seven.
 EXPECTED_DENYLISTED_PACKAGES = (
     "hedgekit/numeric",
     "hedgekit/ledger",
@@ -59,6 +64,7 @@ EXPECTED_DENYLISTED_PACKAGES = (
     "hedgekit/connector",
     "hedgekit/screener",
     "hedgekit/forecast",
+    "hedgekit/tokens",
 )
 
 
@@ -83,7 +89,7 @@ def lint_module() -> types.ModuleType:
 
 
 def test_denylisted_packages_constant(lint_module: types.ModuleType) -> None:
-    """The script's denylist must cover exactly the six money-path packages."""
+    """The script's denylist must cover exactly the seven money-path packages."""
     assert lint_module.DENYLISTED_PACKAGES == EXPECTED_DENYLISTED_PACKAGES
 
 
