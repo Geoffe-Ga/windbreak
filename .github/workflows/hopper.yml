@@ -2,10 +2,16 @@ name: "Hopper: queue-depth refill"
 
 # The never-runs-out guarantee for the Ralph loop. Fixed scan crons are a floor,
 # not a guarantee — repo entropy is bursty. This hourly guard measures the
-# agent-ready queue depth and, when runway drops below MIN_QUEUE, dispatches the
-# most-stale eligible producer scan off-schedule (with a raised max_issues cap).
-# When the queue is healthy it stands down; when it is bloated it also stands
-# down, letting the backlog drain rather than piling on more.
+# picker's real pickable queue depth (via scripts/ralph/queue-depth.sh: eligible
+# open issues per the shared label rules, minus those already in flight) and,
+# when runway drops below MIN_QUEUE, dispatches the most-stale eligible producer
+# scan off-schedule (with a raised max_issues cap). When the queue is healthy it
+# stands down; when it is bloated it also stands down, letting the backlog drain
+# rather than piling on more.
+#
+# NOTE: this runner has no checkout of the fleet's local .ralph/worktrees lanes,
+# so queue-depth.sh approximates "in flight" via open-PR Closes/Fixes/Resolves
+# markers ONLY — a deliberate, documented approximation (see the helper's header).
 #
 # No Claude token needed — pure gh + jq queue arithmetic.
 
@@ -16,6 +22,7 @@ on:
 
 permissions:
   issues: read
+  pull-requests: read          # queue-depth.sh reads open-PR bodies for in-flight exclusion
   actions: write               # needed to dispatch scan workflows
 
 concurrency:
@@ -38,9 +45,8 @@ jobs:
       - name: Measure runway and refill if starving
         run: |
           set -euo pipefail
-          COUNT=$(gh issue list --label agent-ready --state open \
-                    --limit 300 --json number --jq 'length')
-          echo "Agent-ready queue depth: $COUNT" | tee -a "$GITHUB_STEP_SUMMARY"
+          COUNT=$(scripts/ralph/queue-depth.sh)
+          echo "Pickable queue depth: $COUNT" | tee -a "$GITHUB_STEP_SUMMARY"
 
           if [ "$COUNT" -ge "$MAX_QUEUE" ]; then
             echo "Queue bloated (>= $MAX_QUEUE) — standing down so it drains." \
