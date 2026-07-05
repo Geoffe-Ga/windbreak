@@ -246,6 +246,27 @@ def test_bootstrap_confidence_rejects_unrepresentable(
         load_config(config_path)
 
 
+@pytest.mark.parametrize("bad_value", [float("inf"), float("-inf"), float("nan")])
+def test_bootstrap_confidence_rejects_non_finite(
+    bad_value: float,
+    spec16_dict: dict[str, Any],
+    tmp_path: Path,
+    write_config: Callable[[Path, dict[str, Any]], Path],
+) -> None:
+    """A non-finite bootstrap_confidence raises ConfigError, not OverflowError.
+
+    YAML's safe loader accepts ``.inf``/``-.inf``/``.nan`` as float literals;
+    without a finiteness guard, ``.inf`` slips past the exact-ppm check and
+    crashes ``int(Decimal("Infinity"))`` with an uncaught ``OverflowError``.
+    """
+    mapping = copy.deepcopy(spec16_dict)
+    mapping["evaluation"]["bootstrap_confidence"] = bad_value
+    config_path = write_config(tmp_path, mapping)
+
+    with pytest.raises(ConfigError, match=r"evaluation\.bootstrap_confidence"):
+        load_config(config_path)
+
+
 def test_bootstrap_confidence_rejects_negative(
     spec16_dict: dict[str, Any],
     tmp_path: Path,
@@ -288,3 +309,17 @@ def test_non_mapping_root_raises_config_error(tmp_path: Path) -> None:
 
     with pytest.raises(ConfigError):
         load_config(list_root_path)
+
+
+def test_invalid_utf8_file_raises_config_error(tmp_path: Path) -> None:
+    """A file with invalid UTF-8 bytes raises ConfigError, not UnicodeDecodeError.
+
+    ``UnicodeDecodeError`` is a ``ValueError`` subclass, not an ``OSError``, so
+    decoding failures must be caught explicitly to honour the module invariant
+    that no raw traceback escapes to the operator.
+    """
+    bad_path = tmp_path / "invalid_utf8.yaml"
+    bad_path.write_bytes(b"\xff\xfe invalid utf-8 bytes")
+
+    with pytest.raises(ConfigError):
+        load_config(bad_path)

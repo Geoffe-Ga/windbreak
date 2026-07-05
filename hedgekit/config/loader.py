@@ -13,6 +13,7 @@ parts-per-million field or rejected if it cannot be represented exactly.
 from __future__ import annotations
 
 import dataclasses
+import math
 import types
 from collections.abc import Mapping
 from decimal import Decimal
@@ -71,11 +72,15 @@ def confidence_to_ppm(value: object, path: str) -> int:
         The confidence expressed as an integer in ``[0, 1_000_000]``.
 
     Raises:
-        ConfigError: If ``value`` is not a number, cannot map to an exact
-            ppm integer, or falls outside the ``[0, 1]`` range.
+        ConfigError: If ``value`` is not a finite number, cannot map to an
+            exact ppm integer, or falls outside the ``[0, 1]`` range.
     """
     if isinstance(value, bool) or not isinstance(value, int | float):
         _type_error("a number in [0, 1]", value, path)
+    if not math.isfinite(value):
+        raise ConfigError(
+            f"{path}: bootstrap_confidence must be a finite number in [0, 1]"
+        )
     scaled = Decimal(str(value)) * _PPM_SCALE
     if scaled != scaled.to_integral_value():
         raise ConfigError(
@@ -234,11 +239,11 @@ def _read_text(path: str | Path) -> str:
         The file's decoded text.
 
     Raises:
-        ConfigError: If the file cannot be opened or read.
+        ConfigError: If the file cannot be opened, read, or decoded as UTF-8.
     """
     try:
         return Path(path).read_text(encoding="utf-8")
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise ConfigError(f"cannot read configuration file: {path}") from exc
 
 
