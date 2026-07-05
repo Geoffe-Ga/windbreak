@@ -51,6 +51,8 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from hedgekit.connector.models import NormalizedMarket
+    from hedgekit.forecast.budget import ResearchBudget
+    from hedgekit.forecast.canary import CanaryGate
     from hedgekit.forecast.cassettes import LlmTransport
     from hedgekit.forecast.citations import CitationVerdict
     from hedgekit.forecast.ensemble import VoteAggregate
@@ -408,10 +410,25 @@ def decompose_subquestions(market: NormalizedMarket) -> tuple[str, ...]:
     return tuple(f"{prefix} {market.title}" for prefix in _SUBQUESTION_PREFIXES)
 
 
+def _page_budget_reached(max_pages: int | None, pages_fetched: int) -> bool:
+    """Return whether the per-forecast page budget has been reached.
+
+    Args:
+        max_pages: The fetch-attempt ceiling, or ``None`` for unbounded.
+        pages_fetched: How many fetch attempts have already been made.
+
+    Returns:
+        ``True`` when ``max_pages`` is set and already met; ``False`` otherwise
+        (including the unbounded ``None`` case).
+    """
+    return max_pages is not None and pages_fetched >= max_pages
+
+
 def bounded_web_research(
     subquestions: tuple[str, ...],
     *,
     tools: ResearchTools,
+    max_pages: int | None = None,
 ) -> tuple[Citation, ...]:
     """Stage 5: gather citations through the sandboxed research tools.
 
@@ -422,7 +439,9 @@ def bounded_web_research(
     *unreachable* source (the transport raising an ``OSError`` such as
     ``ConnectionError``) is not a policy violation but a dead link, so it is
     skipped: it simply contributes no citation, letting the downstream
-    verification stage abstain on an evidence-free run. Each citation's
+    verification stage abstain on an evidence-free run. A dead-link fetch still
+    *counts* as one page against ``max_pages`` -- the attempt was made -- so a
+    run cannot evade its page budget by hitting unreachable URLs. Each citation's
     ``content_hash`` stays over the *raw* fetched content, while its
     ``quoted_text`` is the sanitized excerpt (SPEC S8.5):
     :func:`hedgekit.forecast.sanitize.sanitize_content` strips scripts, hidden
@@ -442,16 +461,31 @@ def bounded_web_research(
     Args:
         subquestions: The decomposed subquestions to research.
         tools: The sandboxed research tools (search/fetch capabilities).
+        max_pages: The maximum number of fetch attempts this run may make;
+            ``None`` (the default) is unbounded, preserving the pre-budget
+            behavior byte-for-byte. Each ``tools.fetch`` call -- including one
+            that raises ``OSError`` -- counts as one page.
 
     Returns:
-        One deterministic citation per reachable subquestion candidate URL.
+        One deterministic citation per reachable subquestion candidate URL, up
+        to the ``max_pages`` fetch-attempt ceiling.
+
+    Raises:
+        ValueError: If ``max_pages`` is negative.
     """
+    if max_pages is not None and max_pages < 0:
+        msg = f"max_pages must be non-negative or None, got {max_pages}"
+        raise ValueError(msg)
     citations: list[Citation] = []
+    pages_fetched = 0
     for subquestion in subquestions:
+        if _page_budget_reached(max_pages, pages_fetched):
+            break
         urls = tools.search(subquestion)
         if not urls:
             continue
         url = urls[0]
+        pages_fetched += 1
         try:
             content = tools.fetch(url)
         except OSError:
@@ -863,6 +897,23 @@ def _build_abstention_record(
     )
 
 
+def _live_gate_open(canary_gate: CanaryGate | None, created_at: datetime) -> bool:
+    """Return whether the canary gate permits live eligibility for a record.
+
+    Extracted so :func:`run_pipeline` stays a flat, low-complexity wiring
+    function: the gate is open (returns ``True``) when there is no gate at all
+    or the gate is not blocking a record created at ``created_at``.
+
+    Args:
+        canary_gate: The optional canary drift gate; ``None`` means no gate.
+        created_at: The record's creation instant.
+
+    Returns:
+        ``True`` if the gate permits live eligibility, else ``False``.
+    """
+    return canary_gate is None or not canary_gate.is_live_blocked(created_at=created_at)
+
+
 def run_pipeline(
     market: NormalizedMarket,
     baseline: BaselineQuoteSnapshot,
@@ -872,6 +923,8 @@ def run_pipeline(
     research_tools: ResearchTools,
     min_verified_citations: int = DEFAULT_MIN_VERIFIED_CITATIONS,
     ledger: ForecastLedgerWriter | None = None,
+    budget: ResearchBudget | None = None,
+    canary_gate: CanaryGate | None = None,
 ) -> ForecastRecord:
     """Run the twelve-stage pipeline into a schema-valid forecast record.
 
@@ -889,7 +942,16 @@ def run_pipeline(
     vote is ledgered through ``ledger``, and if *every* vote is discarded the
     run abstains with :data:`ABSTENTION_ALL_VOTES_DISCARDED` rather than
     aggregating over zero votes. Otherwise live eligibility is gated on the
-    verified count meeting ``min_verified_citations``. Given identical inputs
+    verified count meeting ``min_verified_citations`` *and* the canary gate not
+    blocking the record.
+
+    The optional ``ledger``, ``budget``, and ``canary_gate`` seams all default
+    to ``None``, a strict no-op: with no ledger, no budget, and no gate (or an
+    unexhausted budget and an open gate) the run behaves exactly as before,
+    byte-for-byte. When a budget is supplied it halts before any research once
+    the day is exhausted, bounds stage 5's fetches to ``budget.max_pages``, and
+    charges the run's research cost (raising fail-closed on a per-forecast
+    overrun). Given identical inputs
     and ``created_at``, two runs produce equal records and byte-identical
     payloads.
 
@@ -906,17 +968,36 @@ def run_pipeline(
             verified citations takes absolute precedence over this knob.
         ledger: The forecast-event ledger writer for vote-discard events, or
             ``None`` to record nothing (keyword-only).
+        budget: The optional research budget guarding day/per-forecast spend and
+            bounding stage 5's page fetches (keyword-only). ``None`` is a no-op.
+        canary_gate: The optional canary drift gate ANDed into live eligibility
+            (keyword-only). ``None`` (or an open gate) is a no-op.
 
     Returns:
         The produced, immutable forecast record.
+
+    Raises:
+        DailyBudgetExhaustedError: If ``budget`` is supplied and the run's UTC
+            day is already exhausted; raised before any research.
+        PerForecastBudgetExceededError: If ``budget`` is supplied and the run's
+            research cost exceeds the per-forecast ceiling.
     """
+    if budget is not None:
+        budget.ensure_day_open(at=created_at)
     question_hash = normalize_question(market)
     criteria = extract_resolution_criteria(market)
     base_rate_ppm = outside_view_base_rate(baseline)
     subquestions = decompose_subquestions(market)
-    citations = bounded_web_research(subquestions, tools=research_tools)
+    max_pages = budget.max_pages if budget is not None else None
+    citations = bounded_web_research(
+        subquestions, tools=research_tools, max_pages=max_pages
+    )
     verdicts = verify_citations(research_tools, citations, as_of=created_at)
     verified_count = count_verified(verdicts)
+    if budget is not None:
+        budget.charge_forecast(
+            _RESEARCH_COST_MICROS, market_ticker=market.ticker, at=created_at
+        )
     if verified_count == 0:
         return _build_abstention_record(
             market=market,
@@ -970,7 +1051,8 @@ def run_pipeline(
         source_notes=source_notes,
         rationale=rationale,
         coherence_sum=coherence_sum,
-        eligible_for_live=is_live_eligible(
+        eligible_for_live=_live_gate_open(canary_gate, created_at)
+        and is_live_eligible(
             verified_citation_count=verified_count,
             min_verified_citations=min_verified_citations,
             triage_stage="full",
