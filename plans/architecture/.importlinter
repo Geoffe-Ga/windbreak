@@ -1,27 +1,36 @@
+# Forecast-engine import boundary (SPEC S8.3).
+#
+# Notes:
+#   1. `hedgekit.connector.models` is deliberately allowed: it holds read-only
+#      data models (NormalizedMarket) that pipeline.py imports only under
+#      TYPE_CHECKING. This forbidden-modules contract bans `hedgekit.connector`
+#      submodules individually rather than the whole package precisely so that
+#      the models submodule stays reachable.
+#   2. The PRIMARY, CI-enforced guarantee is the pure-stdlib `ast` check in
+#      tests/forecast/test_sandbox.py, which is strictly STRONGER than this
+#      config: it also forbids a bare `from hedgekit.connector import X`
+#      (module-plus-symbol) import AND every relative import (`from ..ledger
+#      import store`, `from . import config`) -- loopholes a forbidden-modules
+#      contract cannot express -- while carving out the same
+#      `hedgekit.connector.models` allowance.
+#   3. Wiring import-linter (plans/architecture/run-check.sh) into CI is a
+#      follow-up (chore(ci): wire import-linter into CI). Until then this file
+#      documents the contract; the pytest AST check is the enforcing gate.
+
 [importlinter]
 root_package = hedgekit
 
-[importlinter:contract:layers]
-name = Enforce layered architecture
-type = layers
-layers =
-    presentation
-    application
-    domain
-    infrastructure
-
-[importlinter:contract:independence]
-name = Domain layer independence
+[importlinter:contract:forecast-sandbox-boundary]
+name = Forecast engine may not reach ledger/order/risk/config machinery (SPEC S8.3)
 type = forbidden
 source_modules =
-    hedgekit.domain
+    hedgekit.forecast
 forbidden_modules =
-    hedgekit.presentation
-    hedgekit.application
-    hedgekit.infrastructure
-
-[importlinter:contract:no-cycles]
-name = Prevent circular dependencies
-type = independence
-modules =
-    hedgekit
+    hedgekit.ledger
+    hedgekit.order_gateway
+    hedgekit.riskkernel
+    hedgekit.config
+    hedgekit.connector.interface
+    hedgekit.connector.snapshot
+    hedgekit.connector.fake
+    hedgekit.connector.kalshi

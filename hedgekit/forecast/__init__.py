@@ -25,11 +25,23 @@ from hedgekit.forecast.records import (
     ModelVote,
     forecast_record_to_payload,
 )
+from hedgekit.forecast.sandbox import (
+    EgressDeniedError,
+    FetchTransport,
+    ResearchCache,
+    ResearchTools,
+    SandboxPathViolationError,
+    SearchTransport,
+    build_research_tools,
+    tool_registry,
+)
 
 __all__ = [
     "BaselineQuoteSnapshot",
     "CassetteMissError",
     "Citation",
+    "EgressDeniedError",
+    "FetchTransport",
     "ForbiddenLiveTransport",
     "ForecastRecord",
     "LiveCallForbiddenError",
@@ -38,6 +50,12 @@ __all__ = [
     "ModelVote",
     "RecordingCassette",
     "ReplayCassette",
+    "ResearchCache",
+    "ResearchTools",
+    "SandboxPathViolationError",
+    "SearchTransport",
+    "build_research_tools",
     "forecast_record_to_payload",
     "run_pipeline",
+    "tool_registry",
 ]

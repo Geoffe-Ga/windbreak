@@ -41,6 +41,7 @@ if TYPE_CHECKING:
 
     from hedgekit.connector.models import NormalizedMarket
     from hedgekit.forecast.records import BaselineQuoteSnapshot
+    from hedgekit.forecast.sandbox import ResearchTools
 
     #: `make_fake_vote_transport` (see tests/forecast/conftest.py) is a factory
     #: for `FakeVoteTransport`, a network-free `LlmTransport` double defined in
@@ -57,6 +58,7 @@ def test_run_pipeline_produces_schema_valid_forecast_record(
     baseline: BaselineQuoteSnapshot,
     created_at: datetime,
     make_fake_vote_transport: FakeVoteTransportFactory,
+    research_tools: ResearchTools,
 ) -> None:
     """A full pipeline run yields a ForecastRecord that satisfies its invariants."""
     record = run_pipeline(
@@ -64,6 +66,7 @@ def test_run_pipeline_produces_schema_valid_forecast_record(
         baseline,
         transport=make_fake_vote_transport(),
         created_at=created_at,
+        research_tools=research_tools,
     )
 
     assert record.triage_stage == "full"
@@ -83,13 +86,22 @@ def test_run_pipeline_is_byte_deterministic_for_identical_inputs(
     baseline: BaselineQuoteSnapshot,
     created_at: datetime,
     make_fake_vote_transport: FakeVoteTransportFactory,
+    research_tools: ResearchTools,
 ) -> None:
     """Two runs with identical inputs produce `==` records and identical JSON."""
     record_a = run_pipeline(
-        market, baseline, transport=make_fake_vote_transport(), created_at=created_at
+        market,
+        baseline,
+        transport=make_fake_vote_transport(),
+        created_at=created_at,
+        research_tools=research_tools,
     )
     record_b = run_pipeline(
-        market, baseline, transport=make_fake_vote_transport(), created_at=created_at
+        market,
+        baseline,
+        transport=make_fake_vote_transport(),
+        created_at=created_at,
+        research_tools=research_tools,
     )
 
     assert record_a == record_b
@@ -106,10 +118,15 @@ def test_run_pipeline_output_is_immutable(
     baseline: BaselineQuoteSnapshot,
     created_at: datetime,
     make_fake_vote_transport: FakeVoteTransportFactory,
+    research_tools: ResearchTools,
 ) -> None:
     """Mutating any field of the real pipeline's output record raises."""
     record = run_pipeline(
-        market, baseline, transport=make_fake_vote_transport(), created_at=created_at
+        market,
+        baseline,
+        transport=make_fake_vote_transport(),
+        created_at=created_at,
+        research_tools=research_tools,
     )
 
     with pytest.raises((dataclasses.FrozenInstanceError, AttributeError)):
@@ -124,6 +141,7 @@ def test_replay_over_forbidden_live_transport_completes_from_recording(
     baseline: BaselineQuoteSnapshot,
     created_at: datetime,
     make_fake_vote_transport: FakeVoteTransportFactory,
+    research_tools: ResearchTools,
     tmp_path: Path,
 ) -> None:
     """Recording with a fake transport, then replaying with a `ReplayCassette`,
@@ -134,10 +152,22 @@ def test_replay_over_forbidden_live_transport_completes_from_recording(
     recorder = RecordingCassette(
         transport=make_fake_vote_transport(), path=cassette_path
     )
-    recorded = run_pipeline(market, baseline, transport=recorder, created_at=created_at)
+    recorded = run_pipeline(
+        market,
+        baseline,
+        transport=recorder,
+        created_at=created_at,
+        research_tools=research_tools,
+    )
 
     replay = ReplayCassette.from_path(cassette_path)
-    replayed = run_pipeline(market, baseline, transport=replay, created_at=created_at)
+    replayed = run_pipeline(
+        market,
+        baseline,
+        transport=replay,
+        created_at=created_at,
+        research_tools=research_tools,
+    )
 
     assert replayed == recorded
 
@@ -156,6 +186,7 @@ def test_run_pipeline_with_live_transport_directly_raises_forbidden_error(
     market: NormalizedMarket,
     baseline: BaselineQuoteSnapshot,
     created_at: datetime,
+    research_tools: ResearchTools,
 ) -> None:
     """Wiring `ForbiddenLiveTransport` in directly (no cassette at all) still
     fails closed -- proving `collect_model_votes` really does call
@@ -167,6 +198,7 @@ def test_run_pipeline_with_live_transport_directly_raises_forbidden_error(
             baseline,
             transport=ForbiddenLiveTransport(),
             created_at=created_at,
+            research_tools=research_tools,
         )
 
 
@@ -174,6 +206,7 @@ def test_run_pipeline_with_empty_cassette_raises_cassette_miss_error(
     market: NormalizedMarket,
     baseline: BaselineQuoteSnapshot,
     created_at: datetime,
+    research_tools: ResearchTools,
     tmp_path: Path,
 ) -> None:
     """An empty cassette fails closed with `CassetteMissError` -- never a live
@@ -184,7 +217,13 @@ def test_run_pipeline_with_empty_cassette_raises_cassette_miss_error(
     empty_cassette = ReplayCassette.from_path(empty_path)
 
     with pytest.raises(CassetteMissError):
-        run_pipeline(market, baseline, transport=empty_cassette, created_at=created_at)
+        run_pipeline(
+            market,
+            baseline,
+            transport=empty_cassette,
+            created_at=created_at,
+            research_tools=research_tools,
+        )
 
 
 # --- Stage-function arithmetic (stages 11-12) -------------------------------------

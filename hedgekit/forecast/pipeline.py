@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from hedgekit.connector.models import NormalizedMarket
     from hedgekit.forecast.cassettes import LlmTransport
     from hedgekit.forecast.records import BaselineQuoteSnapshot
+    from hedgekit.forecast.sandbox import ResearchTools
 
 #: One full probability (1.0) expressed in parts-per-million; also the clamp
 #: ceiling and the shrinkage denominator.
@@ -263,27 +264,44 @@ def decompose_subquestions(market: NormalizedMarket) -> tuple[str, ...]:
 
 
 def bounded_web_research(
-    market: NormalizedMarket, subquestions: tuple[str, ...]
+    market: NormalizedMarket,
+    subquestions: tuple[str, ...],
+    *,
+    tools: ResearchTools,
 ) -> tuple[Citation, ...]:
-    """Stage 5: gather fixture-derived citations (network-free stub).
+    """Stage 5: gather citations through the sandboxed research tools.
+
+    Each subquestion is searched for a candidate URL, whose content is fetched
+    through the egress-allowlisted :meth:`ResearchTools.fetch` -- so a search
+    result off the allowlist raises :class:`EgressDeniedError` here, on the pipeline
+    path itself. The resulting citations are deterministic (the fixture
+    transports derive URL and content from their inputs) and integer-free.
 
     Args:
         market: The market under forecast.
         subquestions: The decomposed subquestions to research.
+        tools: The sandboxed research tools (search/fetch capabilities).
 
     Returns:
-        One deterministic citation per subquestion.
+        One deterministic citation per subquestion that yielded a candidate URL.
     """
-    return tuple(
-        Citation(
-            url=f"https://research.local/{market.ticker}/{index}",
-            content_hash=_content_hash(subquestion),
-            quoted_text=f"Evidence for: {subquestion}",
-            publication_date=_CITATION_PUBLICATION_DATE,
-            source_type="research_note",
+    citations: list[Citation] = []
+    for subquestion in subquestions:
+        urls = tools.search(subquestion)
+        if not urls:
+            continue
+        url = urls[0]
+        content = tools.fetch(url)
+        citations.append(
+            Citation(
+                url=url,
+                content_hash=_content_hash(content),
+                quoted_text=f"Evidence for {market.ticker}: {subquestion}",
+                publication_date=_CITATION_PUBLICATION_DATE,
+                source_type="research_note",
+            )
         )
-        for index, subquestion in enumerate(subquestions)
-    )
+    return tuple(citations)
 
 
 def assess_source_reliability(citations: tuple[Citation, ...]) -> tuple[str, ...]:
@@ -544,12 +562,15 @@ def run_pipeline(
     *,
     transport: LlmTransport,
     created_at: datetime,
+    research_tools: ResearchTools,
 ) -> ForecastRecord:
     """Run the twelve-stage pipeline into a schema-valid forecast record.
 
     All stages run offline and deterministically; only
     :func:`collect_model_votes` touches ``transport``, so wiring a forbidden
     or empty transport fails the run closed rather than reaching a network.
+    Stage 5 reaches the web only through ``research_tools``, whose egress
+    allowlist can make the run raise :class:`EgressDeniedError` before any vote.
     Given identical inputs and ``created_at``, two runs produce equal records
     and byte-identical payloads.
 
@@ -559,6 +580,8 @@ def run_pipeline(
         transport: The LLM transport for the vote stage (keyword-only).
         created_at: The injected creation instant, for determinism
             (keyword-only; never ``datetime.now()``).
+        research_tools: The sandboxed research tools threaded into stage 5's
+            bounded web research (keyword-only).
 
     Returns:
         The produced, immutable forecast record.
@@ -567,7 +590,7 @@ def run_pipeline(
     criteria = extract_resolution_criteria(market)
     base_rate_ppm = outside_view_base_rate(baseline)
     subquestions = decompose_subquestions(market)
-    citations = bounded_web_research(market, subquestions)
+    citations = bounded_web_research(market, subquestions, tools=research_tools)
     source_notes = assess_source_reliability(citations)
     counterpoints = adversarial_counterargument(subquestions)
     votes = collect_model_votes(market, baseline, transport=transport)
