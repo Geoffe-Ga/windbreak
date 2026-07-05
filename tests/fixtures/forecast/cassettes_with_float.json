@@ -1,0 +1,11 @@
+{
+  "placeholder-hash-vote-1": {
+    "request": {
+      "provider": "example-provider",
+      "model_version": "example-model-v1",
+      "prompt": "example prompt 1",
+      "temperature": 0.7
+    },
+    "response": "example canned response 1"
+  }
+}

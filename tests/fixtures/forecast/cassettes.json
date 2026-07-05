@@ -1,0 +1,26 @@
+{
+  "placeholder-hash-vote-1": {
+    "request": {
+      "provider": "example-provider",
+      "model_version": "example-model-v1",
+      "prompt": "example prompt 1"
+    },
+    "response": "example canned response 1"
+  },
+  "placeholder-hash-vote-2": {
+    "request": {
+      "provider": "example-provider",
+      "model_version": "example-model-v1",
+      "prompt": "example prompt 2"
+    },
+    "response": "example canned response 2"
+  },
+  "placeholder-hash-vote-3": {
+    "request": {
+      "provider": "example-provider",
+      "model_version": "example-model-v1",
+      "prompt": "example prompt 3"
+    },
+    "response": "example canned response 3"
+  }
+}
