@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from hedgekit.numeric.types import ContractCentis, MoneyMicros, PricePips
     from hedgekit.riskkernel.modes import Mode
+    from hedgekit.riskkernel.verification import VerificationSnapshot
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,6 +150,9 @@ class RiskLimits:
         forecast_ttl_seconds: Max admissible forecast age, in seconds.
         clock_skew_max_seconds: Max admissible exchange-clock skew, in seconds.
         rounding_buffer: The worst-case-cost rounding buffer, in micros.
+        verification_ttl_seconds: Max admissible age of a verification snapshot,
+            in seconds, before the reconciliation checks treat it as stale and
+            fail closed (issue #32).
     """
 
     floor: MoneyMicros
@@ -169,6 +173,7 @@ class RiskLimits:
     forecast_ttl_seconds: int
     clock_skew_max_seconds: int
     rounding_buffer: MoneyMicros
+    verification_ttl_seconds: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,6 +197,10 @@ class EvaluationContext:
         used_idempotency_keys: Every idempotency key the reservation ledger has
             ever seen, for the ``idempotency_key_uniqueness`` check. Required
             with no production default, for the same fail-loud reason.
+        verification: The latest read-only exchange-verification snapshot, or
+            ``None`` when no cycle has run yet, for the reconciliation checks
+            (issue #32). Required with no production default: a forgotten wiring
+            must fail loudly (the checks fail closed on ``None``), never open.
     """
 
     mode: Mode
@@ -202,3 +211,4 @@ class EvaluationContext:
     now_epoch_s: int
     used_intent_ids: frozenset[str]
     used_idempotency_keys: frozenset[str]
+    verification: VerificationSnapshot | None
