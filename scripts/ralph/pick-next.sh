@@ -56,6 +56,11 @@ if ! command -v gh >/dev/null 2>&1; then
   exit 2
 fi
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/ralph/eligibility.sh
+# shellcheck disable=SC1091  # sourced at runtime; not followed without -x
+source "$SCRIPT_DIR/eligibility.sh"
+
 # Main repo root — correct even when cwd is inside a linked worktree (issue #83).
 # `git rev-parse --show-toplevel` returns the *worktree's* own root from inside a
 # lane, so the worktree-exclusion below silently missed active lanes. Resolve the
@@ -75,8 +80,8 @@ if [[ -d "$wt_dir" ]]; then
   )
 fi
 
-REQUIRE_LABELS="${RALPH_REQUIRE_LABELS:-}"
-EXCLUDE_LABELS="${RALPH_EXCLUDE_LABELS:-epic wontfix duplicate invalid question blocked needs-spec future-work do-not-auto-merge in-progress}"
+REQUIRE_LABELS="${RALPH_REQUIRE_LABELS:-$RALPH_DEFAULT_REQUIRE_LABELS}"
+EXCLUDE_LABELS="${RALPH_EXCLUDE_LABELS:-$RALPH_DEFAULT_EXCLUDE_LABELS}"
 SOLO_LABEL="${RALPH_SOLO_LABEL:-solo}"
 PARALLEL_LABEL="${RALPH_PARALLEL_LABEL:-parallelizable}"
 RESPECT_EPICS="${RALPH_RESPECT_EPICS:-1}"
@@ -121,19 +126,17 @@ exclude_json=$(printf '%s\n' $EXCLUDE_LABELS | jq -R . | jq -s .)
 # All open issues as "<number>\t<comma-separated-labels>", filtered by
 # require/exclude labels and ordered by [priority-tier, number ascending].
 # Fetched once; reused for candidates and for looking up active issues' labels.
+# The require/exclude select is the SHARED filter from eligibility.sh (identical
+# to the hopper's queue-depth math); the rank/sort/format below is the picker's.
+filter="$(ralph_eligibility_filter "$require_json" "$exclude_json")"
 open_tsv=$(
   gh issue list \
     --state open \
     --limit 300 \
     --json number,labels \
     --jq "
-      ( $require_json | map(select(length>0)) ) as \$req
-      | ( $exclude_json | map(select(length>0)) ) as \$exc
+      $filter
       | map(. as \$i | (\$i.labels | map(.name)) as \$names
-          | select(
-              ( \$req | all(. as \$r | \$names | index(\$r)) )
-              and ( \$exc | any(. as \$x | \$names | index(\$x)) | not )
-            )
           | { number: \$i.number, names: \$names,
               rank: ( if   ((\$names | index(\"P0\")) or (\$names | index(\"priority-critical\"))) then 0
                       elif ((\$names | index(\"P1\")) or (\$names | index(\"priority-high\")))     then 1

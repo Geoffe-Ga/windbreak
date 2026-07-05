@@ -1,22 +1,40 @@
 name: Ralph Fleet Tests
 
 # Shell-test suite for the Ralph fleet mechanics under scripts/ralph/ (fleet.sh,
-# pick-next.sh, pr-ready.sh). These scripts live outside tests/, so the main
-# `pytest`-based CI job doesn't cover them — this workflow keeps the parallel
-# worktree fleet, the picker's parallel-awareness, and the PR-readiness
-# classifier honest. (The Discord recap's pure stats math is a separate
-# concern, tested at tests/test_ralph_recap_stats.py and covered by the main
-# CI job's `pytest` + mypy steps — see .claude/skills/discord-ralph-recap/.)
+# pick-next.sh, pr-ready.sh, queue-depth.sh, and the scan-workflow static
+# guard). These scripts live outside tests/, so the main `pytest`-based CI job
+# doesn't cover them — this workflow keeps the parallel worktree fleet, the
+# picker's parallel-awareness, the hopper's queue-depth measure, the scan
+# workflows' startup-safety, and the PR-readiness classifier honest. (The
+# Discord recap's pure stats math is a separate concern, tested at
+# tests/test_ralph_recap_stats.py and covered by the main CI job's `pytest` +
+# mypy steps — see .claude/skills/discord-ralph-recap/.)
+#
+# The scan/hopper workflow paths are triggers too: test_scan_workflows.sh guards
+# those files (startup permissions, repo-layout paths), and test_deslop_workflow.sh
+# guards deslop.yml + deslop-areas.json (root-only Python layout, real area
+# paths), so an edit to any of them must re-run this suite even when no
+# scripts/ralph/ file changes.
 
 on:
   push:
     paths:
       - "scripts/ralph/**"
       - ".github/workflows/ralph-fleet-tests.yml"
+      - ".github/workflows/_claude-scan.yml"
+      - ".github/workflows/scan-*.yml"
+      - ".github/workflows/hopper.yml"
+      - ".github/workflows/deslop.yml"
+      - ".github/deslop-areas.json"
   pull_request:
     paths:
       - "scripts/ralph/**"
       - ".github/workflows/ralph-fleet-tests.yml"
+      - ".github/workflows/_claude-scan.yml"
+      - ".github/workflows/scan-*.yml"
+      - ".github/workflows/hopper.yml"
+      - ".github/workflows/deslop.yml"
+      - ".github/deslop-areas.json"
 
 permissions:
   contents: read
@@ -35,3 +53,6 @@ jobs:
           bash scripts/ralph/test_fleet.sh
           bash scripts/ralph/test_pick_next.sh
           bash scripts/ralph/test_pr_ready.sh
+          bash scripts/ralph/test_queue_depth.sh
+          bash scripts/ralph/test_scan_workflows.sh
+          bash scripts/ralph/test_deslop_workflow.sh
