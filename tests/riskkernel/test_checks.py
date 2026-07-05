@@ -1,26 +1,28 @@
-"""Failing-first tests for hedgekit.riskkernel.checks (issue #30, RED).
+"""Failing-first tests for hedgekit.riskkernel.checks (issues #30 and #31, RED).
 
-Issue #30 gives 15 of the 24 SPEC S10.3 pre-trade checks their real logic
+Issue #30 gave 15 of the 24 SPEC S10.3 pre-trade checks their real logic
 (instrument whitelist, mode/ceiling, the floor invariant, fee-bound presence,
 concentration, daily loss, trailing drawdown, velocity, quote/forecast
 freshness, price band, participation cap, clock skew, and reduce-only
-provability), each now reading a full `EvaluationContext` rather than the
-`OrderIntent` alone. The other 9 SPEC S10.3 checks remain deliberate stubs
-that still veto -- each now naming the GitHub issue that will replace it,
-rather than a bare "not implemented" -- and `Check.__call__` grows a second
-`context` parameter across the board.
+provability), each reading a full `EvaluationContext` rather than the
+`OrderIntent` alone. Issue #31 promotes two more from stub to real logic --
+`approval_token_uniqueness` and `idempotency_key_uniqueness`, each reading a
+new `EvaluationContext.used_intent_ids` / `.used_idempotency_keys` set -- so
+17 of the 24 SPEC S10.3 checks are now real; the remaining 7 stay deliberate
+stubs that still veto, each naming the GitHub issue that will replace it.
 
-`hedgekit/riskkernel/context.py` does not exist yet (this file's `conftest`
-import alone triggers it), so importing anything here fails collection with
-`ModuleNotFoundError: No module named 'hedgekit.riskkernel.context'` -- the
-expected Gate 1 RED state for issue #30. Once `context.py` and the 15 real
-checks exist, this file pins: the exact boundary of every real check (the
-precise value that passes vs. the one unit past it that vetoes); that every
-`None` optional input (fee bounds, timestamps, depth, open position) vetoes;
-that an unknown `action` vetoes every check that branches on open/close; the
-unchanged 24-name SPEC S10.3 order; that a fully-permissive context leaves
-*only* the 9 stub checks vetoing, each naming its blocking issue; the
-fail-closed error-conversion contract; and the frozen result types.
+`hedgekit/riskkernel/context.py` does not yet declare `used_intent_ids` /
+`used_idempotency_keys` (this file's `conftest` import alone triggers the
+collection failure), so importing anything here fails collection with
+`ModuleNotFoundError`/`TypeError` -- the expected Gate 1 RED state for issue
+#31. Once `context.py` and the two real checks exist, this file pins: the
+exact boundary of every real check (the precise value that passes vs. the
+one unit past it that vetoes); that every `None` optional input (fee bounds,
+timestamps, depth, open position) vetoes; that an unknown `action` vetoes
+every check that branches on open/close; the unchanged 24-name SPEC S10.3
+order; that a fully-permissive context leaves *only* the 7 stub checks
+vetoing, each naming its blocking issue; the fail-closed error-conversion
+contract; and the frozen result types.
 
 This file supersedes and deletes `tests/riskkernel/test_checks_stub.py`:
 every behavior that file pinned (frozen `OrderIntent`/`CheckResult`/
@@ -90,7 +92,9 @@ EXPECTED_CHECK_NAMES: tuple[str, ...] = (
 
 _EXPECTED_CHECK_COUNT = 24
 
-#: The 15 checks issue #30 gives real logic, in SPEC S10.3 order.
+#: The 17 checks now real after issues #30 and #31, in SPEC S10.3 order.
+#: `approval_token_uniqueness` / `idempotency_key_uniqueness` are the two
+#: issue #31 promotes from stub to real logic.
 REAL_CHECK_NAMES: tuple[str, ...] = (
     "instrument_whitelist",
     "mode_permission_ceiling",
@@ -105,11 +109,13 @@ REAL_CHECK_NAMES: tuple[str, ...] = (
     "forecast_freshness",
     "price_band_compliance",
     "participation_cap_compliance",
+    "approval_token_uniqueness",
+    "idempotency_key_uniqueness",
     "clock_skew_limit",
     "reduce_only_provable",
 )
 
-#: The 9 checks that remain deliberate stubs after issue #30, each blocked on
+#: The 7 checks that remain deliberate stubs after issue #31, each blocked on
 #: a later issue -- `None` for `jurisdiction_product_eligibility`, which has
 #: no tracking issue yet (a follow-up to file, not invented here).
 _STUB_ISSUE_NUMBERS: dict[str, int | None] = {
@@ -118,8 +124,6 @@ _STUB_ISSUE_NUMBERS: dict[str, int | None] = {
     "position_reconciliation": 32,
     "open_order_reconciliation": 32,
     "human_ack_satisfied": 34,
-    "approval_token_uniqueness": 31,
-    "idempotency_key_uniqueness": 31,
     "exchange_status_ok": 32,
     "pipeline_heartbeat_ok": 32,
 }
@@ -134,7 +138,8 @@ _CHECK_BY_NAME: dict[str, Check] = {check.name: check for check in DEFAULT_CHECK
 
 
 def _real_check(name: str) -> Check:
-    """Look up one of the 15 real checks by name, for direct invocation.
+    """Look up one of the 24 checks (real or stub) by name, for direct
+    invocation.
 
     Args:
         name: The check's SPEC S10.3 name.
@@ -189,14 +194,14 @@ def test_real_and_stub_name_sets_partition_the_24_spec_names_exactly() -> None:
     equal the full 24-name SPEC S10.3 set -- protects the taxonomy this whole
     file's pipeline-level tests assume.
     """
-    assert len(REAL_CHECK_NAMES) == 15
-    assert len(STUB_CHECK_NAMES) == 9
+    assert len(REAL_CHECK_NAMES) == 17
+    assert len(STUB_CHECK_NAMES) == 7
     assert set(REAL_CHECK_NAMES).isdisjoint(STUB_CHECK_NAMES)
     assert set(REAL_CHECK_NAMES) | set(STUB_CHECK_NAMES) == set(EXPECTED_CHECK_NAMES)
 
 
 def test_make_context_defaults_make_every_real_check_pass() -> None:
-    """`make_context()` paired with `make_intent()` passes all 15 real
+    """`make_context()` paired with `make_intent()` passes all 17 real
     checks -- the load-bearing fixture assumption every per-check boundary
     test below relies on to isolate its one overridden field.
     """
@@ -859,6 +864,78 @@ def test_participation_cap_compliance_vetoes_when_visible_depth_is_none() -> Non
     assert result.vetoed is True
 
 
+# --- approval_token_uniqueness (issue #31) ----------------------------------------
+
+
+def test_approval_token_uniqueness_passes_when_intent_id_is_unused() -> None:
+    """An intent id absent from `context.used_intent_ids` passes."""
+    context = make_context(used_intent_ids=frozenset())
+
+    result = _real_check("approval_token_uniqueness")(make_intent(), context)
+
+    assert result.vetoed is False
+
+
+def test_approval_token_uniqueness_vetoes_when_intent_id_already_used() -> None:
+    """An intent id already present in `context.used_intent_ids` vetoes --
+    the kernel never issues a second approval token for the same intent.
+    """
+    intent = make_intent(intent_id="dup-intent")
+    context = make_context(used_intent_ids=frozenset({"dup-intent"}))
+
+    result = _real_check("approval_token_uniqueness")(intent, context)
+
+    assert result.vetoed is True
+
+
+def test_approval_token_uniqueness_passes_when_only_other_ids_are_used() -> None:
+    """A `used_intent_ids` set containing *other* intent ids does not veto
+    this unrelated intent -- pins membership, not "any ids used at all".
+    """
+    intent = make_intent(intent_id="fresh-intent")
+    context = make_context(used_intent_ids=frozenset({"other-1", "other-2"}))
+
+    result = _real_check("approval_token_uniqueness")(intent, context)
+
+    assert result.vetoed is False
+
+
+# --- idempotency_key_uniqueness (issue #31) ---------------------------------------
+
+
+def test_idempotency_key_uniqueness_passes_when_key_is_unused() -> None:
+    """An idempotency key absent from `context.used_idempotency_keys` passes."""
+    context = make_context(used_idempotency_keys=frozenset())
+
+    result = _real_check("idempotency_key_uniqueness")(make_intent(), context)
+
+    assert result.vetoed is False
+
+
+def test_idempotency_key_uniqueness_vetoes_when_key_already_used() -> None:
+    """An idempotency key already present in `context.used_idempotency_keys`
+    vetoes -- the kernel never double-reserves against the same key.
+    """
+    intent = make_intent(idempotency_key="dup-idem")
+    context = make_context(used_idempotency_keys=frozenset({"dup-idem"}))
+
+    result = _real_check("idempotency_key_uniqueness")(intent, context)
+
+    assert result.vetoed is True
+
+
+def test_idempotency_key_uniqueness_passes_when_only_other_keys_are_used() -> None:
+    """A `used_idempotency_keys` set containing *other* keys does not veto
+    this unrelated intent -- pins membership, not "any keys used at all".
+    """
+    intent = make_intent(idempotency_key="fresh-idem")
+    context = make_context(used_idempotency_keys=frozenset({"other-1", "other-2"}))
+
+    result = _real_check("idempotency_key_uniqueness")(intent, context)
+
+    assert result.vetoed is False
+
+
 # --- clock_skew_limit -------------------------------------------------------------
 
 
@@ -967,9 +1044,9 @@ def test_default_checks_names_match_spec_10_3_exactly_in_order() -> None:
 
 def test_default_checks_over_permissive_context_leaves_only_stubs_vetoing() -> None:
     """Given `make_intent()`/`make_context()` (tuned so every real check
-    passes), `evaluate_intent` is still vetoed -- but with exactly the 9 stub
+    passes), `evaluate_intent` is still vetoed -- but with exactly the 7 stub
     reasons, in SPEC S10.3 order, each naming its blocking issue (where one is
-    known). This is the test that proves which 15 checks are now real.
+    known). This is the test that proves which 17 checks are now real.
     """
     intent = make_intent()
     context = make_context()
@@ -978,8 +1055,8 @@ def test_default_checks_over_permissive_context_leaves_only_stubs_vetoing() -> N
 
     assert decision.vetoed is True
     stub_positions = [name for name in EXPECTED_CHECK_NAMES if name in STUB_CHECK_NAMES]
-    assert len(stub_positions) == 9
-    assert len(decision.reasons) == 9
+    assert len(stub_positions) == 7
+    assert len(decision.reasons) == 7
     for reason, name in zip(decision.reasons, stub_positions, strict=True):
         issue_number = _STUB_ISSUE_NUMBERS[name]
         if issue_number is None:
@@ -991,7 +1068,8 @@ def test_default_checks_over_permissive_context_leaves_only_stubs_vetoing() -> N
 @pytest.mark.parametrize("name", STUB_CHECK_NAMES)
 def test_each_stub_check_still_vetoes_a_valid_intent(name: str) -> None:
     """Called directly, every stub check still vetoes over a fully
-    permissive context -- issue #30 only promotes the 15 real checks."""
+    permissive context -- issues #30/#31 together only promote 17 of the 24
+    checks to real logic."""
     result = _real_check(name)(make_intent(), make_context())
 
     assert result.vetoed is True

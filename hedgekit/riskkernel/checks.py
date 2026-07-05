@@ -1,13 +1,14 @@
 """Pre-trade veto checks for the Risk Kernel (SPEC S10.3).
 
-This module ships the 24 SPEC S10.3 pre-trade checks. Issue #30 gives 15 of
-them real logic -- instrument whitelist, mode/ceiling, the floor invariant,
-fee-bound presence, concentration, daily loss, trailing drawdown, velocity,
-quote/forecast freshness, price band, participation cap, clock skew, and
-reduce-only provability -- each reading a full :class:`EvaluationContext`. The
-remaining 9 are deliberate stubs that still veto, each naming the GitHub issue
-that will replace it (:data:`_STUB_REASONS`), so an operator sees *why* a check
-is not yet live rather than a bare "not implemented".
+This module ships the 24 SPEC S10.3 pre-trade checks. Issues #30 and #31 give
+17 of them real logic -- instrument whitelist, mode/ceiling, the floor
+invariant, fee-bound presence, concentration, daily loss, trailing drawdown,
+velocity, quote/forecast freshness, price band, participation cap, approval-
+token and idempotency-key uniqueness (#31), clock skew, and reduce-only
+provability -- each reading a full :class:`EvaluationContext`. The remaining 7
+are deliberate stubs that still veto, each naming the GitHub issue that will
+replace it (:data:`_STUB_REASONS`), so an operator sees *why* a check is not
+yet live rather than a bare "not implemented".
 
 Every check is a small, pure callable taking ``(intent, context)`` and
 returning a :class:`CheckResult`; :func:`evaluate_intent` runs the whole
@@ -95,6 +96,9 @@ class OrderIntent:
         size: The contract count, in centis.
         max_notional: The notional cap, in money-micros.
         implied_probability: The forecast-implied probability, in ppm.
+        idempotency_key: The caller-supplied idempotency key, read by the
+            ``idempotency_key_uniqueness`` check to reject a duplicate submission
+            (issue #31).
     """
 
     intent_id: str
@@ -105,6 +109,7 @@ class OrderIntent:
     size: ContractCentis
     max_notional: MoneyMicros
     implied_probability: ProbabilityPpm
+    idempotency_key: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -249,7 +254,7 @@ def _order_cost(intent: OrderIntent, context: EvaluationContext) -> MoneyMicros:
     policy -- so a de-risking ``SELL_TO_CLOSE`` from the kill path (SPEC S9.8)
     is not vetoed by a cap it should reduce -- is deferred until the kill /
     de-risking emitter (#35) exists to integration-test against. Until then
-    every intent is vetoed by the 9 explicit-veto stubs regardless, so no close
+    every intent is vetoed by the 7 explicit-veto stubs regardless, so no close
     reaches these caps in production.
 
     Both fee upper bounds must be present for the cost to be provable. When
@@ -301,7 +306,7 @@ def _is_stale(timestamp: int | None, now: int, ttl_seconds: int) -> bool:
     return now - timestamp > ttl_seconds
 
 
-# --- The 15 real checks (SPEC S10.3) ---------------------------------------------
+# --- The 17 real checks (SPEC S10.3) ---------------------------------------------
 
 
 class _InstrumentWhitelist:
@@ -713,6 +718,48 @@ class _ClockSkewLimit:
         return _approve()
 
 
+class _ApprovalTokenUniqueness:
+    """Veto an intent whose id already has an issued approval token (#31)."""
+
+    name = "approval_token_uniqueness"
+
+    def __call__(self, intent: OrderIntent, context: EvaluationContext) -> CheckResult:
+        """Approve iff the intent id has not been reserved/approved before.
+
+        Args:
+            intent: The order intent supplying the intent id.
+            context: The evaluation context supplying the used-intent-id set.
+
+        Returns:
+            A vetoing result if the intent id is already in
+            ``context.used_intent_ids``, else an approval.
+        """
+        if intent.intent_id in context.used_intent_ids:
+            return _veto("approval token already issued for intent id")
+        return _approve()
+
+
+class _IdempotencyKeyUniqueness:
+    """Veto an intent whose idempotency key was already used (#31)."""
+
+    name = "idempotency_key_uniqueness"
+
+    def __call__(self, intent: OrderIntent, context: EvaluationContext) -> CheckResult:
+        """Approve iff the idempotency key has not been used before.
+
+        Args:
+            intent: The order intent supplying the idempotency key.
+            context: The evaluation context supplying the used-key set.
+
+        Returns:
+            A vetoing result if the idempotency key is already in
+            ``context.used_idempotency_keys``, else an approval.
+        """
+        if intent.idempotency_key in context.used_idempotency_keys:
+            return _veto("idempotency key already used")
+        return _approve()
+
+
 class _ReduceOnlyProvable:
     """Veto a close that cannot be proven to reduce the open position."""
 
@@ -740,7 +787,7 @@ class _ReduceOnlyProvable:
         return _veto("close is not provably reduce-only")
 
 
-# --- The 9 deliberate stubs (each blocked on a later issue) -----------------------
+# --- The 7 deliberate stubs (each blocked on a later issue) -----------------------
 
 
 @dataclass(frozen=True, slots=True)
@@ -771,18 +818,18 @@ class _ExplicitVetoStub:
 
 #: The stub checks paired with their blocking-issue veto reasons, naming the
 #: issue that will replace each one. ``jurisdiction_product_eligibility`` has no
-#: tracking issue yet and instead names the metadata it awaits. Held as a tuple
-#: of pairs (not a dict literal) so no veto-reason string sits as the value of a
-#: ``token``/``key``-named literal dict key -- a shape bandit's B105 heuristic
-#: misreads as a hardcoded credential; the runtime lookup dict is built below.
+#: tracking issue yet and instead names the metadata it awaits. (Issue #31
+#: promoted ``approval_token_uniqueness`` / ``idempotency_key_uniqueness`` out
+#: of this table into real checks.) Held as a tuple of pairs (not a dict
+#: literal) so a future ``token``/``key``-named entry could never sit as a
+#: string-valued literal dict key -- a shape bandit's B105 heuristic misreads as
+#: a hardcoded credential; the runtime lookup dict is built below.
 _STUB_REASON_ITEMS: tuple[tuple[str, str], ...] = (
     ("jurisdiction_product_eligibility", "awaiting NormalizedMarket metadata"),
     ("balance_reconciliation", "blocked on #32 (balance reconciliation)"),
     ("position_reconciliation", "blocked on #32 (position reconciliation)"),
     ("open_order_reconciliation", "blocked on #32 (open-order reconciliation)"),
     ("human_ack_satisfied", "blocked on #34 (human acknowledgement)"),
-    ("approval_token_uniqueness", "blocked on #31 (approval-token uniqueness)"),
-    ("idempotency_key_uniqueness", "blocked on #31 (idempotency-key uniqueness)"),
     ("exchange_status_ok", "blocked on #32 (exchange status feed)"),
     ("pipeline_heartbeat_ok", "blocked on #32 (pipeline heartbeat)"),
 )
@@ -822,7 +869,7 @@ _SPEC_10_3_CHECK_NAMES: tuple[str, ...] = (
     "reduce_only_provable",
 )
 
-#: The 15 real checks, keyed by SPEC S10.3 name for order-independent assembly.
+#: The 17 real checks, keyed by SPEC S10.3 name for order-independent assembly.
 _REAL_CHECKS: tuple[Check, ...] = (
     _InstrumentWhitelist(),
     _ModePermissionCeiling(),
@@ -837,16 +884,18 @@ _REAL_CHECKS: tuple[Check, ...] = (
     _ForecastFreshness(),
     _PriceBandCompliance(),
     _ParticipationCapCompliance(),
+    _ApprovalTokenUniqueness(),
+    _IdempotencyKeyUniqueness(),
     _ClockSkewLimit(),
     _ReduceOnlyProvable(),
 )
 
-#: The 9 stub checks, keyed by SPEC S10.3 name, each vetoing with its reason.
+#: The 7 stub checks, keyed by SPEC S10.3 name, each vetoing with its reason.
 _STUB_CHECKS: tuple[Check, ...] = tuple(
     _ExplicitVetoStub(name, reason) for name, reason in _STUB_REASONS.items()
 )
 
-#: Name-to-check lookup spanning all 24 checks (15 real, 9 stub); the pinned
+#: Name-to-check lookup spanning all 24 checks (17 real, 7 stub); the pinned
 #: :data:`_SPEC_10_3_CHECK_NAMES` sequence selects and orders them.
 _CHECK_BY_NAME: dict[str, Check] = {
     check.name: check for check in (*_REAL_CHECKS, *_STUB_CHECKS)

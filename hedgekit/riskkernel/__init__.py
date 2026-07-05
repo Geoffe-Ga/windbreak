@@ -7,8 +7,10 @@ SPEC S5.3 import boundary, only this package may import the approval-token
 signing key handle; a future import-linter check will enforce that rule in CI.
 
 This package root re-exports the mode machine (:mod:`~hedgekit.riskkernel.modes`),
-the pre-trade checks (:mod:`~hedgekit.riskkernel.checks`), and the process
-skeleton (:mod:`~hedgekit.riskkernel.process`). It deliberately does **not**
+the pre-trade checks (:mod:`~hedgekit.riskkernel.checks`), the process skeleton
+(:mod:`~hedgekit.riskkernel.process`), the capital-reservation ledger and
+approval pipeline (:mod:`~hedgekit.riskkernel.reservations`), and the approval-
+token issuer (:mod:`~hedgekit.riskkernel.tokens`). It deliberately does **not**
 re-export :mod:`hedgekit.riskkernel.signing`: the signing key handle is reachable
 only via its fully qualified module path, preserving the SPEC S5.3 boundary.
 """
@@ -43,14 +45,26 @@ from hedgekit.riskkernel.process import (
     LoggingKernelLedgerWriter,
     RiskKernel,
 )
+from hedgekit.riskkernel.reservations import (
+    ApprovalOutcome,
+    ApprovalPipeline,
+    DuplicateReservationError,
+    Reservation,
+    ReservationLedger,
+)
+from hedgekit.riskkernel.tokens import DEFAULT_TOKEN_TTL_SECONDS, TokenIssuer
 
 __all__ = [
     "DEFAULT_CHECKS",
+    "DEFAULT_TOKEN_TTL_SECONDS",
     "REARM_CONFIRMATION_PHRASE",
     "AccountState",
+    "ApprovalOutcome",
+    "ApprovalPipeline",
     "Check",
     "CheckResult",
     "Decision",
+    "DuplicateReservationError",
     "EvaluationContext",
     "FeeBounds",
     "IllegalModeTransitionError",
@@ -63,8 +77,11 @@ __all__ = [
     "ModeCeilingExceededError",
     "ModeStateMachine",
     "OrderIntent",
+    "Reservation",
+    "ReservationLedger",
     "RiskKernel",
     "RiskLimits",
+    "TokenIssuer",
     "evaluate_intent",
     "worst_case_cost",
     "worst_case_equity",

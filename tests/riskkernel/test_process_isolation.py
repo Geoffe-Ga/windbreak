@@ -19,8 +19,9 @@ package; a matching `plans/architecture/.importlinter` contract; the
 `KernelLedgerWriter` trio (`Logging`/`InMemory`, mirroring
 `hedgekit.connector.snapshot`'s `EventLedgerWriter` trio); `RiskKernel`'s
 bounded heartbeat loop and ledgered `evaluate_intent`; a subprocess-level
-"Process B survives Process A" isolation smoke test; and that
-`SigningKeyHandle` is a pure stub holding no key material.
+"Process B survives Process A" isolation smoke test; and (issue #31) that
+`SigningKeyHandle` signs with real HMAC-SHA256 while never exposing its key
+material through any public attribute.
 """
 
 from __future__ import annotations
@@ -28,6 +29,8 @@ from __future__ import annotations
 import ast
 import configparser
 import contextlib
+import hashlib
+import hmac
 import importlib
 import json
 import logging
@@ -83,6 +86,10 @@ _DEFAULT_MAX_NOTIONAL = MoneyMicros(50_000_000)
 _DEFAULT_IMPLIED_PROBABILITY = ProbabilityPpm(520_000)
 
 
+#: Default `OrderIntent.idempotency_key` for :func:`_make_intent` (issue #31).
+_DEFAULT_IDEMPOTENCY_KEY = "idem-0001"
+
+
 def _make_intent(
     *,
     intent_id: str = "intent-0001",
@@ -93,6 +100,7 @@ def _make_intent(
     size: ContractCentis = _DEFAULT_SIZE,
     max_notional: MoneyMicros = _DEFAULT_MAX_NOTIONAL,
     implied_probability: ProbabilityPpm = _DEFAULT_IMPLIED_PROBABILITY,
+    idempotency_key: str = _DEFAULT_IDEMPOTENCY_KEY,
 ) -> OrderIntent:
     """Build a valid `OrderIntent` for kernel-evaluation tests.
 
@@ -105,6 +113,7 @@ def _make_intent(
         size: The contract count, in centis.
         max_notional: The notional cap, in money-micros.
         implied_probability: The forecast-implied probability, in ppm.
+        idempotency_key: The caller-supplied idempotency key (issue #31).
 
     Returns:
         A fully populated, valid `OrderIntent`.
@@ -118,6 +127,7 @@ def _make_intent(
         size=size,
         max_notional=max_notional,
         implied_probability=implied_probability,
+        idempotency_key=idempotency_key,
     )
 
 
@@ -359,8 +369,8 @@ def test_risk_kernel_evaluate_intent_records_one_intent_vetoed_event() -> None:
     and reasons) and returns a `Decision` marked both vetoed and ledgered.
 
     A fully-permissive context (see `tests/riskkernel/conftest.py`) still
-    vetoes overall: 9 of the 24 SPEC S10.3 checks remain deliberate stubs
-    (issue #30 only promotes 15 of them to real logic).
+    vetoes overall: 7 of the 24 SPEC S10.3 checks remain deliberate stubs
+    (issues #30/#31 together only promote 17 of them to real logic).
     """
     kernel = RiskKernel.for_testing()
     intent = _make_intent()
@@ -391,8 +401,8 @@ def test_risk_kernel_evaluate_intent_records_intent_approved_when_not_vetoed(
     """When the check pipeline approves an intent (no veto), the kernel ledgers
     exactly one `IntentApproved` event and never a mislabeled `IntentVetoed`.
 
-    9 of the 24 SPEC S10.3 checks remain deliberate stubs after issue #30
-    (the rest are tracked in issues #31-#34), so no real context ever
+    7 of the 24 SPEC S10.3 checks remain deliberate stubs after issues #30
+    and #31 (the rest are tracked in issues #32/#34), so no real context ever
     produces a fully-approving decision yet; the approving pipeline is
     stubbed here so the audit trail's correctness is pinned before that
     remaining logic lands, not rediscovered as a ledger bug after.
@@ -575,25 +585,34 @@ def test_riskkernel_module_invocation_smoke_via_subprocess() -> None:
     assert any("heartbeat" in payload.get("msg", "").lower() for payload in payloads)
 
 
-# --- SigningKeyHandle: a pure stub, no key material -----------------------------
+# --- SigningKeyHandle: real HMAC-SHA256 signing, no key material leakage -------
 
 
-def test_signing_key_handle_sign_raises_not_implemented() -> None:
-    """`SigningKeyHandle.sign` raises `NotImplementedError` -- no signing
-    logic ships in this issue; only the isolated, key-material-free handle
-    shape does.
+#: A fixed, valid (>=32-byte) key for the known-answer HMAC test below.
+_KNOWN_KEY_MATERIAL = b"k" * 32
+
+
+def test_signing_key_handle_sign_returns_32_byte_hmac_sha256_of_payload() -> None:
+    """`SigningKeyHandle.sign` returns the exact 32-byte HMAC-SHA256 digest of
+    the payload under the handle's key (issue #31) -- a known-answer test
+    computed independently here, so a serialization- or algorithm-drift
+    mutant changes the output and fails this test, not just "returns bytes".
     """
-    handle = SigningKeyHandle()
+    handle = SigningKeyHandle(_KNOWN_KEY_MATERIAL)
+    payload = b"payload"
 
-    with pytest.raises(NotImplementedError):
-        handle.sign(b"payload")
+    signature = handle.sign(payload)
+
+    assert signature == hmac.new(_KNOWN_KEY_MATERIAL, payload, hashlib.sha256).digest()
+    assert len(signature) == 32
 
 
 def test_signing_key_handle_exposes_no_key_byte_attribute() -> None:
     """No public, non-callable attribute on a `SigningKeyHandle` instance
-    ever holds raw key bytes.
+    ever holds raw key bytes -- the key is stored only as the private
+    `_key`, never as a public attribute (issue #31).
     """
-    handle = SigningKeyHandle()
+    handle = SigningKeyHandle(_KNOWN_KEY_MATERIAL)
     public_attribute_names = [name for name in dir(handle) if not name.startswith("_")]
     assert "sign" in public_attribute_names
 

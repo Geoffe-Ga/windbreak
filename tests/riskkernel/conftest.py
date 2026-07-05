@@ -20,7 +20,8 @@ import, not pytest fixture injection, so it works unchanged inside
 
 `make_context`'s defaults are deliberately tuned so that, paired with
 `make_intent()`'s defaults (action "buy", price 5000 pips, size 1000
-centis), **every one of the 15 real SPEC S10.3 checks passes**: each
+centis), **every one of the 17 real SPEC S10.3 checks passes** (issues #30
+and #31 together): each
 per-check test in `test_checks.py` therefore only needs to override the one
 or two fields that check actually reads, proving the override -- not a
 coincidence of some other field -- is what flips the verdict.
@@ -71,6 +72,12 @@ _DEFAULT_MAX_NOTIONAL = MoneyMicros(50_000_000)
 _DEFAULT_IMPLIED_PROBABILITY = ProbabilityPpm(520_000)
 
 
+#: Default `OrderIntent.idempotency_key` for :func:`make_intent` (issue #31):
+#: distinct from `intent_id` on purpose, so a per-check test overriding only
+#: one of the two uniqueness dimensions never accidentally exercises both.
+_DEFAULT_IDEMPOTENCY_KEY = "idem-0001"
+
+
 def make_intent(
     *,
     intent_id: str = "intent-0001",
@@ -81,6 +88,7 @@ def make_intent(
     size: ContractCentis = _DEFAULT_SIZE,
     max_notional: MoneyMicros = _DEFAULT_MAX_NOTIONAL,
     implied_probability: ProbabilityPpm = _DEFAULT_IMPLIED_PROBABILITY,
+    idempotency_key: str = _DEFAULT_IDEMPOTENCY_KEY,
 ) -> OrderIntent:
     """Build a valid `OrderIntent`, with any field overridable by keyword.
 
@@ -93,6 +101,7 @@ def make_intent(
         size: The contract count, in centis.
         max_notional: The notional cap, in money-micros.
         implied_probability: The forecast-implied probability, in ppm.
+        idempotency_key: The caller-supplied idempotency key (issue #31).
 
     Returns:
         A fully populated, valid `OrderIntent`.
@@ -106,6 +115,7 @@ def make_intent(
         size=size,
         max_notional=max_notional,
         implied_probability=implied_probability,
+        idempotency_key=idempotency_key,
     )
 
 
@@ -189,7 +199,15 @@ _LIMITS_FIELDS = frozenset(f.name for f in dataclasses.fields(RiskLimits))
 _ACCOUNT_FIELDS = frozenset(f.name for f in dataclasses.fields(AccountState))
 _MARKET_FIELDS = frozenset(f.name for f in dataclasses.fields(MarketView))
 _FEES_FIELDS = frozenset(f.name for f in dataclasses.fields(FeeBounds))
-_CONTEXT_FIELDS = frozenset({"mode", "now_epoch_s"})
+#: `EvaluationContext`'s own direct fields (not nested in one of the four
+#: value objects): `mode`/`now_epoch_s` from issue #30, plus the two
+#: ledger-uniqueness sets issue #31 adds (`used_intent_ids`,
+#: `used_idempotency_keys`), each defaulting to an empty `frozenset()` so
+#: every pre-issue-#31 test keeps passing `approval_token_uniqueness` /
+#: `idempotency_key_uniqueness` unless it deliberately overrides one.
+_CONTEXT_FIELDS = frozenset(
+    {"mode", "now_epoch_s", "used_intent_ids", "used_idempotency_keys"}
+)
 
 
 def make_context(**overrides: object) -> EvaluationContext:
@@ -206,7 +224,8 @@ def make_context(**overrides: object) -> EvaluationContext:
     Args:
         **overrides: Field name to value, for any field of `RiskLimits`,
             `AccountState`, `MarketView`, `FeeBounds`, or `EvaluationContext`
-            itself (`mode`, `now_epoch_s`).
+            itself (`mode`, `now_epoch_s`, `used_intent_ids`,
+            `used_idempotency_keys`).
 
     Returns:
         A fully populated `EvaluationContext`.
@@ -244,8 +263,12 @@ def make_context(**overrides: object) -> EvaluationContext:
     )
     mode = overrides.get("mode", Mode.LIVE)
     now_epoch_s = overrides.get("now_epoch_s", DEFAULT_NOW_EPOCH_S)
+    used_intent_ids = overrides.get("used_intent_ids", frozenset())
+    used_idempotency_keys = overrides.get("used_idempotency_keys", frozenset())
     assert isinstance(mode, Mode)
     assert isinstance(now_epoch_s, int)
+    assert isinstance(used_intent_ids, frozenset)
+    assert isinstance(used_idempotency_keys, frozenset)
     return EvaluationContext(
         mode=mode,
         limits=limits,
@@ -253,4 +276,6 @@ def make_context(**overrides: object) -> EvaluationContext:
         market=market,
         fees=fees,
         now_epoch_s=now_epoch_s,
+        used_intent_ids=used_intent_ids,
+        used_idempotency_keys=used_idempotency_keys,
     )

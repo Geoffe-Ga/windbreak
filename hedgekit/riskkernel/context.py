@@ -186,6 +186,12 @@ class EvaluationContext:
         market: The current market-data view.
         fees: The worst-case fee upper bounds.
         now_epoch_s: The kernel's current wall clock, in epoch seconds.
+        used_intent_ids: Every intent id the reservation ledger has ever seen,
+            for the ``approval_token_uniqueness`` check. Required with no
+            production default: a forgotten wiring must fail loudly, never open.
+        used_idempotency_keys: Every idempotency key the reservation ledger has
+            ever seen, for the ``idempotency_key_uniqueness`` check. Required
+            with no production default, for the same fail-loud reason.
     """
 
     mode: Mode
@@ -194,3 +200,5 @@ class EvaluationContext:
     market: MarketView
     fees: FeeBounds
     now_epoch_s: int
+    used_intent_ids: frozenset[str]
+    used_idempotency_keys: frozenset[str]
