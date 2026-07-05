@@ -129,7 +129,7 @@ Then act on `$STATUS`:
   gh issue close "$ISSUE_N" --reason completed 2>/dev/null || true
   git checkout main && git pull --ff-only
   scripts/ralph/fleet.sh release "$ISSUE_N"        # frees the slot
-  python3 -c "import json;p='scripts/ralph/state.json';s=json.load(open(p));s['completed_since_groom']+=1;s['completed_since_deslop']=s.get('completed_since_deslop',0)+1;s['total_completed']+=1;s['last_completed_issue']=$ISSUE_N;json.dump(s,open(p,'w'),indent=2)"
+  python3 -c "import json;p='scripts/ralph/state.json';s=json.load(open(p));s['completed_since_groom']+=1;s['completed_since_deslop']=s.get('completed_since_deslop',0)+1;s['total_completed']+=1;s['last_completed_issue']=$ISSUE_N;open(p,'w').write(json.dumps(s,indent=2)+'\n')"
   ```
   (Idempotent if `iteration-trigger.yml` or a prior wake already merged it — the
   PR shows MERGED; do the same close + `release` + state bump.)
@@ -195,7 +195,7 @@ When `completed_since_groom >= groom_interval`:
 1. Invoke **`/backlog-grooming`** as a Skill (label/close ops are safe while lanes build).
 2. Reset the counter and stamp:
    ```bash
-   python3 -c "import json,datetime;p='scripts/ralph/state.json';s=json.load(open(p));s['completed_since_groom']=0;s['last_groom_at']=datetime.datetime.now().isoformat();json.dump(s,open(p,'w'),indent=2)"
+   python3 -c "import json,datetime;p='scripts/ralph/state.json';s=json.load(open(p));s['completed_since_groom']=0;s['last_groom_at']=datetime.datetime.now().isoformat();open(p,'w').write(json.dumps(s,indent=2)+'\n')"
    ```
 3. Commit the state change (state-only changes may go directly on `main`).
 
@@ -210,7 +210,7 @@ Step 1's bump):
    ```
 2. Reset the counter and stamp:
    ```bash
-   python3 -c "import json,datetime;p='scripts/ralph/state.json';s=json.load(open(p));s['completed_since_deslop']=0;s['last_deslop_at']=datetime.datetime.now().isoformat();json.dump(s,open(p,'w'),indent=2)"
+   python3 -c "import json,datetime;p='scripts/ralph/state.json';s=json.load(open(p));s['completed_since_deslop']=0;s['last_deslop_at']=datetime.datetime.now().isoformat();open(p,'w').write(json.dumps(s,indent=2)+'\n')"
    ```
 3. Commit the state change (state-only changes may go directly on `main`).
 
