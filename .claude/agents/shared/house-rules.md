@@ -69,6 +69,30 @@ re-clear Gate 2 locally, push, climb again. **Never weaken a gate to pass it.**
 > inline `# noqa: RULE  # Issue #N: <reason>` (or `# type: ignore  # Issue #N:
 > …`) tied to a real tracking issue, per `max-quality-no-shortcuts`.
 
+## No blocking waits (never hang the fleet)
+
+An agent that sits in a shell wait loop hangs its entire lane — and with it the
+whole Ralph tick — until a human kills it. **Never write an unbounded shell
+polling loop**: no `until <cond>; do …; sleep N; done`, no
+`while ! <cond>; do sleep N; done`, no open-ended `sleep`-and-retry chains.
+These have no timeout, no escape, and no way to report failure.
+
+- **Waiting on CI, a review verdict, or a merge?** That is never yours to wait
+  on — return to the orchestrator immediately (workers cover Gates 1–2.5 only;
+  the orchestrator's event wakes drive Gates 3–4).
+- **Waiting on something you started** (a server booting, a file appearing, a
+  subprocess finishing)? Use a **bounded** retry: a fixed attempt count and a
+  hard total time budget (e.g. `for i in 1 2 3 4 5; do <check> && break; sleep 2; done`
+  followed by an explicit check that **fails loudly** if the condition never
+  came true). Prefer the tool's own timeout flag (`--timeout`, `-m`) over
+  hand-rolled sleeps.
+- **Orchestrator-level waiting** is done with event wakes (`ScheduleWakeup`,
+  webhook subscriptions, background-task completion) or a `Monitor` with an
+  explicit until-condition and timeout — never a foreground shell loop.
+
+If a condition may genuinely take minutes and there is no bounded way to wait
+for it, that is a **blocked** outcome: report it and return; do not camp on it.
+
 ## Minimal change & scope discipline
 
 - Implement **exactly** the issue — smallest change that satisfies it.
