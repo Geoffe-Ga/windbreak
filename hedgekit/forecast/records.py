@@ -240,10 +240,12 @@ class ForecastRecord:
             TypeError: If any ppm field is a ``bool`` or non-``int``.
             ValueError: If any ppm field is out of range, ``forecast_id`` or
                 ``market_ticker`` is empty, ``triage_stage`` is unrecognized,
-                or ``triage_stage`` is ``"triage_only"`` while
-                ``eligible_for_live`` is ``True`` (a triage-only record was
-                never backed by the full pipeline's research, so it can never
-                be eligible to back a live order). Each message names the
+                or the record is ``eligible_for_live`` while either
+                live-ineligibility trigger holds. Two independent triggers each
+                force live-ineligibility: ``triage_stage == "triage_only"`` (a
+                triage-only record was never backed by the full pipeline's
+                research) and ``coherence_flag`` being ``True`` (an incoherent
+                forecast must never back a live order). Each message names the
                 offending field(s).
         """
         for field_name in _PPM_FIELDS:
@@ -259,6 +261,10 @@ class ForecastRecord:
             raise ValueError(
                 f"triage_stage={self.triage_stage!r} records are permanently "
                 "live-ineligible; eligible_for_live must be False"
+            )
+        if self.coherence_flag and self.eligible_for_live:
+            raise ValueError(
+                "eligible_for_live must be False when coherence_flag is True"
             )
 
 

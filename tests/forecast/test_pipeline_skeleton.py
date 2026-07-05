@@ -28,7 +28,10 @@ from hedgekit.forecast.cassettes import (
     ReplayCassette,
 )
 from hedgekit.forecast.pipeline import (
+    aggregate_median,
     apply_calibration_map,
+    build_forecast_record,
+    collect_model_votes,
     run_pipeline,
     shrink_toward_baseline,
 )
@@ -185,6 +188,35 @@ def test_run_pipeline_with_empty_cassette_raises_cassette_miss_error(
 
     with pytest.raises(CassetteMissError):
         run_pipeline(market, baseline, transport=empty_cassette, created_at=created_at)
+
+
+def test_build_forecast_record_incoherent_and_eligible_raises_value_error(
+    market: NormalizedMarket,
+    baseline: BaselineQuoteSnapshot,
+    created_at: datetime,
+    make_fake_vote_transport: FakeVoteTransportFactory,
+) -> None:
+    """A non-None `coherence_sum` sets `coherence_flag=True` while
+    `build_forecast_record` still passes `eligible_for_live=True` -- an
+    invalid combination `ForecastRecord` must reject (#25).
+    """
+    votes = collect_model_votes(market, baseline, transport=make_fake_vote_transport())
+    aggregate = aggregate_median(votes)
+
+    with pytest.raises(ValueError):
+        build_forecast_record(
+            market=market,
+            baseline=baseline,
+            created_at=created_at,
+            question_hash="sha256:question-hash",
+            probability_ppm=aggregate.probability_ppm,
+            aggregate=aggregate,
+            votes=votes,
+            citations=(),
+            source_notes=(),
+            rationale="## Rationale\n\nStub rationale for issue #25 RED test.\n",
+            coherence_sum=1_500_000,
+        )
 
 
 # --- Stage-function arithmetic (stages 11-12) -------------------------------------

@@ -151,6 +151,14 @@ def test_valid_triage_stage_values_are_accepted(triage_stage: str) -> None:
     assert record.triage_stage == triage_stage
 
 
+def test_coherence_flag_and_eligible_for_live_both_true_raises() -> None:
+    """A record cannot be both incoherence-flagged and live-eligible (#25):
+    `coherence_flag=True` must forbid `eligible_for_live=True`.
+    """
+    with pytest.raises(ValueError, match=r"coherence_flag|eligible_for_live"):
+        _record(coherence_flag=True, eligible_for_live=True)
+
+
 def test_triage_only_eligible_for_live_combination_raises_value_error() -> None:
     """A `triage_stage="triage_only"` record can never be `eligible_for_live` (#23).
 
@@ -184,6 +192,42 @@ def test_sanctioned_triage_stage_eligible_for_live_combinations_construct(
 
     assert record.triage_stage == triage_stage
     assert record.eligible_for_live is eligible_for_live
+
+
+@pytest.mark.parametrize(
+    ("triage_stage", "coherence_flag"),
+    [
+        ("triage_only", True),
+        ("triage_only", False),
+        ("full", True),
+    ],
+)
+def test_any_live_ineligibility_trigger_forbids_eligible_for_live(
+    triage_stage: str, coherence_flag: bool
+) -> None:
+    """The two live-ineligibility triggers compose (#23 + #25).
+
+    `triage_stage="triage_only"` and `coherence_flag=True` each independently
+    force live-ineligibility, so any record carrying either trigger -- or both
+    together -- must reject `eligible_for_live=True`.
+    """
+    with pytest.raises(ValueError, match=r"eligible_for_live|triage_stage"):
+        _record(
+            triage_stage=triage_stage,
+            coherence_flag=coherence_flag,
+            eligible_for_live=True,
+        )
+
+
+def test_coherence_flagged_full_record_is_live_eligible_when_not_flagged() -> None:
+    """Neither trigger firing leaves a `full` record free to be live-eligible.
+
+    Confirms the composed guard is not over-broad: a `full`, coherent record
+    (both triggers absent) still constructs with `eligible_for_live=True`.
+    """
+    record = _record(triage_stage="full", coherence_flag=False, eligible_for_live=True)
+
+    assert record.eligible_for_live is True
 
 
 def test_forecast_record_is_frozen() -> None:
