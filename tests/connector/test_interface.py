@@ -68,9 +68,9 @@ def test_every_expected_method_has_the_documented_arity() -> None:
             for param in inspect.signature(func).parameters.values()
             if param.name != "self"
         ]
-        assert (
-            len(params) == expected_count
-        ), f"{name} expected {expected_count} params, got {len(params)}"
+        assert len(params) == expected_count, (
+            f"{name} expected {expected_count} params, got {len(params)}"
+        )
 
 
 def test_unknown_market_error_is_a_key_error() -> None:
