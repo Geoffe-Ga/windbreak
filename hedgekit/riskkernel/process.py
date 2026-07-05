@@ -25,18 +25,21 @@ import dataclasses
 import logging
 import signal
 import threading
+import time
 from typing import TYPE_CHECKING, Protocol
 
 from hedgekit.ledger.events import Event, ModeHeartbeat
 from hedgekit.logging_setup import configure_logging
 from hedgekit.riskkernel import checks
 from hedgekit.riskkernel.modes import Mode, ModeStateMachine
+from hedgekit.riskkernel.verification import VerificationOutcome
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
     from types import FrameType
 
     from hedgekit.riskkernel.context import EvaluationContext
+    from hedgekit.riskkernel.verification import ReadOnlyVerifier, VerificationSnapshot
 
 #: Component label stamped on every event and log record this process emits.
 _COMPONENT = "riskkernel"
@@ -46,6 +49,9 @@ _INTENT_VETOED_EVENT = "IntentVetoed"
 
 #: Event type recorded when the kernel approves an intent (no check vetoed).
 _INTENT_APPROVED_EVENT = "IntentApproved"
+
+#: Event type recorded when a verification breach halts the kernel (issue #32).
+_VERIFICATION_MISMATCH_HALT_EVENT = "VerificationMismatchHalt"
 
 #: Payload schema version stamped on kernel-emitted events.
 _PAYLOAD_SCHEMA_VERSION = 1
@@ -59,6 +65,19 @@ _DEFAULT_HEARTBEAT_INTERVAL = 5
 _DEFAULT_MODE_CEILING = Mode.PAPER
 
 _LOGGER = logging.getLogger("hedgekit.riskkernel")
+
+
+def _default_clock() -> int:
+    """Return the current wall clock as whole epoch seconds.
+
+    Casts :func:`time.time` to an ``int`` so the kernel's clock stays off the
+    banned float path (SPEC S6.1): epoch seconds are integral here, and the
+    verification snapshot's ``verified_at_epoch_s`` is an ``int``.
+
+    Returns:
+        The current time, in whole epoch seconds.
+    """
+    return int(time.time())
 
 
 class KernelLedgerWriter(Protocol):
@@ -122,6 +141,9 @@ class RiskKernel:
         self,
         ledger_writer: KernelLedgerWriter,
         mode_machine: ModeStateMachine | None = None,
+        *,
+        verifier: ReadOnlyVerifier | None = None,
+        clock: Callable[[], int] | None = None,
     ) -> None:
         """Initialize the kernel.
 
@@ -129,6 +151,11 @@ class RiskKernel:
             ledger_writer: The seam every event is recorded through.
             mode_machine: The operating-mode state machine. Defaults to a fresh
                 ``RESEARCH`` machine ceilinged at :data:`_DEFAULT_MODE_CEILING`.
+            verifier: The read-only exchange verifier run each beat, or ``None``
+                to disable verification (the pre-issue-#32 behavior). Issue #32.
+            clock: A zero-argument callable returning the current epoch second,
+                injected so verification cycles are deterministic under test.
+                Defaults to :func:`_default_clock`.
         """
         self._ledger_writer = ledger_writer
         self._mode_machine = (
@@ -136,6 +163,9 @@ class RiskKernel:
             if mode_machine is not None
             else ModeStateMachine(mode_ceiling=_DEFAULT_MODE_CEILING)
         )
+        self._verifier = verifier
+        self._clock = clock if clock is not None else _default_clock
+        self._latest_verification: VerificationSnapshot | None = None
 
     @classmethod
     def for_testing(cls) -> RiskKernel:
@@ -151,6 +181,53 @@ class RiskKernel:
     def ledger_writer(self) -> KernelLedgerWriter:
         """Return the writer events are recorded through."""
         return self._ledger_writer
+
+    @property
+    def mode(self) -> Mode:
+        """Return the kernel's current operating mode."""
+        return self._mode_machine.mode
+
+    def run_verification_cycle(self) -> None:
+        """Run one verification cycle, halting the kernel on a breach.
+
+        A no-op when no verifier is configured. Otherwise runs the verifier at
+        the injected clock's current epoch second, retains the resulting
+        snapshot for the next :meth:`evaluate_intent`, and -- on a ``BREACH``
+        outcome -- halts the kernel (see :meth:`_halt_on_breach`).
+        """
+        if self._verifier is None:
+            return
+        snapshot = self._verifier.run_cycle(self._clock())
+        self._latest_verification = snapshot
+        if snapshot.outcome is VerificationOutcome.BREACH:
+            self._halt_on_breach(snapshot)
+
+    def _halt_on_breach(self, snapshot: VerificationSnapshot) -> None:
+        """Transition to HALT on a breach, unless already HALT or KILLED.
+
+        ``HALT -> HALT`` and ``KILLED -> HALT`` are both illegal on the mode
+        ladder (the state machine forbids same-mode moves and treats KILLED as a
+        dead end), so this guard makes a repeated breach idempotent: the halt
+        fires -- and its ``VerificationMismatchHalt`` event is recorded -- exactly
+        once, on the true transition.
+
+        Args:
+            snapshot: The breaching snapshot, whose drift is recorded for audit.
+        """
+        if self._mode_machine.mode in {Mode.HALT, Mode.KILLED}:
+            return
+        self._mode_machine.transition(Mode.HALT)
+        self._ledger_writer.record(
+            Event(
+                event_type=_VERIFICATION_MISMATCH_HALT_EVENT,
+                component=_COMPONENT,
+                payload_schema_version=_PAYLOAD_SCHEMA_VERSION,
+                payload={
+                    "cash_drift": snapshot.cash_drift.value,
+                    "verified_at_epoch_s": snapshot.verified_at_epoch_s,
+                },
+            )
+        )
 
     def _emit_heartbeat(self, beat: int) -> None:
         """Log and record one mode-heartbeat for the current mode.
@@ -178,6 +255,10 @@ class RiskKernel:
     ) -> None:
         """Emit heartbeats until the beat budget or stop event ends the loop.
 
+        Each beat also runs one verification cycle (a no-op when no verifier is
+        configured), so a configured kernel cross-checks the venue once per beat
+        and halts on a breach.
+
         Args:
             max_beats: Maximum number of heartbeats to emit before returning.
                 ``None`` runs until ``stop_event`` is set.
@@ -192,6 +273,7 @@ class RiskKernel:
         while (max_beats is None or beat < max_beats) and not stop_event.is_set():
             beat += 1
             self._emit_heartbeat(beat)
+            self.run_verification_cycle()
             stop_event.wait(heartbeat_interval)
 
     def evaluate_intent(
@@ -204,14 +286,21 @@ class RiskKernel:
         ``context.mode`` is never trusted over the kernel's authority; the
         caller's original context object is left untouched.
 
+        When a verifier is configured, the kernel's own latest verification
+        snapshot (or ``None`` before the first cycle, failing closed) is stamped
+        onto the effective context and its observed cash / drift rewrite the
+        account, so verification -- not the caller -- feeds the floor (issue
+        #32). Without a verifier, the caller-supplied ``context.verification`` is
+        left untouched (the unit-test seam).
+
         Records exactly one event reflecting the true verdict: ``IntentVetoed``
         when any check vetoes (with the veto reasons), or ``IntentApproved``
         when the pipeline passes the intent (with empty reasons). Gating the
         event type on ``decision.vetoed`` -- rather than always emitting
-        ``IntentVetoed`` -- keeps the audit trail correct: 7 of the 24 SPEC
-        S10.3 checks remain stubs (issues #32/#34), so no real context yet
-        yields a fully-approving decision, but the approving branch is already
-        correct for when that logic lands.
+        ``IntentVetoed`` -- keeps the audit trail correct: 4 of the 24 SPEC
+        S10.3 checks remain stubs (issue #34 and the untracked jurisdiction
+        stub), so no real context yet yields a fully-approving decision, but the
+        approving branch is already correct for when that logic lands.
 
         Args:
             intent: The order intent to evaluate.
@@ -222,6 +311,8 @@ class RiskKernel:
             pipeline's ``vetoed``/``reasons`` and marked ledgered.
         """
         effective = dataclasses.replace(context, mode=self._mode_machine.mode)
+        if self._verifier is not None:
+            effective = self._stamp_verification(effective)
         decision = checks.evaluate_intent(intent, effective)
         event_type = _INTENT_VETOED_EVENT if decision.vetoed else _INTENT_APPROVED_EVENT
         # Deliberately unguarded (no try/except around the ledger write, unlike
@@ -242,6 +333,34 @@ class RiskKernel:
         return checks.Decision(
             vetoed=decision.vetoed, reasons=decision.reasons, ledgered=True
         )
+
+    def _stamp_verification(self, context: EvaluationContext) -> EvaluationContext:
+        """Stamp the kernel's latest verification snapshot onto a context copy.
+
+        Overrides any caller-supplied ``context.verification`` with the kernel's
+        own latest snapshot -- or ``None`` before the first cycle, failing closed
+        so every reconciliation check vetoes on the missing snapshot rather than
+        trusting the caller. When a snapshot exists, the account's verified
+        available cash and reconciliation-uncertainty buffer are rewritten from
+        it (observed cash and observed drift), so the floor invariant consumes
+        the verified figures.
+
+        Args:
+            context: The mode-stamped effective context to augment.
+
+        Returns:
+            A context copy carrying the latest snapshot and, when present, the
+            verification-derived account terms.
+        """
+        snapshot = self._latest_verification
+        if snapshot is None:
+            return dataclasses.replace(context, verification=None)
+        account = dataclasses.replace(
+            context.account,
+            exchange_verified_available_cash=snapshot.exchange_verified_available_cash,
+            reconciliation_uncertainty_buffer=snapshot.cash_drift,
+        )
+        return dataclasses.replace(context, verification=snapshot, account=account)
 
 
 def _non_negative_int(raw: str) -> int:
