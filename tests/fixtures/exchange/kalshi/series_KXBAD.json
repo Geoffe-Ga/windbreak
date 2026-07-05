@@ -1,0 +1,10 @@
+{
+  "series": {
+    "ticker": "KXBAD",
+    "fee_schedule_id": "kxbad-v1",
+    "fee_type": "mystery_v9",
+    "maker_fee_bps": 0,
+    "taker_fee_bps": 700,
+    "settlement_fee_bps": 0
+  }
+}

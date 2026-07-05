@@ -1,11 +1,15 @@
-"""Tests for hedgekit.connector.fake.FakeExchange (issue #16).
+"""Tests for hedgekit.connector.fake.FakeExchange (issue #16; semantics: #18).
 
 `FakeExchange` implements the full `MarketConnector` protocol from
 `tests/fixtures/exchange/*.json`, wrapping every arithmetic-bearing value
 (order-book prices/quantities, balances) in hedgekit's scaled-integer unit
 types at load time. `hedgekit/connector/` does not exist yet, so importing it
 fails collection with `ModuleNotFoundError: No module named
-'hedgekit.connector'` -- the expected Gate 1 RED state for issue #16.
+'hedgekit.connector'` -- the expected Gate 1 RED state for issue #16. Once
+that lands, this module additionally imports `hedgekit.connector.semantics`
+(issue #18), which does not exist yet either -- so this file stays RED via
+`ModuleNotFoundError: No module named 'hedgekit.connector.semantics'` until
+both issues are implemented.
 """
 
 from __future__ import annotations
@@ -18,6 +22,16 @@ import pytest
 
 from hedgekit.connector.interface import UnknownMarketError
 from hedgekit.connector.models import NormalizedMarket
+from hedgekit.connector.semantics import (
+    CancelCollateralRelease,
+    FeeDebitTiming,
+    FeeRounding,
+    HaltedMarketBehavior,
+    OrderCollateralInAvailable,
+    OrderCollateralInTotal,
+    PartialFillRepresentation,
+    UnsettledProceeds,
+)
 from hedgekit.numeric import ContractCentis, MoneyMicros, PricePips
 
 if TYPE_CHECKING:
@@ -148,17 +162,27 @@ def test_fills_price_and_quantity_are_unit_wrapped(fake_exchange: FakeExchange) 
 # --- Balances, semantics, status, time -------------------------------------------
 
 
-def test_get_balance_semantics_is_the_all_unknown_stub(
+def test_get_balance_semantics_is_the_all_known_fixture(
     fake_exchange: FakeExchange,
 ) -> None:
+    """The shared fixture records a known member for every field (issue #18)."""
     semantics = fake_exchange.get_balance_semantics()
 
-    assert semantics.collateral_in_total == "unknown"
-    assert semantics.collateral_excluded_from_available == "unknown"
-    assert semantics.fee_debited_at_execution == "unknown"
-    assert semantics.partial_fills_represented == "unknown"
-    assert semantics.cancel_releases_collateral == "unknown"
-    assert semantics.unsettled_proceeds_visible == "unknown"
+    assert semantics.open_order_collateral_in_total is OrderCollateralInTotal.INCLUDED
+    assert (
+        semantics.open_order_collateral_in_available
+        is OrderCollateralInAvailable.DEDUCTED_FROM_AVAILABLE
+    )
+    assert semantics.fee_debit_timing is FeeDebitTiming.AT_EXECUTION
+    assert semantics.fee_rounding is FeeRounding.EXACT
+    assert (
+        semantics.partial_fill_representation
+        is PartialFillRepresentation.PER_FILL_RECORDS
+    )
+    assert semantics.cancel_collateral_release is CancelCollateralRelease.IMMEDIATE
+    assert semantics.unsettled_proceeds is UnsettledProceeds.INCLUDED_IMMEDIATELY
+    assert semantics.halted_market_behavior is HaltedMarketBehavior.NEW_ORDERS_ACCEPTED
+    assert semantics.is_fully_known() is True
 
 
 def test_get_balances_wraps_amounts_in_money_micros(

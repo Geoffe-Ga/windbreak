@@ -1,4 +1,4 @@
-"""Shared fixtures for hedgekit.connector.kalshi tests (issue #17).
+"""Shared fixtures for hedgekit.connector.kalshi tests (issues #17, #18).
 
 Serves the checked-in Kalshi-shaped JSON fixtures in
 `tests/fixtures/exchange/kalshi/` through a fake, `requests`-like session
@@ -9,12 +9,20 @@ offline against recorded API responses -- never a live network call
 `FakeKalshiSession` routes on the *trailing* path segments of the URL
 `KalshiClient` builds, mirroring Kalshi's real v2 REST layout
 (`.../markets`, `.../events`, `.../markets/{ticker}/orderbook`,
-`.../exchange/status`). This pins the endpoints `KalshiConnector` must call
-without over-constraining the exact path prefix the implementer chooses. The
-recorded `markets.json`/`events.json` fixtures each fit on a single page
-(their `cursor` is empty), so these shared fixtures exercise the common
-single-page path; the multi-page `cursor` walk is covered by dedicated
-paginated sessions in `test_adapter.py`.
+`.../exchange/status`, `.../series/{series_ticker}`). This pins the endpoints
+`KalshiConnector` must call without over-constraining the exact path prefix
+the implementer chooses. The recorded `markets.json`/`events.json` fixtures
+each fit on a single page (their `cursor` is empty), so these shared fixtures
+exercise the common single-page path; the multi-page `cursor` walk is covered
+by dedicated paginated sessions in `test_adapter.py`.
+
+Issue #18 adds the `/series/{ticker}` route backing `get_fee_model`: `KXFED`
+resolves to the recorded `series_KXFED.json` fee schedule; any other series
+ticker 404s, exercising the `UnknownFeeModelError` fail-closed path. A
+dedicated `kalshi_malformed_fee_connector` fixture, built over its own tiny
+session, serves `series_KXBAD.json` -- a series document with an unrecognized
+`fee_type` -- so the malformed-schedule fail-closed path is exercisable
+without perturbing the shared fixture-backed connector used everywhere else.
 """
 
 from __future__ import annotations
@@ -149,7 +157,49 @@ class FakeKalshiSession:
             return FakeKalshiResponse(
                 200, _read_fixture("markets.json"), date_header=date_header
             )
+        if "/series/" in url:
+            series_ticker = url.rsplit("/series/", 1)[-1]
+            if series_ticker == "KXFED":
+                return FakeKalshiResponse(
+                    200, _read_fixture("series_KXFED.json"), date_header=date_header
+                )
+            return FakeKalshiResponse(
+                404, {"error": "unknown series"}, date_header=date_header
+            )
         return FakeKalshiResponse(404, {"error": "not found"}, date_header=date_header)
+
+
+class _MalformedSeriesSession:
+    """Serves a single `/series/KXBAD` route with an unrecognized `fee_type`.
+
+    Kept separate from `FakeKalshiSession` so the shared fixture-backed
+    connector used by the rest of this test package never has to know about
+    the malformed-schedule case; this session exists solely to back the
+    `kalshi_malformed_fee_connector` fixture below.
+    """
+
+    def get(
+        self,
+        url: str,
+        *,
+        params: Mapping[str, object] | None = None,
+        timeout: int | None = None,
+    ) -> FakeKalshiResponse:
+        """Serve `series_KXBAD.json` for `KXBAD`; 404 for anything else.
+
+        Args:
+            url: The full request URL `KalshiClient` built.
+            params: Forwarded query parameters (recorded, not used to route).
+            timeout: The forwarded request timeout (recorded, not used).
+
+        Returns:
+            The scripted fake response for the matched route.
+        """
+        if url.endswith("/series/KXBAD"):
+            return FakeKalshiResponse(
+                200, _read_fixture("series_KXBAD.json"), date_header=None
+            )
+        return FakeKalshiResponse(404, {"error": "unknown series"}, date_header=None)
 
 
 @pytest.fixture
@@ -204,4 +254,20 @@ def kalshi_connector_missing_date_header(
     """
     session = FakeKalshiSession(include_date_header=False)
     client = KalshiClient(base_url=_FAKE_BASE_URL, timeout=5, session=session)
+    return KalshiConnector(client, ledger, clock=clock)
+
+
+@pytest.fixture
+def kalshi_malformed_fee_connector(
+    ledger: InMemoryEventLedgerWriter, clock: Callable[[], datetime]
+) -> KalshiConnector:
+    """Provide a `KalshiConnector` whose `/series/KXBAD` route is malformed.
+
+    Backs the `get_fee_model` fail-closed test: `series_KXBAD.json` carries an
+    unrecognized `fee_type`, so `get_fee_model` must raise `UnknownFeeModelError`
+    rather than misinterpret the schedule.
+    """
+    client = KalshiClient(
+        base_url=_FAKE_BASE_URL, timeout=5, session=_MalformedSeriesSession()
+    )
     return KalshiConnector(client, ledger, clock=clock)

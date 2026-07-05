@@ -1,10 +1,12 @@
-"""Tests for hedgekit.connector.kalshi.adapter (issue #17): KalshiConnector.
+"""Tests for hedgekit.connector.kalshi.adapter (issues #17, #18): KalshiConnector.
 
 Acceptance test: `list_markets()` excludes every refused (non-binary)
 product and ledgers a `PRODUCT_REFUSED` event for each one; `get_market`,
 `get_order_book`, `get_exchange_status`, and `get_exchange_time` are backed
-by the recorded fixtures; every trading/account method still raises
-`NotImplementedError` (order path is M4; balances/fees are issue #3).
+by the recorded fixtures; `get_fee_model` and `get_balance_semantics` are
+backed by the recorded series/semantics fixtures (issue #18); every remaining
+trading/account method still raises `NotImplementedError` (order path is M4;
+balances/positions/fills are issue #3).
 
 `list_markets` also follows Kalshi's `cursor` pagination across every page of
 `/markets` and `/events` (bounded by a hard max-page cap that raises
@@ -22,11 +24,14 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from hedgekit.connector.fees import FeeModel, UnknownFeeModelError
 from hedgekit.connector.interface import MarketConnector, UnknownMarketError
 from hedgekit.connector.kalshi import PRODUCT_REFUSED_EVENT, KalshiConnector
 from hedgekit.connector.kalshi.adapter import (
+    KALSHI_BALANCE_SEMANTICS,
     MARKET_MALFORMED_EVENT,
     KalshiPaginationError,
+    _fee_model_from_series,
 )
 from hedgekit.connector.kalshi.client import KalshiClient
 from hedgekit.connector.kalshi.normalize import normalize_exchange_status
@@ -37,16 +42,23 @@ if TYPE_CHECKING:
     from hedgekit.connector.snapshot import ConnectorEvent, InMemoryEventLedgerWriter
 
 #: (method name, positional args) for every SPEC S7.2 method this issue does
-#: not implement -- order path is M4; balances/positions/fees are issue #3.
+#: not implement -- order path is M4; balances/positions/fills are issue #3.
 _UNIMPLEMENTED_CALLS: tuple[tuple[str, tuple[object, ...]], ...] = (
     ("place_order", (object(), object())),
     ("cancel_order", ("some-order-id",)),
     ("get_balances", ()),
-    ("get_balance_semantics", ()),
     ("get_positions", ()),
     ("get_open_orders", ()),
     ("get_fills", (datetime(2024, 1, 1, tzinfo=UTC),)),
-    ("get_fee_model", ("KXFED-24DEC",)),
+)
+
+#: The fee model `series_KXFED.json` normalizes to (issue #18): a 7% taker
+#: rate, no maker fee, no settlement fee.
+_EXPECTED_KXFED_FEE_MODEL = FeeModel(
+    schedule_id="kxfed-standard-v1",
+    maker_fee_ppm=0,
+    taker_fee_ppm=70_000,
+    settlement_fee_ppm=0,
 )
 
 
@@ -236,6 +248,97 @@ def test_get_exchange_time_falls_back_to_clock_when_date_header_absent(
     server_time = kalshi_connector_missing_date_header.get_exchange_time()
 
     assert server_time == clock()
+
+
+# --- get_fee_model (issue #18) ---------------------------------------------
+
+
+@pytest.mark.parametrize("market_or_series", ["KXFED-24DEC", "KXFED"])
+def test_get_fee_model_resolves_the_series_ticker_from_a_market_or_series(
+    kalshi_fixture_connector: KalshiConnector, market_or_series: str
+) -> None:
+    """A market ticker and its bare series ticker return the identical fee model."""
+    fee_model = kalshi_fixture_connector.get_fee_model(market_or_series)
+
+    assert fee_model == _EXPECTED_KXFED_FEE_MODEL
+
+
+def test_get_fee_model_raises_unknown_fee_model_for_an_unrecognized_series(
+    kalshi_fixture_connector: KalshiConnector,
+) -> None:
+    """A series the venue does not recognize (a 404) fails closed."""
+    with pytest.raises(UnknownFeeModelError):
+        kalshi_fixture_connector.get_fee_model("NOPE-24DEC")
+
+
+def test_get_fee_model_raises_unknown_fee_model_for_a_malformed_fee_type(
+    kalshi_malformed_fee_connector: KalshiConnector,
+) -> None:
+    """An unrecognized `fee_type` fails closed rather than misreading the schedule."""
+    with pytest.raises(UnknownFeeModelError):
+        kalshi_malformed_fee_connector.get_fee_model("KXBAD-24DEC")
+
+
+@pytest.mark.parametrize("bad_schedule_id", ["", 123])
+def test_fee_model_from_series_rejects_a_non_string_schedule_id(
+    bad_schedule_id: object,
+) -> None:
+    """An empty or non-str `fee_schedule_id` fails closed as UnknownFeeModelError.
+
+    The schedule identifier is the fee model's provenance handle; a blank or
+    wrong-typed value would silently degrade that provenance, so the parser
+    rejects it with the same fail-closed error as any other malformed leaf
+    rather than surfacing a bare ``ValueError`` from ``FeeModel``.
+    """
+    payload = {
+        "series": {
+            "fee_type": "quadratic",
+            "fee_schedule_id": bad_schedule_id,
+            "maker_fee_bps": 0,
+            "taker_fee_bps": 700,
+            "settlement_fee_bps": 0,
+        }
+    }
+
+    with pytest.raises(UnknownFeeModelError):
+        _fee_model_from_series(payload)
+
+
+@pytest.mark.parametrize(
+    "bad_leaf", ["maker_fee_bps", "taker_fee_bps", "settlement_fee_bps"]
+)
+def test_fee_model_from_series_rejects_a_negative_fee_leaf(bad_leaf: str) -> None:
+    """A negative fee leaf fails closed as UnknownFeeModelError, not a raw ValueError.
+
+    A ``*_fee_bps`` leaf of the right type but a negative value is still a
+    schedule this adapter cannot faithfully model; it must be refused with the
+    same fail-closed error as any other malformed leaf rather than surfacing the
+    bare ``ValueError`` ``FeeModel`` raises for a negative ppm rate -- misreading
+    a fee schedule is worse than admitting ignorance.
+    """
+    payload = {
+        "series": {
+            "fee_type": "quadratic",
+            "fee_schedule_id": "KXFED-STD",
+            "maker_fee_bps": 0,
+            "taker_fee_bps": 700,
+            "settlement_fee_bps": 0,
+            bad_leaf: -1,
+        }
+    }
+
+    with pytest.raises(UnknownFeeModelError):
+        _fee_model_from_series(payload)
+
+
+# --- get_balance_semantics (issue #18) --------------------------------------
+
+
+def test_get_balance_semantics_returns_the_kalshi_module_constant(
+    kalshi_fixture_connector: KalshiConnector,
+) -> None:
+    """`get_balance_semantics` returns the shared `KALSHI_BALANCE_SEMANTICS` record."""
+    assert kalshi_fixture_connector.get_balance_semantics() is KALSHI_BALANCE_SEMANTICS
 
 
 # --- unimplemented surface + protocol conformance -------------------------
