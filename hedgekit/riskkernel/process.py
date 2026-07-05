@@ -21,6 +21,7 @@ under test and shuts down cleanly on a signal in production.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import logging
 import signal
 import threading
@@ -34,6 +35,8 @@ from hedgekit.riskkernel.modes import Mode, ModeStateMachine
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from types import FrameType
+
+    from hedgekit.riskkernel.context import EvaluationContext
 
 #: Component label stamped on every event and log record this process emits.
 _COMPONENT = "riskkernel"
@@ -191,25 +194,35 @@ class RiskKernel:
             self._emit_heartbeat(beat)
             stop_event.wait(heartbeat_interval)
 
-    def evaluate_intent(self, intent: checks.OrderIntent) -> checks.Decision:
+    def evaluate_intent(
+        self, intent: checks.OrderIntent, context: EvaluationContext
+    ) -> checks.Decision:
         """Evaluate an intent and record its verdict to the ledger.
+
+        Stamps the kernel's own tracked mode onto a copy of ``context`` (via
+        :func:`dataclasses.replace`) before evaluating, so a caller-supplied
+        ``context.mode`` is never trusted over the kernel's authority; the
+        caller's original context object is left untouched.
 
         Records exactly one event reflecting the true verdict: ``IntentVetoed``
         when any check vetoes (with the veto reasons), or ``IntentApproved``
         when the pipeline passes the intent (with empty reasons). Gating the
         event type on ``decision.vetoed`` -- rather than always emitting
-        ``IntentVetoed`` -- keeps the audit trail correct once real check logic
-        (issues #30-#35) can produce a passing decision; today every default
-        check vetoes, so only the veto branch is reachable.
+        ``IntentVetoed`` -- keeps the audit trail correct: 9 of the 24 SPEC
+        S10.3 checks remain stubs (issues #31-#34), so no real context yet
+        yields a fully-approving decision, but the approving branch is already
+        correct for when that logic lands.
 
         Args:
             intent: The order intent to evaluate.
+            context: The evaluation context supplied by the caller.
 
         Returns:
             The :class:`~hedgekit.riskkernel.checks.Decision`, carrying the
             pipeline's ``vetoed``/``reasons`` and marked ledgered.
         """
-        decision = checks.evaluate_intent(intent)
+        effective = dataclasses.replace(context, mode=self._mode_machine.mode)
+        decision = checks.evaluate_intent(intent, effective)
         event_type = _INTENT_VETOED_EVENT if decision.vetoed else _INTENT_APPROVED_EVENT
         # Deliberately unguarded (no try/except around the ledger write, unlike
         # connector.snapshot's fail-open writer): for a risk kernel a ledger
