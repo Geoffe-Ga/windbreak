@@ -19,6 +19,9 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
 ]
+dependencies = [
+    "PyYAML>=6.0.1",
+]
 
 [project.scripts]
 hedgekit = "hedgekit.main:main"
