@@ -245,6 +245,13 @@ def _order_cost(intent: OrderIntent, context: EvaluationContext) -> MoneyMicros:
     buffer (S10.4), so charging it full notional there could wrongly block a
     risk-reducing exit.
 
+    Scoping note (#100): giving the three cap checks their own per-action close
+    policy -- so a de-risking ``SELL_TO_CLOSE`` from the kill path (SPEC S9.8)
+    is not vetoed by a cap it should reduce -- is deferred until the kill /
+    de-risking emitter (#35) exists to integration-test against. Until then
+    every intent is vetoed by the 9 explicit-veto stubs regardless, so no close
+    reaches these caps in production.
+
     Both fee upper bounds must be present for the cost to be provable. When
     either is ``None`` the cost is indeterminate, so this raises
     :class:`_UnprovableCostError` -- an explicit fail-closed guard rather than
