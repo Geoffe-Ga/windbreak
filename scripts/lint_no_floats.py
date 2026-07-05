@@ -40,11 +40,15 @@ if TYPE_CHECKING:
 
 #: Package prefixes (relative to the repo root) guarded against floats. Later
 #: epics append their own money-path packages here; full-scan mode globs
-#: ``**/*.py`` under each one that exists.
+#: ``**/*.py`` under each one that exists. Issue #16 extends the path with the
+#: exchange-facing ``hedgekit/connector`` (prices, quantities, balances) and
+#: ``hedgekit/screener`` (eligibility decisions derived from those values).
 DENYLISTED_PACKAGES: tuple[str, ...] = (
     "hedgekit/numeric",
     "hedgekit/ledger",
     "hedgekit/riskkernel",
+    "hedgekit/connector",
+    "hedgekit/screener",
 )
 
 FLOAT_LITERAL_CODE = "FLOAT-001"

@@ -1,0 +1,60 @@
+{
+  "markets": [
+    {
+      "ticker": "KXFED-24DEC",
+      "event_ticker": "KXFED",
+      "market_type": "binary",
+      "title": "Fed raises rates in December 2024?",
+      "rules_primary": "Resolves YES if the FOMC raises the federal funds rate at its December 2024 meeting.",
+      "category": "Economics",
+      "close_time": "2024-12-18T19:00:00Z",
+      "expected_expiration_time": "2024-12-18T20:00:00Z",
+      "tick_size": 1
+    },
+    {
+      "ticker": "KXFED-24DEC-B75",
+      "event_ticker": "KXFED",
+      "market_type": "binary",
+      "title": "Fed raises rates by 75bp or more in December 2024?",
+      "rules_primary": "Resolves YES if the FOMC raises the federal funds rate by 75 basis points or more at its December 2024 meeting.",
+      "category": "Economics",
+      "close_time": "2024-12-18T19:00:00Z",
+      "expected_expiration_time": "2024-12-18T20:00:00Z",
+      "tick_size": 1
+    },
+    {
+      "ticker": "KXWEA-24DEC",
+      "event_ticker": "KXWEA",
+      "market_type": "binary",
+      "title": "Snowfall exceeds 10in in NYC in December 2024?",
+      "rules_primary": "Resolves YES if official NWS snowfall totals for NYC in December 2024 exceed 10 inches.",
+      "category": "Weather",
+      "close_time": "2024-12-31T05:00:00Z",
+      "expected_expiration_time": null,
+      "tick_size": 1
+    },
+    {
+      "ticker": "FAKE-PERP",
+      "event_ticker": "FAKE",
+      "market_type": "perpetual",
+      "title": "Fake perpetual-style product (must be refused)",
+      "rules_primary": "Not a bounded-loss binary contract; must never be normalized (SPEC S1.1 invariant 2).",
+      "category": "test",
+      "close_time": "2099-01-01T00:00:00Z",
+      "expected_expiration_time": null,
+      "tick_size": 1
+    },
+    {
+      "ticker": "KXSCALAR-24DEC",
+      "event_ticker": "KXSCALAR",
+      "market_type": "scalar",
+      "title": "Fake scalar-style product (must be refused)",
+      "rules_primary": "Scalar settlement, not a binary payout; must never be normalized.",
+      "category": "test",
+      "close_time": "2099-01-01T00:00:00Z",
+      "expected_expiration_time": null,
+      "tick_size": 1
+    }
+  ],
+  "cursor": ""
+}

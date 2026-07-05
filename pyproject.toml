@@ -21,6 +21,7 @@ classifiers = [
 ]
 dependencies = [
     "PyYAML>=6.0.1",
+    "requests>=2.33.0",
 ]
 
 [project.scripts]
@@ -40,6 +41,7 @@ dev = [
     "radon>=6.0.0",
     "mutmut>=2.4.0",
     "pre-commit>=3.4.0",
+    "types-requests>=2.32",
 ]
 
 [build-system]

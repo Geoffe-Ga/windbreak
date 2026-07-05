@@ -30,3 +30,4 @@ pre-commit>=3.4.0
 
 # Type stubs
 types-PyYAML>=6.0.0
+types-requests>=2.32
