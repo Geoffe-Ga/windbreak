@@ -118,6 +118,18 @@ repos:
     args:
     - --baseline
     - .secrets.baseline
+- repo: local
+  hooks:
+  - id: no-floats-money-paths
+    name: no floats on money/price/probability paths
+    entry: python scripts/lint_no_floats.py
+    language: python
+    # Keep this pattern in sync with DENYLISTED_PACKAGES in
+    # scripts/lint_no_floats.py. The full-scan mode (lint.sh / CI) covers
+    # any newly-added package automatically; this per-file hook does not
+    # until the regex below is extended to match.
+    files: ^hedgekit/(numeric|ledger|riskkernel)/.*\.py$
+    pass_filenames: true
 ci:
   autofix_commit_msg: 'style: auto-fix by pre-commit hooks'
   autoupdate_commit_msg: 'chore: update pre-commit hooks'

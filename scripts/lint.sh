@@ -8,7 +8,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 FIX=false
-CHECK=false
 VERBOSE=false
 
 # Parse command line arguments
@@ -19,7 +18,8 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --check)
-            CHECK=true
+            # Check-only is the default behaviour; accept the flag as a
+            # no-op so callers (e.g. check-all.sh) can pass it explicitly.
             shift
             ;;
         --verbose)
@@ -80,10 +80,20 @@ else
     EXIT_CODE=$?
 fi
 
-if [ $EXIT_CODE -eq 0 ]; then
-    echo "✓ Linting checks passed"
-    exit 0
-else
+if [ $EXIT_CODE -ne 0 ]; then
     echo "✗ Linting checks failed" >&2
     exit 1
 fi
+echo "✓ Linting checks passed"
+
+echo "=== Float lint (AST) ==="
+# Enforce "no floats on the money path" (SPEC S6.1/S17.3). No autofix exists,
+# so --fix and check modes run the identical scan of the denylisted packages.
+if python3 scripts/lint_no_floats.py; then
+    echo "✓ Float-lint checks passed"
+else
+    echo "✗ Float-lint checks failed" >&2
+    exit 1
+fi
+
+exit 0
