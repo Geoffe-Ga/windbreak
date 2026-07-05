@@ -1,0 +1,27 @@
+{
+  "KXFED-24DEC": {
+    "yes_bids": [
+      {"price": 4500, "quantity": 500},
+      {"price": 4400, "quantity": 1000}
+    ],
+    "yes_asks": [
+      {"price": 4600, "quantity": 300},
+      {"price": 4700, "quantity": 800}
+    ],
+    "fetched_at": "2024-12-01T00:00:00.000000Z"
+  },
+  "KXBAN-24DEC": {
+    "yes_bids": [],
+    "yes_asks": [],
+    "fetched_at": "2024-12-01T00:00:00.000000Z"
+  },
+  "KXWEA-24DEC": {
+    "yes_bids": [
+      {"price": 1000, "quantity": 200}
+    ],
+    "yes_asks": [
+      {"price": 1100, "quantity": 200}
+    ],
+    "fetched_at": "2024-12-01T00:00:00.000000Z"
+  }
+}

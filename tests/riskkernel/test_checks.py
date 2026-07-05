@@ -1,4 +1,4 @@
-"""Failing-first tests for hedgekit.riskkernel.checks (issues #30 and #31, RED).
+"""Failing-first tests for hedgekit.riskkernel.checks (issues #30, #31, #32, RED).
 
 Issue #30 gave 15 of the 24 SPEC S10.3 pre-trade checks their real logic
 (instrument whitelist, mode/ceiling, the floor invariant, fee-bound presence,
@@ -7,22 +7,30 @@ freshness, price band, participation cap, clock skew, and reduce-only
 provability), each reading a full `EvaluationContext` rather than the
 `OrderIntent` alone. Issue #31 promotes two more from stub to real logic --
 `approval_token_uniqueness` and `idempotency_key_uniqueness`, each reading a
-new `EvaluationContext.used_intent_ids` / `.used_idempotency_keys` set -- so
-17 of the 24 SPEC S10.3 checks are now real; the remaining 7 stay deliberate
-stubs that still veto, each naming the GitHub issue that will replace it.
+new `EvaluationContext.used_intent_ids` / `.used_idempotency_keys` set. Issue
+#32 promotes three more -- `balance_reconciliation`, `position_reconciliation`,
+and `open_order_reconciliation` -- each reading a new
+`EvaluationContext.verification: VerificationSnapshot | None` (fail-closed via
+the existing `_is_stale` pattern on a missing/future/stale snapshot, plus,
+for `balance_reconciliation` only, a live-mode veto when
+`verification.semantics_fully_known` is `False`) -- so 20 of the 24 SPEC
+S10.3 checks are now real; the remaining 4 stay deliberate stubs that still
+veto, each naming the GitHub issue that will replace it.
 
 `hedgekit/riskkernel/context.py` does not yet declare `used_intent_ids` /
-`used_idempotency_keys` (this file's `conftest` import alone triggers the
+`used_idempotency_keys` / `verification`, and `hedgekit/riskkernel/verification.py`
+does not exist at all yet (this file's `conftest` import alone triggers the
 collection failure), so importing anything here fails collection with
-`ModuleNotFoundError`/`TypeError` -- the expected Gate 1 RED state for issue
-#31. Once `context.py` and the two real checks exist, this file pins: the
-exact boundary of every real check (the precise value that passes vs. the
-one unit past it that vetoes); that every `None` optional input (fee bounds,
-timestamps, depth, open position) vetoes; that an unknown `action` vetoes
-every check that branches on open/close; the unchanged 24-name SPEC S10.3
-order; that a fully-permissive context leaves *only* the 7 stub checks
-vetoing, each naming its blocking issue; the fail-closed error-conversion
-contract; and the frozen result types.
+`ModuleNotFoundError`/`TypeError` -- the expected Gate 1 RED state for issues
+#31 and #32. Once `context.py`, `verification.py`, and the five real checks
+exist, this file pins: the exact boundary of every real check (the precise
+value that passes vs. the one unit past it that vetoes); that every `None`
+optional input (fee bounds, timestamps, depth, open position, verification
+snapshot) vetoes; that an unknown `action` vetoes every check that branches
+on open/close; the unchanged 24-name SPEC S10.3 order; that a
+fully-permissive context leaves *only* the 4 stub checks vetoing, each naming
+its blocking issue; the fail-closed error-conversion contract; and the frozen
+result types.
 
 This file supersedes and deletes `tests/riskkernel/test_checks_stub.py`:
 every behavior that file pinned (frozen `OrderIntent`/`CheckResult`/
@@ -56,6 +64,7 @@ from tests.riskkernel.conftest import (
     DEFAULT_NOW_EPOCH_S,
     make_context,
     make_intent,
+    make_verification_snapshot,
 )
 
 if TYPE_CHECKING:
@@ -92,13 +101,18 @@ EXPECTED_CHECK_NAMES: tuple[str, ...] = (
 
 _EXPECTED_CHECK_COUNT = 24
 
-#: The 17 checks now real after issues #30 and #31, in SPEC S10.3 order.
+#: The 20 checks now real after issues #30, #31, and #32, in SPEC S10.3 order.
 #: `approval_token_uniqueness` / `idempotency_key_uniqueness` are the two
-#: issue #31 promotes from stub to real logic.
+#: issue #31 promotes from stub to real logic; `balance_reconciliation` /
+#: `position_reconciliation` / `open_order_reconciliation` are the three
+#: issue #32 promotes.
 REAL_CHECK_NAMES: tuple[str, ...] = (
     "instrument_whitelist",
     "mode_permission_ceiling",
     "floor_invariant",
+    "balance_reconciliation",
+    "position_reconciliation",
+    "open_order_reconciliation",
     "fee_upper_bound_present",
     "settlement_fee_upper_bound",
     "concentration_limits",
@@ -115,17 +129,14 @@ REAL_CHECK_NAMES: tuple[str, ...] = (
     "reduce_only_provable",
 )
 
-#: The 7 checks that remain deliberate stubs after issue #31, each blocked on
+#: The 4 checks that remain deliberate stubs after issue #32, each blocked on
 #: a later issue -- `None` for `jurisdiction_product_eligibility`, which has
 #: no tracking issue yet (a follow-up to file, not invented here).
 _STUB_ISSUE_NUMBERS: dict[str, int | None] = {
     "jurisdiction_product_eligibility": None,
-    "balance_reconciliation": 32,
-    "position_reconciliation": 32,
-    "open_order_reconciliation": 32,
     "human_ack_satisfied": 34,
-    "exchange_status_ok": 32,
-    "pipeline_heartbeat_ok": 32,
+    "exchange_status_ok": 110,
+    "pipeline_heartbeat_ok": 110,
 }
 
 STUB_CHECK_NAMES: tuple[str, ...] = tuple(_STUB_ISSUE_NUMBERS)
@@ -194,14 +205,14 @@ def test_real_and_stub_name_sets_partition_the_24_spec_names_exactly() -> None:
     equal the full 24-name SPEC S10.3 set -- protects the taxonomy this whole
     file's pipeline-level tests assume.
     """
-    assert len(REAL_CHECK_NAMES) == 17
-    assert len(STUB_CHECK_NAMES) == 7
+    assert len(REAL_CHECK_NAMES) == 20
+    assert len(STUB_CHECK_NAMES) == 4
     assert set(REAL_CHECK_NAMES).isdisjoint(STUB_CHECK_NAMES)
     assert set(REAL_CHECK_NAMES) | set(STUB_CHECK_NAMES) == set(EXPECTED_CHECK_NAMES)
 
 
 def test_make_context_defaults_make_every_real_check_pass() -> None:
-    """`make_context()` paired with `make_intent()` passes all 17 real
+    """`make_context()` paired with `make_intent()` passes all 20 real
     checks -- the load-bearing fixture assumption every per-check boundary
     test below relies on to isolate its one overridden field.
     """
@@ -406,6 +417,204 @@ def test_floor_invariant_vetoes_as_unprovable_when_any_fee_bound_is_none(
 
     assert result.vetoed is True
     assert result.reason == "unprovable"
+
+
+# --- balance_reconciliation / position_reconciliation / open_order_reconciliation
+# --- (issue #32) ------------------------------------------------------------------
+#
+# All three checks share the same fail-closed staleness gate over
+# `context.verification` (mirroring `_is_stale`'s None/future/past-ttl trio,
+# exactly as `quote_freshness`/`forecast_freshness`/`clock_skew_limit` already
+# pin it), plus a per-dimension `*_ok` flag read off the snapshot.
+# `balance_reconciliation` alone additionally gates on
+# `verification.semantics_fully_known` in live trading modes.
+
+#: (check name, snapshot per-dimension "ok" field, its exact mismatch reason).
+_RECONCILIATION_CHECKS: tuple[tuple[str, str, str], ...] = (
+    ("balance_reconciliation", "balance_ok", "balance reconciliation mismatch"),
+    ("position_reconciliation", "position_ok", "position reconciliation mismatch"),
+    (
+        "open_order_reconciliation",
+        "open_order_ok",
+        "open-order reconciliation mismatch",
+    ),
+)
+
+#: Each reconciliation check's exact stale/missing-snapshot veto reason.
+_RECONCILIATION_STALE_REASONS: dict[str, str] = {
+    "balance_reconciliation": "balance verification stale or missing",
+    "position_reconciliation": "position verification stale or missing",
+    "open_order_reconciliation": "open-order verification stale or missing",
+}
+
+
+@pytest.mark.parametrize(
+    ("check_name", "ok_field", "_mismatch_reason"),
+    _RECONCILIATION_CHECKS,
+    ids=[triple[0] for triple in _RECONCILIATION_CHECKS],
+)
+def test_reconciliation_check_passes_with_a_fresh_ok_snapshot(
+    check_name: str, ok_field: str, _mismatch_reason: str
+) -> None:
+    """Each reconciliation check passes given a fresh snapshot with its own
+    dimension marked `ok`."""
+    context = make_context(verification=make_verification_snapshot(**{ok_field: True}))
+
+    result = _real_check(check_name)(make_intent(), context)
+
+    assert result.vetoed is False
+
+
+@pytest.mark.parametrize(
+    ("check_name", "ok_field", "mismatch_reason"),
+    _RECONCILIATION_CHECKS,
+    ids=[triple[0] for triple in _RECONCILIATION_CHECKS],
+)
+def test_reconciliation_check_vetoes_when_its_dimension_is_not_ok(
+    check_name: str, ok_field: str, mismatch_reason: str
+) -> None:
+    """Each reconciliation check vetoes, with its exact mismatch reason, when
+    its own per-dimension `ok` flag is `False` -- and only that flag; the
+    other two dimensions stay `True`, proving the check reads its own flag,
+    not some other dimension's.
+    """
+    context = make_context(verification=make_verification_snapshot(**{ok_field: False}))
+
+    result = _real_check(check_name)(make_intent(), context)
+
+    assert result.vetoed is True
+    assert result.reason == mismatch_reason
+
+
+@pytest.mark.parametrize("check_name", [triple[0] for triple in _RECONCILIATION_CHECKS])
+def test_reconciliation_check_vetoes_when_verification_is_none(
+    check_name: str,
+) -> None:
+    """A missing (`None`) verification snapshot vetoes every reconciliation
+    check -- fail-closed, mirroring the `used_intent_ids` no-default
+    precedent: a forgotten verification wiring must veto, never silently pass.
+    """
+    context = make_context(verification=None)
+
+    result = _real_check(check_name)(make_intent(), context)
+
+    assert result.vetoed is True
+    assert result.reason == _RECONCILIATION_STALE_REASONS[check_name]
+
+
+@pytest.mark.parametrize("check_name", [triple[0] for triple in _RECONCILIATION_CHECKS])
+def test_reconciliation_check_vetoes_a_future_dated_snapshot(
+    check_name: str,
+) -> None:
+    """A snapshot timestamped after `now_epoch_s` vetoes, however fresh its
+    age would otherwise appear -- matching `quote_freshness`'s future-dated
+    boundary."""
+    context = make_context(
+        verification=make_verification_snapshot(
+            verified_at_epoch_s=DEFAULT_NOW_EPOCH_S + 1
+        )
+    )
+
+    result = _real_check(check_name)(make_intent(), context)
+
+    assert result.vetoed is True
+    assert result.reason == _RECONCILIATION_STALE_REASONS[check_name]
+
+
+@pytest.mark.parametrize("check_name", [triple[0] for triple in _RECONCILIATION_CHECKS])
+def test_reconciliation_check_passes_at_exact_ttl_age(check_name: str) -> None:
+    """A snapshot exactly `verification_ttl_seconds` old (age == ttl) is still
+    fresh -- the same inclusive boundary `quote_freshness` pins."""
+    context = make_context(
+        verification_ttl_seconds=3_600,
+        verification=make_verification_snapshot(
+            verified_at_epoch_s=DEFAULT_NOW_EPOCH_S - 3_600
+        ),
+    )
+
+    result = _real_check(check_name)(make_intent(), context)
+
+    assert result.vetoed is False
+
+
+@pytest.mark.parametrize("check_name", [triple[0] for triple in _RECONCILIATION_CHECKS])
+def test_reconciliation_check_vetoes_one_second_past_ttl(check_name: str) -> None:
+    """A snapshot one second past its ttl is stale."""
+    context = make_context(
+        verification_ttl_seconds=3_600,
+        verification=make_verification_snapshot(
+            verified_at_epoch_s=DEFAULT_NOW_EPOCH_S - 3_601
+        ),
+    )
+
+    result = _real_check(check_name)(make_intent(), context)
+
+    assert result.vetoed is True
+    assert result.reason == _RECONCILIATION_STALE_REASONS[check_name]
+
+
+@pytest.mark.parametrize("mode", [Mode.LIVE_MICRO, Mode.LIVE])
+def test_balance_reconciliation_vetoes_unknown_semantics_in_live_modes(
+    mode: Mode,
+) -> None:
+    """`balance_reconciliation` alone additionally vetoes, with a distinct
+    reason, when `verification.semantics_fully_known` is `False` and the
+    kernel is trading in LIVE_MICRO or LIVE -- refusing live trading while any
+    `BalanceSemantics` field is unknown (issue #32's live-mode gate).
+    """
+    context = make_context(
+        mode=mode,
+        verification=make_verification_snapshot(semantics_fully_known=False),
+    )
+
+    result = _real_check("balance_reconciliation")(make_intent(), context)
+
+    assert result.vetoed is True
+    assert result.reason == "balance semantics not fully known in live mode"
+
+
+@pytest.mark.parametrize("mode", [Mode.PAPER, Mode.RESEARCH])
+def test_balance_reconciliation_proceeds_with_unknown_semantics_outside_live_modes(
+    mode: Mode,
+) -> None:
+    """Unknown balance semantics do not veto `balance_reconciliation` in PAPER
+    or RESEARCH -- the live-mode gate is scoped to live trading only.
+    """
+    context = make_context(
+        mode=mode,
+        verification=make_verification_snapshot(semantics_fully_known=False),
+    )
+
+    result = _real_check("balance_reconciliation")(make_intent(), context)
+
+    assert result.vetoed is False
+
+
+def test_position_reconciliation_ignores_semantics_fully_known() -> None:
+    """`position_reconciliation` has no live-mode semantics gate: unknown
+    semantics alone, with its own dimension `ok`, never vetoes it -- only
+    `balance_reconciliation` reads `semantics_fully_known`.
+    """
+    context = make_context(
+        mode=Mode.LIVE,
+        verification=make_verification_snapshot(semantics_fully_known=False),
+    )
+
+    result = _real_check("position_reconciliation")(make_intent(), context)
+
+    assert result.vetoed is False
+
+
+def test_open_order_reconciliation_ignores_semantics_fully_known() -> None:
+    """`open_order_reconciliation` has no live-mode semantics gate either."""
+    context = make_context(
+        mode=Mode.LIVE,
+        verification=make_verification_snapshot(semantics_fully_known=False),
+    )
+
+    result = _real_check("open_order_reconciliation")(make_intent(), context)
+
+    assert result.vetoed is False
 
 
 # --- fee_upper_bound_present / settlement_fee_upper_bound -----------------------
@@ -1044,9 +1253,9 @@ def test_default_checks_names_match_spec_10_3_exactly_in_order() -> None:
 
 def test_default_checks_over_permissive_context_leaves_only_stubs_vetoing() -> None:
     """Given `make_intent()`/`make_context()` (tuned so every real check
-    passes), `evaluate_intent` is still vetoed -- but with exactly the 7 stub
+    passes), `evaluate_intent` is still vetoed -- but with exactly the 4 stub
     reasons, in SPEC S10.3 order, each naming its blocking issue (where one is
-    known). This is the test that proves which 17 checks are now real.
+    known). This is the test that proves which 20 checks are now real.
     """
     intent = make_intent()
     context = make_context()
@@ -1055,8 +1264,8 @@ def test_default_checks_over_permissive_context_leaves_only_stubs_vetoing() -> N
 
     assert decision.vetoed is True
     stub_positions = [name for name in EXPECTED_CHECK_NAMES if name in STUB_CHECK_NAMES]
-    assert len(stub_positions) == 7
-    assert len(decision.reasons) == 7
+    assert len(stub_positions) == 4
+    assert len(decision.reasons) == 4
     for reason, name in zip(decision.reasons, stub_positions, strict=True):
         issue_number = _STUB_ISSUE_NUMBERS[name]
         if issue_number is None:
