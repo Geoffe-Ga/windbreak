@@ -37,6 +37,7 @@ jobs:
           EXISTING=$(gh issue list --repo "$GITHUB_REPOSITORY" \
             --label ci-red --state open --limit 1 --json number --jq '.[0].number // empty')
           BODY="CI on \`main\` failed at \`${HEAD_SHA:0:7}\`: $RUN_URL"
+          PROTOCOL="**Protocol (Ralph):** this is drop-everything work. Reproduce via the run link, fix the root cause with ci-debugging (failing-test-first), never weaken a gate. Close only when CI on \`main\` is green again."
           if [ -n "$EXISTING" ]; then
             gh issue comment "$EXISTING" --repo "$GITHUB_REPOSITORY" \
               --body "Still red — $BODY"
@@ -45,8 +46,6 @@ jobs:
             gh issue create --repo "$GITHUB_REPOSITORY" \
               --title "P0: CI is red on main" \
               --label "ci-red,P0,bug" \
-              --body "$BODY
-
-**Protocol (Ralph):** this is drop-everything work. Reproduce via the run link, fix the root cause with ci-debugging (failing-test-first), never weaken a gate. Close only when CI on \`main\` is green again." \
+              --body "$(printf '%s\n\n%s' "$BODY" "$PROTOCOL")" \
               >> "$GITHUB_STEP_SUMMARY"
           fi
