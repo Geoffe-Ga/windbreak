@@ -1,0 +1,53 @@
+[
+  {
+    "exchange": "fake-exchange",
+    "ticker": "KXFED-24DEC",
+    "event_ticker": "KXFED-24",
+    "title": "Fed raises rates in December 2024?",
+    "resolution_criteria": "Resolves YES if the FOMC raises the federal funds rate at its December 2024 meeting.",
+    "category": "economics",
+    "close_time": "2024-12-18T19:00:00.000000Z",
+    "expected_resolution_time": "2024-12-18T20:00:00.000000Z",
+    "market_type": "fully_collateralized_binary",
+    "price_tick_pips": 100,
+    "min_order_contract_centis": 100,
+    "fractional_trading_enabled": false,
+    "mutually_exclusive_group_id": "KXFED-24-GROUP",
+    "jurisdiction_status": "eligible",
+    "raw_exchange_payload_hash": "sha256:aaaa1111aaaa1111aaaa1111aaaa1111"
+  },
+  {
+    "exchange": "fake-exchange",
+    "ticker": "KXBAN-24DEC",
+    "event_ticker": "KXBAN-24",
+    "title": "Bank X fails in December 2024?",
+    "resolution_criteria": "Resolves YES if Bank X is placed into receivership before 2025-01-01.",
+    "category": "finance",
+    "close_time": "2024-12-31T05:00:00.000000Z",
+    "expected_resolution_time": null,
+    "market_type": "fully_collateralized_binary",
+    "price_tick_pips": 100,
+    "min_order_contract_centis": 100,
+    "fractional_trading_enabled": false,
+    "mutually_exclusive_group_id": null,
+    "jurisdiction_status": "ineligible",
+    "raw_exchange_payload_hash": "sha256:bbbb2222bbbb2222bbbb2222bbbb2222"
+  },
+  {
+    "exchange": "fake-exchange",
+    "ticker": "KXWEA-24DEC",
+    "event_ticker": "KXWEA-24",
+    "title": "Snowfall exceeds 10in in NYC in December 2024?",
+    "resolution_criteria": "Resolves YES if official NWS snowfall totals for NYC in December 2024 exceed 10 inches.",
+    "category": "weather",
+    "close_time": "2024-12-31T05:00:00.000000Z",
+    "expected_resolution_time": "2025-01-02T12:00:00.000000Z",
+    "market_type": "fully_collateralized_binary",
+    "price_tick_pips": 50,
+    "min_order_contract_centis": 100,
+    "fractional_trading_enabled": true,
+    "mutually_exclusive_group_id": null,
+    "jurisdiction_status": "unknown",
+    "raw_exchange_payload_hash": "sha256:cccc3333cccc3333cccc3333cccc3333"
+  }
+]

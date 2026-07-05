@@ -20,7 +20,7 @@ from hedgekit.alerts import AlertDispatcher, AlertType, LoggingLedgerWriter, cli
 from hedgekit.logging_setup import configure_logging
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
     from types import FrameType
 
 #: Operating mode reported in every heartbeat line. Matches the RESEARCH state
@@ -127,6 +127,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Stop after this many heartbeats (default: run until signalled).",
     )
+    run_parser.add_argument(
+        "--snapshot-fixture-dir",
+        default=None,
+        help=(
+            "Directory of exchange JSON fixtures to snapshot each beat "
+            "(default: snapshotting is off)."
+        ),
+    )
     alert_parser = subparsers.add_parser("alert-test")
     alert_parser.add_argument(
         "type",
@@ -147,6 +155,7 @@ def run_loop(
     max_beats: int | None = None,
     stop_event: threading.Event | None = None,
     state: ShutdownState | None = None,
+    on_beat: Callable[[int], None] | None = None,
 ) -> None:
     """Emit heartbeats until stopped by the stop event or a beat budget.
 
@@ -160,6 +169,9 @@ def run_loop(
         state: Optional shared shutdown state. When a signal handler has
             recorded a signal name on it, that name becomes the shutdown
             reason; otherwise the generic ``signal`` reason is used.
+        on_beat: Optional hook invoked once per beat with the 1-based sequence
+            number, after that beat's heartbeat is logged. None (the default)
+            leaves the heartbeat behavior unchanged.
     """
     if stop_event is None:
         stop_event = state.stop_event if state is not None else threading.Event()
@@ -176,6 +188,8 @@ def run_loop(
             break
         seq += 1
         _LOGGER.info("mode=%s heartbeat seq=%d", MODE_RESEARCH, seq)
+        if on_beat is not None:
+            on_beat(seq)
         stop_event.wait(interval_seconds)
 
     _LOGGER.info("shutdown reason=%s", reason)
@@ -221,6 +235,38 @@ def _run_alert_test(args: argparse.Namespace) -> int:
     return 0
 
 
+def _build_snapshot_on_beat(fixture_dir: str) -> Callable[[int], None]:
+    """Build a per-beat hook that snapshots a fixture-backed exchange.
+
+    The connector imports are local so the heartbeat path stays free of the
+    connector package unless snapshotting is actually requested.
+
+    Args:
+        fixture_dir: Directory of exchange JSON fixtures to snapshot.
+
+    Returns:
+        A callable that, given the beat sequence, runs one snapshot pass.
+    """
+    from hedgekit.connector import (
+        FakeExchange,
+        LoggingEventLedgerWriter,
+        MarketSnapshotTask,
+    )
+    from hedgekit.screener import StubScreener
+
+    task = MarketSnapshotTask(
+        FakeExchange.from_fixture_dir(fixture_dir),
+        StubScreener(),
+        LoggingEventLedgerWriter(),
+    )
+
+    def _on_beat(_seq: int) -> None:
+        """Run one snapshot pass, ignoring the beat sequence number."""
+        task.run_once()
+
+    return _on_beat
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Parse arguments and run the requested hedgekit command.
 
@@ -236,11 +282,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_alert_test(args)
     state = ShutdownState()
     _install_signal_handlers(state)
+    on_beat = (
+        _build_snapshot_on_beat(args.snapshot_fixture_dir)
+        if args.snapshot_fixture_dir is not None
+        else None
+    )
     run_loop(
         args.heartbeat_interval,
         max_beats=args.max_beats,
         stop_event=state.stop_event,
         state=state,
+        on_beat=on_beat,
     )
     return 0
 
