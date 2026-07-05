@@ -278,7 +278,9 @@ class KalshiConnector:
             The normalized market.
 
         Raises:
-            UnknownMarketError: If the ticker is refused or not offered.
+            UnknownMarketError: If the ticker is refused, not offered, or its
+                payload is malformed (fail closed: the malformed binary is
+                ledgered as a ``MARKET_MALFORMED`` event before raising).
         """
         for raw in self._raw_markets():
             if raw.get("ticker") != ticker:
@@ -286,7 +288,11 @@ class KalshiConnector:
             if gate_product(raw) is not None:
                 raise UnknownMarketError(ticker)
             events = self._event_index()
-            return normalize_market(raw, events.get(raw["event_ticker"]))
+            try:
+                return normalize_market(raw, events.get(raw["event_ticker"]))
+            except _MALFORMED_MARKET_ERRORS as exc:
+                self._record_malformed(raw, exc)
+                raise UnknownMarketError(ticker) from exc
         raise UnknownMarketError(ticker)
 
     def get_order_book(self, ticker: str) -> OrderBookSnapshot:

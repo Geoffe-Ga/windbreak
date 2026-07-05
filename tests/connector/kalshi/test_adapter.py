@@ -489,3 +489,30 @@ def test_list_markets_ledgers_malformed_binary_with_bad_numeric_type(
         event.payload["ticker"]
         for event in ledger.events_by_type(MARKET_MALFORMED_EVENT)
     } == {"KX-BAD"}
+
+
+def test_get_market_ledgers_malformed_matching_binary_and_raises_unknown(
+    ledger: InMemoryEventLedgerWriter, clock: Callable[[], datetime]
+) -> None:
+    """A matching-but-malformed binary fails closed like `list_markets`.
+
+    ``get_market`` finds the ticker but cannot normalize its payload; it must
+    ledger a ``MARKET_MALFORMED`` event and raise ``UnknownMarketError`` rather
+    than let the normalization error propagate uncaught.
+    """
+    broken = _binary_market("KX-BAD", "E1")
+    del broken["title"]
+    session = _PaginatedSession(
+        {
+            "/markets": [{"markets": [broken], "cursor": ""}],
+            "/events": [{"events": [], "cursor": ""}],
+        }
+    )
+    connector = _connector_over(session, ledger, clock)
+
+    with pytest.raises(UnknownMarketError):
+        connector.get_market("KX-BAD")
+
+    malformed = ledger.events_by_type(MARKET_MALFORMED_EVENT)
+    assert {event.payload["ticker"] for event in malformed} == {"KX-BAD"}
+    assert all(event.payload["raw_exchange_payload_hash"] for event in malformed)
