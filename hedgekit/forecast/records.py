@@ -240,8 +240,7 @@ class ForecastRecord:
         if self.triage_stage not in _TRIAGE_STAGES:
             allowed = ", ".join(sorted(_TRIAGE_STAGES))
             raise ValueError(
-                f"triage_stage must be one of {{{allowed}}}, "
-                f"got {self.triage_stage!r}"
+                f"triage_stage must be one of {{{allowed}}}, got {self.triage_stage!r}"
             )
 
 
