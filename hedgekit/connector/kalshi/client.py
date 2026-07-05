@@ -6,10 +6,18 @@ them onto an ``https://`` base, then performs a single GET through an injected
 ``requests``-like session seam -- so tests supply a fake session with no real
 network (SPEC S17.1: the full pipeline runs offline and deterministically in
 CI). It models only *public, read-only market access* (SPEC S5.2): it never
-attaches auth headers or credentials, and it has no retry/backoff (deferred to
-issue #5). Non-2xx responses raise
+attaches auth headers or credentials. Non-2xx responses raise
 :class:`KalshiApiError`; a 2xx response yields a :class:`KalshiResponse`
 carrying the parsed JSON payload and the parsed ``Date`` header.
+
+Transport and parsing run through an on-by-default
+:class:`~hedgekit.connector.resilience.ResilientCaller` (issue #20): every
+client -- unless it opts out with ``resilience=None`` or supplies its own --
+gets live token-bucket rate limiting, exponential backoff with jitter on
+retryable ``5xx``/``429``/transport failures, and a circuit breaker that halts
+after repeated failures. Schema validation runs *outside* that retry loop, so a
+:class:`~hedgekit.connector.validation.SchemaAnomalyHaltError` is never retried
+and never counted against the breaker.
 
 This module sits on the money path guarded by ``scripts/lint_no_floats.py``:
 the request timeout is an ``int`` and no ``/`` or ``float`` appears anywhere.
@@ -18,16 +26,28 @@ the request timeout is an ``int`` and no ``/`` or ``float`` appears anywhere.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC
+from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
+from enum import Enum, auto
 from typing import TYPE_CHECKING, Final, Protocol, cast
 from urllib.parse import quote
 
 import requests
 
+from hedgekit.connector.resilience import (
+    DEFAULT_RESILIENCE_POLICY,
+    build_default_resilient_caller,
+)
+from hedgekit.connector.snapshot import LoggingEventLedgerWriter
+from hedgekit.connector.validation import (
+    SchemaValidator,
+    kalshi_default_schema_registry,
+)
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
-    from datetime import datetime
+
+    from hedgekit.connector.resilience import ResiliencePolicy, ResilientCaller
 
 #: The current-generation Kalshi public API base (SPEC S7.1).
 KALSHI_API_BASE: Final = "https://api.elections.kalshi.com/trade-api/v2"
@@ -41,6 +61,21 @@ _HTTPS_PREFIX: Final = "https://"
 #: Inclusive lower/upper bounds of the HTTP 2xx success range.
 _MIN_OK_STATUS: Final = 200
 _MAX_OK_STATUS: Final = 299
+
+
+class _Unset(Enum):
+    """A distinct sentinel type so ``resilience`` can tell "default" from None.
+
+    ``resilience`` accepts a caller, an explicit ``None`` (disable resilience --
+    raw single-attempt transport), or -- left unset -- this sentinel, which
+    triggers building the on-by-default :class:`ResilientCaller`.
+    """
+
+    DEFAULT = auto()
+
+
+#: The unset-``resilience`` sentinel: build the default resilient caller.
+_DEFAULT_RESILIENCE: Final = _Unset.DEFAULT
 
 
 class KalshiApiError(RuntimeError):
@@ -177,6 +212,11 @@ class _RedirectFreeSession:
         )
 
 
+def _default_wall_clock() -> datetime:
+    """Return the current UTC time, the default validator's event-stamp clock."""
+    return datetime.now(UTC)
+
+
 class KalshiClient:
     """A thin HTTPS JSON GET client over Kalshi's public v2 REST API."""
 
@@ -186,6 +226,9 @@ class KalshiClient:
         *,
         timeout: int = DEFAULT_TIMEOUT_SECONDS,
         session: Session | None = None,
+        resilience: ResilientCaller | None | _Unset = _DEFAULT_RESILIENCE,
+        resilience_policy: ResiliencePolicy | None = None,
+        validator: SchemaValidator | None = None,
     ) -> None:
         """Initialize the client, validating the base URL scheme.
 
@@ -194,6 +237,22 @@ class KalshiClient:
             timeout: Per-request timeout, in whole seconds.
             session: An injected ``requests``-like session; a real
                 :class:`requests.Session` is created lazily when None.
+            resilience: The caller wrapping transport+parse in rate limiting,
+                retries, and a circuit breaker. Left unset, an on-by-default
+                caller is built via
+                :func:`~hedgekit.connector.resilience.build_default_resilient_caller`
+                so every client gets live protection; pass an explicit
+                :class:`~hedgekit.connector.resilience.ResilientCaller` to
+                supply your own, or an explicit ``None`` to disable resilience
+                (raw single-attempt transport -- e.g. when composing resilience
+                upstream, or in thin-transport tests).
+            resilience_policy: Tunables for the on-by-default caller; ignored
+                when an explicit ``resilience`` (or ``None``) is passed. Defaults
+                to :data:`~hedgekit.connector.resilience.DEFAULT_RESILIENCE_POLICY`.
+            validator: The schema validator run on every parsed payload;
+                defaults to an on-by-default validator built from
+                :func:`kalshi_default_schema_registry`, so schema drift fails
+                closed for every endpoint unless a caller opts into another.
 
         Raises:
             ValueError: If ``base_url`` does not begin with ``https://``.
@@ -207,6 +266,19 @@ class KalshiClient:
         self._session: Session = (
             session if session is not None else _RedirectFreeSession(requests.Session())
         )
+        if isinstance(resilience, _Unset):
+            resilience = build_default_resilient_caller(
+                policy=resilience_policy or DEFAULT_RESILIENCE_POLICY
+            )
+        self._resilience: ResilientCaller | None = resilience
+        if validator is not None:
+            self._validator = validator
+        else:
+            self._validator = SchemaValidator(
+                kalshi_default_schema_registry(),
+                LoggingEventLedgerWriter(),
+                wall_clock=_default_wall_clock,
+            )
 
     def _build_url(self, segments: tuple[str, ...]) -> str:
         """Join percent-encoded path segments onto the base URL.
@@ -227,9 +299,46 @@ class KalshiClient:
     ) -> KalshiResponse:
         """Perform a GET over the joined path segments and parse the response.
 
+        Transport and parsing run through the injected
+        :class:`~hedgekit.connector.resilience.ResilientCaller` when one is
+        wired (rate limiting, retries, breaker), or directly otherwise. The
+        parsed payload is then always run through the schema validator, so a
+        :class:`~hedgekit.connector.validation.SchemaAnomalyHaltError` is raised
+        *outside* any retry loop -- schema drift is never retried and never
+        counted against the circuit breaker.
+
         Args:
             *segments: Path segments appended to the base URL, each
                 percent-encoded individually.
+            params: Optional query parameters, forwarded unchanged.
+
+        Returns:
+            The parsed successful response.
+
+        Raises:
+            KalshiApiError: If the response status is outside the 2xx range.
+            SchemaAnomalyHaltError: If the parsed payload fails schema validation.
+        """
+
+        def _fetch() -> KalshiResponse:
+            """Run one transport+parse attempt (retried by the resilient caller)."""
+            return self._transport(segments, params)
+
+        response = (
+            self._resilience.call(_fetch) if self._resilience is not None else _fetch()
+        )
+        self._validator.validate(
+            segments, cast("Mapping[str, object]", response.payload)
+        )
+        return response
+
+    def _transport(
+        self, segments: tuple[str, ...], params: Mapping[str, str] | None
+    ) -> KalshiResponse:
+        """Perform one GET and parse a 2xx response, raising on any non-2xx.
+
+        Args:
+            segments: The path segments to build the request URL from.
             params: Optional query parameters, forwarded unchanged.
 
         Returns:

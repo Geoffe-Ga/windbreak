@@ -450,6 +450,12 @@ class _PaginatedSession:
             The scripted page response, or a 404 for an unknown route.
         """
         self.calls.append({"url": url, "params": params, "timeout": timeout})
+        if url.endswith("/exchange/status"):
+            # ``list_markets`` now consults exchange status first (issue #20's
+            # maintenance check); serve an open venue so pagination proceeds.
+            return _PagedResponse(
+                200, {"exchange_active": True, "trading_active": True}
+            )
         cursor = (params or {}).get("cursor")
         index = int(cursor) if cursor else 0
         for suffix, pages in self._pages.items():
@@ -463,8 +469,17 @@ def _connector_over(
     ledger: InMemoryEventLedgerWriter,
     clock: Callable[[], datetime],
 ) -> KalshiConnector:
-    """Wire a `KalshiConnector` over a paginated fake session."""
-    client = KalshiClient(base_url="https://fake.test", timeout=5, session=session)
+    """Wire a `KalshiConnector` over a paginated fake session.
+
+    Resilience is disabled (`resilience=None`): these adapter tests exercise
+    pagination/normalization logic, not rate limiting, and one drives the
+    1000-page safety cap -- the on-by-default token bucket would otherwise
+    throttle that runaway walk with real sleeps. Resilience wiring is covered
+    end-to-end in `test_client_resilience.py`.
+    """
+    client = KalshiClient(
+        base_url="https://fake.test", timeout=5, session=session, resilience=None
+    )
     return KalshiConnector(client, ledger, clock=clock)
 
 
@@ -532,7 +547,11 @@ def test_list_markets_raises_when_market_pagination_exceeds_the_cap(
             params: Mapping[str, str] | None = None,
             timeout: int | None = None,
         ) -> _PagedResponse:
-            """Return a non-empty cursor for `/markets`; empty for `/events`."""
+            """Serve an open status, empty `/events`, and a never-ending `/markets`."""
+            if url.endswith("/exchange/status"):
+                return _PagedResponse(
+                    200, {"exchange_active": True, "trading_active": True}
+                )
             if url.endswith("/events"):
                 return _PagedResponse(200, {"events": [], "cursor": ""})
             return _PagedResponse(200, {"markets": [], "cursor": "more"})

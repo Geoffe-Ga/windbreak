@@ -1,4 +1,4 @@
-"""Shared fixtures for hedgekit.connector.kalshi tests (issues #17, #18).
+"""Shared fixtures for hedgekit.connector.kalshi tests (issues #17, #18, #20).
 
 Serves the checked-in Kalshi-shaped JSON fixtures in
 `tests/fixtures/exchange/kalshi/` through a fake, `requests`-like session
@@ -23,11 +23,24 @@ dedicated `kalshi_malformed_fee_connector` fixture, built over its own tiny
 session, serves `series_KXBAD.json` -- a series document with an unrecognized
 `fee_type` -- so the malformed-schedule fail-closed path is exercisable
 without perturbing the shared fixture-backed connector used everywhere else.
+
+Issue #20 (data-quality halts, freshness TTLs, rate limiting, circuit breaker)
+adds four more fixtures, purely additively -- nothing above this point is
+modified: `scripted_fault_session` serves a fixed FIFO queue of responses (a
+mix of 2xx/4xx/5xx payloads, or a response whose `.json()` raises to simulate a
+malformed/truncated body) for `ResilientCaller` retry/backoff/breaker tests
+wired end to end through a real `KalshiClient`; `recording_sleeper` is a
+no-op callable that records every requested duration instead of ever calling
+`time.sleep`; `fake_int_clock` is a mutable, manually-advanceable integer
+clock (never wall-clock time) backing `TokenBucket` / `CircuitBreaker` cooldown
+and refill timing; `seeded_rng` is a fixed-seed `random.Random` so a test can
+compute the exact jitter values `ResilientCaller` must add to its backoff.
 """
 
 from __future__ import annotations
 
 import json
+import random
 from datetime import UTC, datetime
 from email.utils import format_datetime
 from pathlib import Path
@@ -41,6 +54,12 @@ from hedgekit.connector.snapshot import InMemoryEventLedgerWriter
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
+
+    #: Factory signature for building a fresh ScriptedFaultSession per test;
+    #: aliased so the fixture signature fits one line (ruff/black agree).
+    ScriptedFaultSessionFactory = Callable[
+        [list["QueuedFaultResponse"]], "ScriptedFaultSession"
+    ]
 
 #: Directory holding the recorded Kalshi API JSON fixtures, resolved
 #: relative to this conftest's own directory so it works regardless of cwd.
@@ -271,3 +290,182 @@ def kalshi_malformed_fee_connector(
         base_url=_FAKE_BASE_URL, timeout=5, session=_MalformedSeriesSession()
     )
     return KalshiConnector(client, ledger, clock=clock)
+
+
+# --- issue #20: resilience/schema-validation fault-injection fixtures -------
+
+
+class QueuedFaultResponse:
+    """A single scripted response for `ScriptedFaultSession`'s FIFO queue.
+
+    `.json()` raises the injected exception instead of returning a payload
+    when `json_raises` is set, simulating a malformed or truncated response
+    body -- the "ANY non-`KalshiApiError` exception is a retryable transport
+    failure" case -- without touching a real socket or a real JSON parser.
+    """
+
+    def __init__(
+        self,
+        status_code: int,
+        payload: Any = None,
+        *,
+        json_raises: Exception | None = None,
+    ) -> None:
+        """Initialize one scripted response.
+
+        Args:
+            status_code: The HTTP status code to report.
+            payload: The value `.json()` returns; ignored when `json_raises`
+                is set.
+            json_raises: An exception `.json()` raises instead of returning,
+                or None to return `payload` normally.
+        """
+        self.status_code = status_code
+        self._payload = payload
+        self._json_raises = json_raises
+        self.headers: dict[str, str] = {}
+
+    def json(self) -> Any:
+        """Return the scripted payload, or raise the scripted parse failure."""
+        if self._json_raises is not None:
+            raise self._json_raises
+        return self._payload
+
+
+class ScriptedFaultSession:
+    """Serve one fixed FIFO queue of responses to every `.get()` call.
+
+    Every call -- regardless of URL -- pops and returns the next response,
+    modeling a single flaky endpoint's exact response sequence (e.g. 500,
+    500, 200). The queue is deliberately *not* auto-repeating: a test wires
+    exactly as many responses as it expects requests, so an unexpected extra
+    call fails loudly (`IndexError`) rather than silently reusing the last
+    response and masking a retry-count bug.
+    """
+
+    def __init__(self, responses: list[QueuedFaultResponse]) -> None:
+        """Initialize with the ordered queue of scripted responses.
+
+        Args:
+            responses: The FIFO queue of responses, one per expected call.
+        """
+        self._responses = list(responses)
+        self.calls: list[dict[str, Any]] = []
+
+    def get(
+        self,
+        url: str,
+        *,
+        params: Mapping[str, object] | None = None,
+        timeout: int | None = None,
+    ) -> QueuedFaultResponse:
+        """Record the call and pop the next scripted response off the queue.
+
+        Args:
+            url: The full request URL `KalshiClient` built.
+            params: Forwarded query parameters (recorded, not used to route).
+            timeout: The forwarded request timeout (recorded, not used).
+
+        Returns:
+            The next scripted response.
+
+        Raises:
+            IndexError: If more calls are made than responses were scripted.
+        """
+        self.calls.append({"url": url, "params": params, "timeout": timeout})
+        return self._responses.pop(0)
+
+
+class RecordingSleeper:
+    """A no-op sleeper that records every requested duration instead of sleeping.
+
+    Never calls `time.sleep`; `ResilientCaller` / `TokenBucket` tests assert
+    against `.calls` to pin exact backoff and rate-limit wait durations
+    without ever slowing the suite down or depending on wall-clock time.
+    """
+
+    def __init__(self) -> None:
+        """Initialize with no recorded calls yet."""
+        self.calls: list[int] = []
+
+    def __call__(self, seconds: int) -> None:
+        """Record a requested wait duration instead of sleeping.
+
+        Args:
+            seconds: The whole-second duration that would have been slept.
+        """
+        self.calls.append(seconds)
+
+
+class FakeIntClock:
+    """A mutable, manually-advanceable integer clock; never wall-clock time.
+
+    Starts at a fixed integer and only moves when `.advance()` is called, so
+    `TokenBucket` refill and `CircuitBreaker` cooldown timing assertions are
+    exact and fully deterministic.
+    """
+
+    def __init__(self, start: int = 1_000) -> None:
+        """Initialize the clock at a fixed starting value.
+
+        Args:
+            start: The initial integer "now" the clock reports.
+        """
+        self._now = start
+
+    def __call__(self) -> int:
+        """Return the current fake integer time."""
+        return self._now
+
+    def advance(self, seconds: int) -> None:
+        """Move the fake clock forward.
+
+        Args:
+            seconds: The whole number of seconds to advance by.
+        """
+        self._now += seconds
+
+
+@pytest.fixture
+def scripted_fault_session() -> ScriptedFaultSessionFactory:
+    """Provide a factory building a fresh `ScriptedFaultSession` per test.
+
+    A factory (rather than a single pre-built instance) because each test
+    scripts its own distinct response sequence (e.g. 500, 500, 200 vs. 404).
+    """
+    return ScriptedFaultSession
+
+
+@pytest.fixture
+def queued_fault_response() -> type[QueuedFaultResponse]:
+    """Provide the `QueuedFaultResponse` class for scripting individual responses.
+
+    Exposed as a fixture (rather than requiring an import of this conftest
+    module as a package) so `tests/connector/kalshi/test_client_resilience.py`
+    can build its own scripted response sequences without depending on
+    `tests/` being an importable package.
+    """
+    return QueuedFaultResponse
+
+
+@pytest.fixture
+def recording_sleeper() -> RecordingSleeper:
+    """Provide a fresh recording no-op sleeper."""
+    return RecordingSleeper()
+
+
+@pytest.fixture
+def fake_int_clock() -> FakeIntClock:
+    """Provide a fresh fake integer clock starting at a fixed value."""
+    return FakeIntClock()
+
+
+@pytest.fixture
+def seeded_rng() -> random.Random:
+    """Provide a `random.Random` seeded for exact, reproducible jitter values.
+
+    The fixed seed lets a test build its own identically-seeded `random.Random`
+    to independently compute the exact jitter `ResilientCaller` must add to
+    each backoff, rather than asserting only a range.
+    """
+    return random.Random(20260704)

@@ -1,0 +1,4 @@
+{
+  "orderbook": {"yes": [[45, 100], [44, 250]], "no": [[52, 40]]},
+  "display_label": "KXFED-24DEC order book"
+}
