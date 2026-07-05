@@ -267,9 +267,21 @@ for all of them. Arrange, in this order of preference:
    **idempotent** — re-subscribing an already-watched PR every wake is safe and
    does not stack subscriptions, so just (re)subscribe every open PR each wake.
    Unsubscribe a PR once it merges/closes.
-3. **`ScheduleWakeup` fallback** (~1200–1800s): webhooks do **not** deliver CI
-   *success*, `BEHIND→green` transitions, or merges, so keep one modest fallback
-   armed to re-poll Step 0–4 for any lane that quietly went green or up-to-date.
+3. **`ScheduleWakeup` fallback — cadence is ADAPTIVE, not fixed.** Webhooks do
+   **not** deliver CI *success*, `BEHIND→green` transitions, or merges (and
+   `iteration-trigger.yml` can auto-merge a green+LGTM PR with no notification
+   at all), so the fallback poll is what turns a freed slot into a refilled
+   lane. Pick the delay from pool state — a long timer here is what makes
+   refills degrade into "waves" gated on the slowest lane's wake (owner
+   directive, 2026-07-05: fill lanes the moment issues merge):
+   - **Any lane in Gate 3/4** (an in-flight PR exists, or a PR could merge /
+     auto-merge): arm a **short poll, ~240–270s** (stays inside the 5-min
+     prompt-cache TTL). A merge or verdict is then picked up within minutes
+     and Step 4 refills the slot immediately.
+   - **All lanes still building** (workers running, no open in-flight PR):
+     workers wake you on completion, so a long fallback (~1200–1800s) is
+     enough as a hang guard.
+   - **Pool empty, backlog empty**: Mode A — announce done and stop.
 
 Then **end the turn.** Do not run a Monitor that waits for all lanes to be
 terminal — that is the barrier this design removes. Each independent wake re-runs
