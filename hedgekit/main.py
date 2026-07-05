@@ -15,11 +15,22 @@ import signal
 import sys
 import threading
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING
+
+from hedgekit.config import (
+    ConfigError,
+    InMemoryConfigEventRecorder,
+    config_hash,
+    load_config,
+    load_default_config,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from types import FrameType
+
+    from hedgekit.config import HedgekitConfig
 
 #: Operating mode reported in every heartbeat line. Matches the RESEARCH state
 #: of the SPEC mode machine; hedgekit ships research-only for now.
@@ -36,6 +47,9 @@ _REASON_MAX_BEATS = "max_beats"
 
 #: Shutdown reason logged when the loop is stopped via its stop event.
 _REASON_SIGNAL = "signal"
+
+#: Log-friendly source label for a configuration built from built-in defaults.
+_DEFAULTS_SOURCE_LABEL = "<defaults>"
 
 _LOGGER = logging.getLogger("hedgekit")
 
@@ -92,19 +106,12 @@ def _non_negative_int(raw: str) -> int:
     return value
 
 
-def build_parser() -> argparse.ArgumentParser:
-    """Build the ``hedgekit`` command-line argument parser.
+def _add_run_arguments(run_parser: argparse.ArgumentParser) -> None:
+    """Register the ``run`` subcommand's options on its subparser.
 
-    Returns:
-        A parser with a required ``run`` subcommand exposing
-        ``--heartbeat-interval`` and ``--max-beats``.
+    Args:
+        run_parser: The ``run`` subparser to populate with options.
     """
-    parser = argparse.ArgumentParser(
-        prog="hedgekit",
-        description="hedgekit always-on forecast trader CLI.",
-    )
-    subparsers = parser.add_subparsers(dest="command", required=True)
-    run_parser = subparsers.add_parser("run", help="Start the heartbeat loop.")
     run_parser.add_argument(
         "--heartbeat-interval",
         type=_non_negative_float,
@@ -117,6 +124,27 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Stop after this many heartbeats (default: run until signalled).",
     )
+    run_parser.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="Path to a SPEC §16 YAML config (default: built-in §16 defaults).",
+    )
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Build the ``hedgekit`` command-line argument parser.
+
+    Returns:
+        A parser with a required ``run`` subcommand exposing
+        ``--heartbeat-interval`` and ``--max-beats``.
+    """
+    parser = argparse.ArgumentParser(
+        prog="hedgekit",
+        description="hedgekit always-on forecast trader CLI.",
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    _add_run_arguments(subparsers.add_parser("run", help="Start the heartbeat loop."))
     return parser
 
 
@@ -180,6 +208,26 @@ def _install_signal_handlers(state: ShutdownState) -> None:
     signal.signal(signal.SIGTERM, _handle)
 
 
+def _load_configured(
+    args: argparse.Namespace, recorder: InMemoryConfigEventRecorder
+) -> HedgekitConfig:
+    """Load the config named by ``--config``, or the built-in defaults.
+
+    Args:
+        args: The parsed CLI arguments; ``args.config`` is a path or None.
+        recorder: The recorder notified of the resulting hash and diff.
+
+    Returns:
+        The loaded configuration.
+
+    Raises:
+        ConfigError: If a ``--config`` path cannot be read or validated.
+    """
+    if args.config is not None:
+        return load_config(args.config, recorder=recorder)
+    return load_default_config(recorder=recorder)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Parse arguments and run the requested hedgekit command.
 
@@ -187,7 +235,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         argv: Optional argument vector; defaults to ``sys.argv[1:]``.
 
     Returns:
-        The process exit code (0 on success).
+        The process exit code (0 on success, 1 on a fatal config error).
     """
     args = build_parser().parse_args(argv)
     logging.basicConfig(
@@ -195,6 +243,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         force=True,
         level=logging.INFO,
         format=_LOG_FORMAT,
+    )
+    recorder = InMemoryConfigEventRecorder()
+    try:
+        config = _load_configured(args, recorder)
+    except ConfigError as exc:
+        _LOGGER.critical("FATAL: %s", exc)
+        return 1
+    source = str(args.config) if args.config is not None else _DEFAULTS_SOURCE_LABEL
+    _LOGGER.info(
+        "config loaded source=%s mode_ceiling=%s hash=%s",
+        source,
+        config.mode_ceiling,
+        config_hash(config),
     )
     state = ShutdownState()
     _install_signal_handlers(state)
