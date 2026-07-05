@@ -88,7 +88,11 @@ class _RecordingSession:
 
 def test_get_joins_quoted_segments_onto_base_url() -> None:
     """A segment containing `/` or a space is percent-encoded, not split."""
-    session = _RecordingSession(_FakeResponse(200, {"ok": True}))
+    # A schema-clean order book: the on-by-default validator inspects every
+    # parsed payload, so a synthetic ``{"ok": True}`` would now (correctly)
+    # raise ``SchemaAnomalyHaltError`` -- this test only cares about URL building.
+    clean_orderbook = {"orderbook": {"yes": [], "no": []}}
+    session = _RecordingSession(_FakeResponse(200, clean_orderbook))
     client = KalshiClient(
         base_url="https://example.kalshi.test", timeout=7, session=session
     )
@@ -103,7 +107,10 @@ def test_get_joins_quoted_segments_onto_base_url() -> None:
 
 def test_get_forwards_params_and_int_timeout() -> None:
     """`params` and the constructor's `timeout` reach `session.get` unchanged."""
-    session = _RecordingSession(_FakeResponse(200, {"ok": True}))
+    # A schema-clean ``/markets`` page: the on-by-default validator would reject
+    # a synthetic ``{"ok": True}`` payload; this test only checks param/timeout
+    # forwarding, so a valid empty page keeps its intent intact.
+    session = _RecordingSession(_FakeResponse(200, {"markets": [], "cursor": ""}))
     client = KalshiClient(
         base_url="https://example.kalshi.test", timeout=9, session=session
     )
@@ -124,9 +131,16 @@ def test_non_2xx_status_raises_kalshi_api_error_naming_the_status(
 
     ``300`` pins the upper boundary of the accepted range: a redirect status is
     outside 2xx and must fail closed, guarding the ``status_code <= 299`` bound.
+
+    Resilience is disabled (`resilience=None`) so this exercises the *raw*
+    transport status handling: a retryable ``5xx`` surfaces on the first attempt
+    with no backoff sleep. The retry/breaker behavior around ``5xx`` is covered
+    end-to-end in `test_client_resilience.py`.
     """
     session = _RecordingSession(_FakeResponse(status_code, {"error": "nope"}))
-    client = KalshiClient(base_url="https://example.kalshi.test", session=session)
+    client = KalshiClient(
+        base_url="https://example.kalshi.test", session=session, resilience=None
+    )
 
     with pytest.raises(KalshiApiError, match=str(status_code)):
         client.get("markets")
