@@ -257,31 +257,30 @@ for all of them. Arrange, in this order of preference:
 
 1. **Background workers** already wake you on their own completion — nothing to
    arm for a lane that's still building.
-2. **Per-PR webhook subscriptions** for every in-flight PR, so any one PR's CI
-   failure or new review verdict wakes you independently:
-   ```
-   mcp__github__subscribe_pr_activity  (owner, repo, pullNumber)   # once per open PR
-   ```
-   Comment and CI-failure events arrive as `<github-webhook-activity>` and wake
-   this session; a verdict comment wakes you directly. `subscribe_pr_activity` is
-   **idempotent** — re-subscribing an already-watched PR every wake is safe and
-   does not stack subscriptions, so just (re)subscribe every open PR each wake.
-   Unsubscribe a PR once it merges/closes.
-3. **`ScheduleWakeup` fallback — cadence is ADAPTIVE, not fixed.** Webhooks do
-   **not** deliver CI *success*, `BEHIND→green` transitions, or merges (and
-   `iteration-trigger.yml` can auto-merge a green+LGTM PR with no notification
-   at all), so the fallback poll is what turns a freed slot into a refilled
-   lane. Pick the delay from pool state — a long timer here is what makes
-   refills degrade into "waves" gated on the slowest lane's wake (owner
-   directive, 2026-07-05: fill lanes the moment issues merge):
-   - **Any lane in Gate 3/4** (an in-flight PR exists, or a PR could merge /
-     auto-merge): arm a **short poll, ~240–270s** (stays inside the 5-min
-     prompt-cache TTL). A merge or verdict is then picked up within minutes
-     and Step 4 refills the slot immediately.
-   - **All lanes still building** (workers running, no open in-flight PR):
-     workers wake you on completion, so a long fallback (~1200–1800s) is
-     enough as a hang guard.
-   - **Pool empty, backlog empty**: Mode A — announce done and stop.
+2. **The fleet Monitor is the PRIMARY wake source for Gates 3–4** (owner
+   directive, 2026-07-05). Keep exactly ONE **persistent** `Monitor` running
+   for the whole session that polls every in-flight Ralph PR (via
+   `gh pr list --author "@me"` + `scripts/ralph/pr-ready.sh`) every ~90s and
+   emits one event line per **state transition** — `PR#N:<old→new status>`
+   (`ready`/`behind`/`pending`/`ci-failed`/`awaiting-review`) — and one line
+   when a PR **disappears** (merged or closed, incl. `iteration-trigger.yml`
+   auto-merges: "slot may be free, run a tick to release+refill"). Design
+   rules: seed state silently on the first pass (no spurious event), skip a
+   cycle on transient `gh` failures instead of emitting noise, and diff the
+   full status map so failures emit just like successes (silence must never
+   be mistaken for "still running"). If no fleet Monitor is running at the
+   end of a wake (session restart, TaskStop, crash), arm a fresh one.
+3. **Per-PR webhook subscriptions** (`mcp__github__subscribe_pr_activity`),
+   when the GitHub MCP server is available in the session, add push-grade
+   latency for comment/CI-failure events. Idempotent — (re)subscribe each
+   open PR every wake; unsubscribe on merge/close. They do NOT deliver CI
+   success or merges, which is why the Monitor above stays primary.
+4. **`ScheduleWakeup` is belt-and-suspenders, not the mechanism.** Arm a
+   modest fallback (~1200–1800s) to survive the Monitor dying silently or an
+   event being missed. Only if the fleet Monitor could NOT be armed (tool
+   unavailable) drop the fallback to ~240–270s so refills don't degrade into
+   waves gated on the slowest lane's wake. Pool empty + backlog empty →
+   Mode A — announce done and stop.
 
 Then **end the turn.** Do not run a Monitor that waits for all lanes to be
 terminal — that is the barrier this design removes. Each independent wake re-runs
