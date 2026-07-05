@@ -71,6 +71,12 @@ _JURISDICTION_UNKNOWN: Final = "unknown"
 #: Ledger event type recorded when a non-binary product is refused.
 PRODUCT_REFUSED_EVENT: Final = "PRODUCT_REFUSED"
 
+#: Ledger event type recorded when an allowed binary market fails to normalize
+#: (a required field is missing or a leaf has the wrong type). Emitting this and
+#: skipping the market keeps one malformed payload from aborting a whole scan,
+#: while still never silently dropping it (SPEC S1.1 invariant 2).
+MARKET_MALFORMED_EVENT: Final = "MARKET_MALFORMED"
+
 #: The three narrowed exchange-status literals (fake.py ``_STATUS_BY_NAME`` idiom).
 _STATUS_OPEN: Final = "open"
 _STATUS_PAUSED: Final = "paused"

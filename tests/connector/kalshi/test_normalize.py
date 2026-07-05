@@ -1,12 +1,9 @@
-"""Failing-first tests for hedgekit.connector.kalshi.normalize (issue #17).
+"""Tests for hedgekit.connector.kalshi.normalize (issue #17).
 
 Pins the pure (no-I/O) normalization functions: `payload_hash`,
 `gate_product`, `normalize_market`, `normalize_order_book`. All prices/sizes
 convert to hedgekit's fixed-point unit types (`PricePips`, `ContractCentis`)
-with zero float intermediaries (SPEC S6.1). `hedgekit.connector.kalshi` does
-not exist yet, so importing `normalize` fails collection with
-`ModuleNotFoundError: No module named 'hedgekit.connector.kalshi'` -- the
-expected Gate 1 RED state for issue #17.
+with zero float intermediaries (SPEC S6.1).
 """
 
 from __future__ import annotations

@@ -10,12 +10,11 @@ offline against recorded API responses -- never a live network call
 `KalshiClient` builds, mirroring Kalshi's real v2 REST layout
 (`.../markets`, `.../events`, `.../markets/{ticker}/orderbook`,
 `.../exchange/status`). This pins the endpoints `KalshiConnector` must call
-without over-constraining the exact path prefix the implementer chooses.
-
-Neither `hedgekit.connector.kalshi` nor its `client`/`adapter` submodules
-exist yet, so importing this conftest fails collection with
-`ModuleNotFoundError: No module named 'hedgekit.connector.kalshi'` -- the
-expected Gate 1 RED state for issue #17.
+without over-constraining the exact path prefix the implementer chooses. The
+recorded `markets.json`/`events.json` fixtures each fit on a single page
+(their `cursor` is empty), so these shared fixtures exercise the common
+single-page path; the multi-page `cursor` walk is covered by dedicated
+paginated sessions in `test_adapter.py`.
 """
 
 from __future__ import annotations

@@ -5,10 +5,6 @@ one path segment, percent-encoding it individually (`urllib.parse.quote(seg,
 safe="")`) before joining with `/` -- so a ticker segment containing `/` or a
 space is escaped rather than corrupting the request path. `session.get` is an
 injected seam (never real HTTP; SPEC S7.1: CI runs offline).
-
-`hedgekit.connector.kalshi` does not exist yet, so importing `client` fails
-collection with `ModuleNotFoundError: No module named 'hedgekit.connector.kalshi'`
--- the expected Gate 1 RED state for issue #17.
 """
 
 from __future__ import annotations

@@ -6,9 +6,11 @@ product and ledgers a `PRODUCT_REFUSED` event for each one; `get_market`,
 by the recorded fixtures; every trading/account method still raises
 `NotImplementedError` (order path is M4; balances/fees are issue #3).
 
-`hedgekit.connector.kalshi` does not exist yet, so importing `adapter` fails
-collection with `ModuleNotFoundError: No module named 'hedgekit.connector.kalshi'`
--- the expected Gate 1 RED state for issue #17.
+`list_markets` also follows Kalshi's `cursor` pagination across every page of
+`/markets` and `/events` (bounded by a hard max-page cap that raises
+`KalshiPaginationError` rather than looping forever), and fails closed on a
+single malformed binary by ledgering a `MARKET_MALFORMED` event and continuing
+the scan instead of letting one bad payload abort the whole call.
 """
 
 from __future__ import annotations
@@ -16,18 +18,22 @@ from __future__ import annotations
 import logging
 from contextlib import suppress
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from hedgekit.connector.interface import MarketConnector, UnknownMarketError
 from hedgekit.connector.kalshi import PRODUCT_REFUSED_EVENT, KalshiConnector
+from hedgekit.connector.kalshi.adapter import (
+    MARKET_MALFORMED_EVENT,
+    KalshiPaginationError,
+)
+from hedgekit.connector.kalshi.client import KalshiClient
 from hedgekit.connector.kalshi.normalize import normalize_exchange_status
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
-    from hedgekit.connector.kalshi.client import KalshiClient
     from hedgekit.connector.snapshot import ConnectorEvent, InMemoryEventLedgerWriter
 
 #: (method name, positional args) for every SPEC S7.2 method this issue does
@@ -253,3 +259,233 @@ def test_kalshi_connector_satisfies_the_market_connector_protocol(
 ) -> None:
     """`KalshiConnector` structurally satisfies the runtime-checkable protocol."""
     assert isinstance(kalshi_fixture_connector, MarketConnector)
+
+
+# --- pagination: /markets and /events cursor-following ---------------------
+
+
+def _binary_market(ticker: str, event_ticker: str, **overrides: Any) -> dict[str, Any]:
+    """Build a minimal, fully-populated raw binary market payload.
+
+    Args:
+        ticker: The market ticker.
+        event_ticker: The parent event ticker.
+        **overrides: Fields to override or drop (a value of the sentinel below
+            is not used; callers pass explicit keys to override defaults).
+
+    Returns:
+        A raw market mapping shaped like a `/markets` list entry.
+    """
+    market: dict[str, Any] = {
+        "ticker": ticker,
+        "event_ticker": event_ticker,
+        "market_type": "binary",
+        "title": f"{ticker} title",
+        "rules_primary": f"{ticker} rules",
+        "category": "Test",
+        "close_time": "2024-12-18T19:00:00Z",
+        "expected_expiration_time": None,
+        "tick_size": 1,
+    }
+    market.update(overrides)
+    return market
+
+
+class _PagedResponse:
+    """A minimal fake response carrying a scripted JSON page (no `Date`)."""
+
+    def __init__(self, status_code: int, payload: Any) -> None:
+        """Store the status code and JSON payload.
+
+        Args:
+            status_code: The HTTP status code to report.
+            payload: The value `.json()` returns.
+        """
+        self.status_code = status_code
+        self._payload = payload
+        self.headers: dict[str, str] = {}
+
+    def json(self) -> Any:
+        """Return the scripted JSON page."""
+        return self._payload
+
+
+class _PaginatedSession:
+    """Serve multi-page `/markets` and `/events` keyed on the `cursor` param.
+
+    Each route maps to an ordered list of page payloads. A request with no
+    `cursor` returns page 0; a request whose `cursor` param is the string index
+    ``"n"`` returns page ``n``. Each page's own ``cursor`` field points to the
+    next page index (or ``""`` on the last page), exactly as Kalshi paginates.
+    """
+
+    def __init__(self, pages_by_suffix: Mapping[str, list[dict[str, Any]]]) -> None:
+        """Store the per-route page lists.
+
+        Args:
+            pages_by_suffix: Maps a URL suffix (``"/markets"`` / ``"/events"``)
+                to its ordered list of page payloads.
+        """
+        self._pages = pages_by_suffix
+        self.calls: list[dict[str, Any]] = []
+
+    def get(
+        self,
+        url: str,
+        *,
+        params: Mapping[str, str] | None = None,
+        timeout: int | None = None,
+    ) -> _PagedResponse:
+        """Return the page addressed by `url`'s route and the `cursor` param.
+
+        Args:
+            url: The request URL built by `KalshiClient`.
+            params: Query parameters; the ``cursor`` key selects the page.
+            timeout: The forwarded request timeout (recorded, not used).
+
+        Returns:
+            The scripted page response, or a 404 for an unknown route.
+        """
+        self.calls.append({"url": url, "params": params, "timeout": timeout})
+        cursor = (params or {}).get("cursor")
+        index = int(cursor) if cursor else 0
+        for suffix, pages in self._pages.items():
+            if url.endswith(suffix):
+                return _PagedResponse(200, pages[index])
+        return _PagedResponse(404, {"error": "not found"})
+
+
+def _connector_over(
+    session: _PaginatedSession,
+    ledger: InMemoryEventLedgerWriter,
+    clock: Callable[[], datetime],
+) -> KalshiConnector:
+    """Wire a `KalshiConnector` over a paginated fake session."""
+    client = KalshiClient(base_url="https://fake.test", timeout=5, session=session)
+    return KalshiConnector(client, ledger, clock=clock)
+
+
+def test_list_markets_aggregates_every_market_page_via_cursor(
+    ledger: InMemoryEventLedgerWriter, clock: Callable[[], datetime]
+) -> None:
+    """Markets split across three `/markets` pages all appear in the result."""
+    session = _PaginatedSession(
+        {
+            "/markets": [
+                {"markets": [_binary_market("KX-A", "E1")], "cursor": "1"},
+                {"markets": [_binary_market("KX-B", "E1")], "cursor": "2"},
+                {"markets": [_binary_market("KX-C", "E1")], "cursor": ""},
+            ],
+            "/events": [{"events": [], "cursor": ""}],
+        }
+    )
+    connector = _connector_over(session, ledger, clock)
+
+    tickers = {market.ticker for market in connector.list_markets()}
+
+    assert tickers == {"KX-A", "KX-B", "KX-C"}
+
+
+def test_list_markets_aggregates_every_event_page_via_cursor(
+    ledger: InMemoryEventLedgerWriter, clock: Callable[[], datetime]
+) -> None:
+    """A grouping event living on the second `/events` page is still applied."""
+    session = _PaginatedSession(
+        {
+            "/markets": [
+                {"markets": [_binary_market("KX-A", "E2")], "cursor": ""},
+            ],
+            "/events": [
+                {
+                    "events": [{"event_ticker": "E1", "mutually_exclusive": True}],
+                    "cursor": "1",
+                },
+                {
+                    "events": [{"event_ticker": "E2", "mutually_exclusive": True}],
+                    "cursor": "",
+                },
+            ],
+        }
+    )
+    connector = _connector_over(session, ledger, clock)
+
+    (market,) = connector.list_markets()
+
+    assert market.mutually_exclusive_group_id == "E2"
+
+
+def test_list_markets_raises_when_market_pagination_exceeds_the_cap(
+    ledger: InMemoryEventLedgerWriter, clock: Callable[[], datetime]
+) -> None:
+    """A never-terminating `/markets` cursor raises rather than looping forever."""
+
+    class _NeverEndingSession:
+        """A `/markets` route whose cursor never empties (a runaway venue)."""
+
+        def get(
+            self,
+            url: str,
+            *,
+            params: Mapping[str, str] | None = None,
+            timeout: int | None = None,
+        ) -> _PagedResponse:
+            """Return a non-empty cursor for `/markets`; empty for `/events`."""
+            if url.endswith("/events"):
+                return _PagedResponse(200, {"events": [], "cursor": ""})
+            return _PagedResponse(200, {"markets": [], "cursor": "more"})
+
+    connector = _connector_over(
+        _NeverEndingSession(),  # type: ignore[arg-type]
+        ledger,
+        clock,
+    )
+
+    with pytest.raises(KalshiPaginationError):
+        connector.list_markets()
+
+
+# --- fail-closed: one malformed binary must not abort the scan ------------
+
+
+def test_list_markets_ledgers_malformed_binary_and_continues(
+    ledger: InMemoryEventLedgerWriter, clock: Callable[[], datetime]
+) -> None:
+    """A binary missing a required field is ledgered, not crash-propagated."""
+    broken = _binary_market("KX-BAD", "E1")
+    del broken["title"]
+    session = _PaginatedSession(
+        {
+            "/markets": [
+                {"markets": [broken, _binary_market("KX-GOOD", "E1")], "cursor": ""},
+            ],
+            "/events": [{"events": [], "cursor": ""}],
+        }
+    )
+    connector = _connector_over(session, ledger, clock)
+
+    tickers = {market.ticker for market in connector.list_markets()}
+    malformed = ledger.events_by_type(MARKET_MALFORMED_EVENT)
+
+    assert tickers == {"KX-GOOD"}
+    assert {event.payload["ticker"] for event in malformed} == {"KX-BAD"}
+    assert all(event.payload["raw_exchange_payload_hash"] for event in malformed)
+
+
+def test_list_markets_ledgers_malformed_binary_with_bad_numeric_type(
+    ledger: InMemoryEventLedgerWriter, clock: Callable[[], datetime]
+) -> None:
+    """A non-integer `tick_size` on a binary fails closed to a ledgered event."""
+    broken = _binary_market("KX-BAD", "E1", tick_size="not-a-number")
+    session = _PaginatedSession(
+        {
+            "/markets": [{"markets": [broken], "cursor": ""}],
+            "/events": [{"events": [], "cursor": ""}],
+        }
+    )
+    connector = _connector_over(session, ledger, clock)
+
+    assert connector.list_markets() == ()
+    assert {
+        event.payload["ticker"]
+        for event in ledger.events_by_type(MARKET_MALFORMED_EVENT)
+    } == {"KX-BAD"}
