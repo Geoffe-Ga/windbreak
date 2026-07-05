@@ -29,7 +29,7 @@ from hedgekit.ledger import rebuild_command
 from hedgekit.logging_setup import configure_logging
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
     from types import FrameType
 
     from hedgekit.config import HedgekitConfig
@@ -147,6 +147,14 @@ def _add_run_arguments(run_parser: argparse.ArgumentParser) -> None:
         help="Which SPEC process this invocation represents (default: %(default)s).",
     )
     run_parser.add_argument(
+        "--snapshot-fixture-dir",
+        default=None,
+        help=(
+            "Directory of exchange JSON fixtures to snapshot each beat "
+            "(default: snapshotting is off)."
+        ),
+    )
+    run_parser.add_argument(
         "--config",
         type=Path,
         default=None,
@@ -179,8 +187,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     Returns:
         A parser with a required ``run`` subcommand exposing
-        ``--heartbeat-interval``, ``--max-beats``, ``--process``, and
-        ``--config``; a ``rebuild`` subcommand exposing ``--ledger-path`` and
+        ``--heartbeat-interval``, ``--max-beats``, ``--process``,
+        ``--snapshot-fixture-dir``, and ``--config``; a ``rebuild`` subcommand
+        exposing ``--ledger-path`` and
         ``--output-dir``; and a developer-only ``alert-test`` subcommand hidden
         from ``--help``.
     """
@@ -221,6 +230,7 @@ def run_loop(
     stop_event: threading.Event | None = None,
     state: ShutdownState | None = None,
     component: str = _DEFAULT_PROCESS,
+    on_beat: Callable[[int], None] | None = None,
 ) -> None:
     """Emit heartbeats until stopped by the stop event or a beat budget.
 
@@ -238,6 +248,9 @@ def run_loop(
             loop represents. Stamped as the ``component`` extra on every
             heartbeat and shutdown log record; the rendered message text is
             unchanged.
+        on_beat: Optional hook invoked once per beat with the 1-based sequence
+            number, after that beat's heartbeat is logged. None (the default)
+            leaves the heartbeat behavior unchanged.
     """
     if stop_event is None:
         stop_event = state.stop_event if state is not None else threading.Event()
@@ -259,6 +272,8 @@ def run_loop(
             seq,
             extra={"component": component},
         )
+        if on_beat is not None:
+            on_beat(seq)
         stop_event.wait(interval_seconds)
 
     _LOGGER.info("shutdown reason=%s", reason, extra={"component": component})
@@ -324,6 +339,38 @@ def _run_alert_test(args: argparse.Namespace) -> int:
     return 0
 
 
+def _build_snapshot_on_beat(fixture_dir: str) -> Callable[[int], None]:
+    """Build a per-beat hook that snapshots a fixture-backed exchange.
+
+    The connector imports are local so the heartbeat path stays free of the
+    connector package unless snapshotting is actually requested.
+
+    Args:
+        fixture_dir: Directory of exchange JSON fixtures to snapshot.
+
+    Returns:
+        A callable that, given the beat sequence, runs one snapshot pass.
+    """
+    from hedgekit.connector import (
+        FakeExchange,
+        LoggingEventLedgerWriter,
+        MarketSnapshotTask,
+    )
+    from hedgekit.screener import StubScreener
+
+    task = MarketSnapshotTask(
+        FakeExchange.from_fixture_dir(fixture_dir),
+        StubScreener(),
+        LoggingEventLedgerWriter(),
+    )
+
+    def _on_beat(_seq: int) -> None:
+        """Run one snapshot pass, ignoring the beat sequence number."""
+        task.run_once()
+
+    return _on_beat
+
+
 def _run_heartbeat(args: argparse.Namespace) -> int:
     """Load the requested config, log it, then drive the heartbeat loop.
 
@@ -335,9 +382,11 @@ def _run_heartbeat(args: argparse.Namespace) -> int:
 
     Args:
         args: Parsed ``run`` arguments carrying ``config``, ``process``,
-            ``heartbeat_interval``, and ``max_beats``. The loaded config and
-            the ``--process`` component compose here: the config is loaded and
-            logged, then the heartbeat loop runs stamped with that component.
+            ``heartbeat_interval``, ``max_beats``, and ``snapshot_fixture_dir``.
+            The loaded config and the ``--process`` component compose here: the
+            config is loaded and logged, then the heartbeat loop runs stamped
+            with that component. When ``--snapshot-fixture-dir`` is given, a
+            per-beat snapshot hook is wired in alongside.
 
     Returns:
         The process exit code (0 on success, 1 on a fatal config error).
@@ -357,12 +406,18 @@ def _run_heartbeat(args: argparse.Namespace) -> int:
     )
     state = ShutdownState()
     _install_signal_handlers(state)
+    on_beat = (
+        _build_snapshot_on_beat(args.snapshot_fixture_dir)
+        if args.snapshot_fixture_dir is not None
+        else None
+    )
     run_loop(
         args.heartbeat_interval,
         max_beats=args.max_beats,
         stop_event=state.stop_event,
         state=state,
         component=args.process,
+        on_beat=on_beat,
     )
     return 0
 
