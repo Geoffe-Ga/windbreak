@@ -103,9 +103,8 @@ def build_parser() -> argparse.ArgumentParser:
         prog="hedgekit",
         description="hedgekit always-on forecast trader CLI.",
     )
-    run_parser = parser.add_subparsers(dest="command", required=True).add_parser(
-        "run", help="Start the heartbeat loop."
-    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    run_parser = subparsers.add_parser("run", help="Start the heartbeat loop.")
     run_parser.add_argument(
         "--heartbeat-interval",
         type=_non_negative_float,
@@ -145,37 +144,20 @@ def run_loop(
         stop_event = state.stop_event if state is not None else threading.Event()
 
     seq = 0
-    while not stop_event.is_set():
+    reason = _REASON_SIGNAL
+    while True:
+        if stop_event.is_set():
+            if state is not None and state.reason is not None:
+                reason = state.reason
+            break
         if max_beats is not None and seq >= max_beats:
+            reason = _REASON_MAX_BEATS
             break
         seq += 1
         _LOGGER.info("mode=%s heartbeat seq=%d", MODE_RESEARCH, seq)
         stop_event.wait(interval_seconds)
 
-    _LOGGER.info("shutdown reason=%s", _resolve_shutdown_reason(seq, max_beats, state))
-
-
-def _resolve_shutdown_reason(
-    seq: int,
-    max_beats: int | None,
-    state: ShutdownState | None,
-) -> str:
-    """Determine why the heartbeat loop stopped.
-
-    Args:
-        seq: Number of heartbeats emitted before the loop exited.
-        max_beats: The beat budget, if any.
-        state: Optional shared shutdown state carrying a signal name.
-
-    Returns:
-        ``max_beats`` when the budget was exhausted, the recorded signal name
-        (e.g. ``SIGINT``) when a signal triggered shutdown, else ``signal``.
-    """
-    if max_beats is not None and seq >= max_beats:
-        return _REASON_MAX_BEATS
-    if state is not None and state.reason is not None:
-        return state.reason
-    return _REASON_SIGNAL
+    _LOGGER.info("shutdown reason=%s", reason)
 
 
 def _install_signal_handlers(state: ShutdownState) -> None:

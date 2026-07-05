@@ -69,6 +69,32 @@ class _RecordingEvent(threading.Event):
         return False
 
 
+class _SignalOnBeatEvent(threading.Event):
+    """Event that simulates a signal delivered during a specific wait().
+
+    On the ``fire_on_call``-th call to `wait()` it records a signal name
+    on the shared state and sets itself -- reproducing the race where a
+    signal arrives during the final inter-beat wait at the exact
+    ``max_beats`` boundary. Earlier calls return "not set" immediately so
+    the loop keeps beating up to that boundary without sleeping.
+    """
+
+    def __init__(self, *, fire_on_call: int, state: ShutdownState, reason: str) -> None:
+        super().__init__()
+        self._fire_on_call = fire_on_call
+        self._state = state
+        self._reason = reason
+        self._calls = 0
+
+    def wait(self, timeout: float | None = None) -> bool:
+        """Fire the simulated signal on the target call, else report unset."""
+        self._calls += 1
+        if self._calls == self._fire_on_call:
+            self._state.reason = self._reason
+            self.set()
+        return self.is_set()
+
+
 @pytest.fixture
 def restore_signal_handlers() -> Iterator[None]:
     """Save and restore SIGINT/SIGTERM handlers around a test.
@@ -110,6 +136,39 @@ def test_run_loop_emits_seq_1_through_3_then_max_beats_shutdown(
         if record.message.startswith("shutdown reason=")
     ]
     assert shutdown_lines == ["shutdown reason=max_beats"]
+
+
+def test_run_loop_prefers_signal_reason_over_max_beats_on_boundary_race(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A signal during the final wait at the max_beats boundary wins.
+
+    When a signal arrives mid-wait at the exact beat where ``seq ==
+    max_beats``, the loop exits because its stop event is now set, so the
+    shutdown reason must be the recorded signal name -- not ``max_beats``.
+    This pins the *actual* break site (stop event checked before the beat
+    budget) as the single source of truth, guarding against the
+    reason-misattribution race where both conditions hold at once.
+    """
+    caplog.set_level(logging.INFO)
+    state = ShutdownState()
+    event = _SignalOnBeatEvent(fire_on_call=2, state=state, reason="SIGINT")
+
+    run_loop(0, max_beats=2, stop_event=event, state=state)
+
+    heartbeat_lines = [
+        record.message for record in caplog.records if "heartbeat" in record.message
+    ]
+    shutdown_lines = [
+        record.message
+        for record in caplog.records
+        if record.message.startswith("shutdown reason=")
+    ]
+    assert heartbeat_lines == [
+        "mode=RESEARCH heartbeat seq=1",
+        "mode=RESEARCH heartbeat seq=2",
+    ]
+    assert shutdown_lines == ["shutdown reason=SIGINT"]
 
 
 def test_run_loop_with_preset_stop_event_emits_zero_beats(
