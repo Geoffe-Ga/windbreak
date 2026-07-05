@@ -1,2 +1,3 @@
 # Runtime dependencies
 # Add your production dependencies here
+PyYAML>=6.0.1
