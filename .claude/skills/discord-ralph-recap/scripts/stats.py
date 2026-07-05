@@ -15,8 +15,8 @@ merge history into the numbers a human wants to see in a recap.
 
 from __future__ import annotations
 
-from collections import Counter
 import datetime as dt
+from collections import Counter
 
 # A Claude reviewer verdict, normalized. The reviewer posts a comment ending in
 # a `Verdict:` line; we collapse it to one of these three tokens.

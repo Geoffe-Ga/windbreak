@@ -1,0 +1,26 @@
+# Byte-compiled / optimized files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Packaging / build artifacts
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# Test & coverage artifacts
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.pytest_cache/
+.mutmut-cache
+
+# Type-checker / lint caches
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
