@@ -24,6 +24,17 @@ the run proceeds), whereas a page with a hidden span, a ``<script>`` block, or a
 forged delimiter *inside* that first window has its removal break the raw-
 substring property -- the citation then fails to verify and the run fails
 closed, exactly the intended defense.
+
+For that raw-substring re-check to hold on *benign* pages, sanitization must not
+rewrite the bytes it keeps: entity and character references are preserved
+verbatim (``&amp;`` stays ``&amp;``), never decoded, so ordinary content such as
+"S&amp;P 500" re-verifies instead of spuriously abstaining. Leaving entities
+encoded also neutralizes an entity-encoded delimiter forgery for free -- it stays
+inert ``&lt;&lt;&lt;`` text rather than decoding into a real breakout token. The
+one carried-forward caveat is whitespace: the raw content is assumed already
+whitespace-normalized, since ``sanitize_content`` collapses internal whitespace
+runs and that collapse (like a malformed, semicolon-less entity) would break the
+raw-substring re-check and fail closed.
 """
 
 from __future__ import annotations
@@ -53,20 +64,25 @@ RESPONSE_FAILURE_DELIMITER_FORGERY: Final = "delimiter_forgery"
 RESPONSE_FAILURE_TOOL_CALL_LURE: Final = "tool_call_lure"
 
 #: The JSON key tokens a tool-call lure uses; a vote response carrying any of
-#: them is discarded rather than trusted (SPEC S8.5).
-TOOL_CALL_MARKERS: frozenset[str] = frozenset(
+#: them is discarded rather than trusted (SPEC S8.5). Matching is a plain
+#: substring test, so a legitimate vote response that happens to contain the
+#: quoted literal ``"tool"`` is discarded conservatively -- an intentional
+#: fail-closed tradeoff, and only a discard signal (probability never derives
+#: from response text); broader marker coverage is tracked as a hardening
+#: follow-up.
+TOOL_CALL_MARKERS: Final[frozenset[str]] = frozenset(
     {'"tool"', '"tool_call"', '"function_call"'}
 )
 
 #: HTML elements whose entire text subtree is discarded during sanitization:
 #: executable, styling, or off-DOM containers that never carry visible prose.
-_SUPPRESSED_TAGS: frozenset[str] = frozenset(
+_SUPPRESSED_TAGS: Final[frozenset[str]] = frozenset(
     {"script", "style", "template", "noscript", "iframe"}
 )
 
 #: Void HTML elements: they have no text subtree, so they are never pushed onto
 #: the open-element stack (they carry no content to suppress or keep).
-_VOID_TAGS: frozenset[str] = frozenset(
+_VOID_TAGS: Final[frozenset[str]] = frozenset(
     {
         "area",
         "base",
@@ -87,7 +103,7 @@ _VOID_TAGS: frozenset[str] = frozenset(
 
 #: Space-stripped inline-``style`` fragments that mark an element as hidden; an
 #: element whose ``style`` contains any of them has its subtree discarded.
-_HIDDEN_STYLE_TOKENS: frozenset[str] = frozenset(
+_HIDDEN_STYLE_TOKENS: Final[frozenset[str]] = frozenset(
     {"display:none", "visibility:hidden", "font-size:0"}
 )
 
@@ -167,14 +183,19 @@ class _VisibleTextParser(HTMLParser):
 
     Text inside a suppressed subtree (``<script>``, ``<style>``, ...) or a
     hidden element (``hidden`` / ``aria-hidden`` / a hiding inline ``style``)
-    is dropped; everything else is retained. Entity/character references are
-    auto-unescaped (``convert_charrefs=True``), so an entity-encoded delimiter
-    forgery is decoded here and neutralized later by :func:`sanitize_content`.
+    is dropped; everything else is retained. Entity and character references are
+    kept *verbatim* in their original encoded form (``convert_charrefs=False``,
+    re-emitted by :meth:`handle_entityref` / :meth:`handle_charref`). Preserving
+    them, rather than decoding, serves the raw-hash contract in two ways: a
+    benign ``&amp;`` / ``&#8217;`` stays a byte-for-byte substring of the raw
+    fetched content so the citation re-verifies (no spurious abstention), and an
+    entity-encoded delimiter forgery (``&lt;&lt;&lt;UNTRUSTED-DATA``) stays inert
+    -- it never decodes into a real, breakout-capable delimiter token.
     """
 
     def __init__(self) -> None:
         """Initialize an empty open-element stack and visible-text buffer."""
-        super().__init__(convert_charrefs=True)
+        super().__init__(convert_charrefs=False)
         self._stack: list[_ElementFrame] = []
         self._parts: list[str] = []
 
@@ -229,6 +250,31 @@ class _VisibleTextParser(HTMLParser):
         if not self._hidden:
             self._parts.append(data)
 
+    def handle_entityref(self, name: str) -> None:
+        """Re-emit a named entity reference (``&name;``) verbatim, unencoded.
+
+        With ``convert_charrefs=False`` the parser reports each named reference
+        here instead of decoding it; re-emitting the original ``&name;`` source
+        keeps visible text byte-identical to the raw fetched content (so a
+        benign entity re-verifies) and leaves an entity-encoded delimiter forgery
+        inert.
+
+        Args:
+            name: The entity name between ``&`` and ``;`` (e.g. ``"amp"``).
+        """
+        if not self._hidden:
+            self._parts.append(f"&{name};")
+
+    def handle_charref(self, name: str) -> None:
+        """Re-emit a numeric character reference (``&#name;``) verbatim.
+
+        Args:
+            name: The reference body after ``&#`` (a decimal string such as
+                ``"8217"`` or a hex string such as ``"x2019"``).
+        """
+        if not self._hidden:
+            self._parts.append(f"&#{name};")
+
     def visible_text(self) -> str:
         """Return the concatenated visible character data collected so far.
 
@@ -270,13 +316,14 @@ def _neutralize_delimiters(text: str) -> str:
 def sanitize_content(content: str) -> str:
     """Reduce raw fetched page content to neutralized, visible text (S8.5).
 
-    Fast identity path: content with no ``<`` and no ``&`` can carry neither
-    HTML markup nor an entity nor a delimiter token (both delimiter tokens
-    contain ``<``), so it is only whitespace-collapsed. Otherwise the content
-    is parsed for *visible* text -- suppressed subtrees (``<script>`` and
-    kin) and hidden elements are dropped, entities are unescaped -- and any
-    delimiter token that survives (a literal or now-unescaped forgery) is
-    neutralized before a final whitespace collapse.
+    Fast identity path: content with no ``<`` can carry no HTML markup and no
+    literal delimiter token (both delimiter tokens contain ``<``), so it is
+    only whitespace-collapsed -- any entity it holds is left encoded, which is
+    exactly what the raw-hash contract needs. Otherwise the content is parsed
+    for *visible* text -- suppressed subtrees (``<script>`` and kin) and hidden
+    elements are dropped, while entities are kept verbatim (never decoded) -- and
+    any literal delimiter token that survives parsing is neutralized before a
+    final whitespace collapse.
 
     Args:
         content: The raw fetched page content.
@@ -284,7 +331,7 @@ def sanitize_content(content: str) -> str:
     Returns:
         The neutralized, whitespace-collapsed visible text.
     """
-    if "<" not in content and "&" not in content:
+    if "<" not in content:
         return _collapse_whitespace(content)
     parser = _VisibleTextParser()
     parser.feed(content)
