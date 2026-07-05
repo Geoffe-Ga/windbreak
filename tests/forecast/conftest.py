@@ -50,6 +50,19 @@ Sandbox-transport fixture choice (issue #24)
     actually calls the factory (or the `research_tools` fixture) hits the
     `ModuleNotFoundError`, which is the expected Gate 1 RED state for
     issue #24.
+
+Citation-verification fixture choice (issue #26)
+    `RaisingFetchTransport` and `MutatingRefetchTransport` below are the
+    `hedgekit.forecast.citations` analogue of the sandbox doubles above:
+    deterministic `FetchTransport` doubles shared by `test_citations.py`
+    (unit-level `verify_citation` checks) and `test_abstention.py`
+    (end-to-end `run_pipeline`/`run_triaged_pipeline` abstention checks), so
+    both test modules pin the exact same fetch-failure and fetch-mutation
+    shapes rather than each inventing a slightly different one. Both are
+    exposed only through factory fixtures (`make_raising_fetch_transport`,
+    `make_mutating_refetch_transport`) mirroring `make_fake_vote_transport`'s
+    "the fixture body is literally the class" convention -- a fresh,
+    independently-stateful double per test, never one shared instance.
 """
 
 from __future__ import annotations
@@ -274,3 +287,116 @@ def research_tools(
 ) -> object:
     """Provide a `ResearchTools` sandboxed to the `research.local` allowlist."""
     return research_tools_factory(cache_dir=tmp_path / "research-cache")
+
+
+class RaisingFetchTransport:
+    """A `FetchTransport` modeling a dead/unreachable URL (issue #26).
+
+    `fetch` always raises `ConnectionError` -- a subclass of `OSError` -- so
+    any citation verified through a `ResearchTools` built over this transport
+    always yields `hedgekit.forecast.citations.verify_citation`'s
+    `FAILURE_UNREACHABLE` verdict. The transport never distinguishes by URL:
+    the RED-state contract under test is "the transport itself is down", not
+    "one specific URL is down", so every call raises unconditionally.
+    """
+
+    def fetch(self, url: str) -> str:
+        """Always raise, modeling a fully unreachable fetch transport.
+
+        Args:
+            url: The (unused) URL being fetched.
+
+        Raises:
+            ConnectionError: Unconditionally, on every call.
+        """
+        raise ConnectionError(f"connection refused for {url}")
+
+
+class MutatingRefetchTransport:
+    """A `FetchTransport` that mutates a URL's content on its *second* fetch.
+
+    Issue #26's `bounded_web_research` (pipeline stage 5) fetches each
+    subquestion's candidate URL exactly once to build its `Citation` -- the
+    content hash and quoted text baked into that citation come from that one
+    fetch. `hedgekit.forecast.citations.verify_citation` then *refetches* the
+    same URL through `tools.fetch` to independently recompute the content
+    hash, so a citation whose backing URL returns *different* content on that
+    second call is guaranteed to fail with a content-hash mismatch. This
+    double exploits that exact double-fetch shape (one fetch to build, one
+    refetch to verify) so an *end-to-end pipeline run* -- not just a
+    unit-level `verify_citation` call -- yields a fully deterministic,
+    predetermined count of verified citations.
+
+    Distinct URLs are remembered in first-seen order (the order
+    `bounded_web_research` discovers them in -- one per subquestion, via
+    `FixtureSearchTransport`), tracked in an explicit list rather than relying
+    on any dict/set iteration order. The first `stable_urls` distinct URLs
+    behave exactly like `FixtureFetchTransport`: *every* fetch of one of
+    them -- first, second, or any later one -- returns the same deterministic
+    `f"fixture content for {url}"` string, so their citations verify cleanly
+    forever. Every other (later-discovered) distinct URL returns that same
+    stable content on its *first* fetch only (so the citation stage 5 builds
+    from that fetch is itself internally self-consistent: its stored content
+    hash matches its own first-fetch content), but returns different,
+    fetch-count-tagged content on every subsequent fetch of that same URL --
+    so `verify_citation`'s refetch-and-rehash always mismatches for it.
+
+    Net effect, given the package's fixed three-subquestion decomposition: a
+    full pipeline run wired to `MutatingRefetchTransport(stable_urls=N)`
+    yields exactly `N` verified citations (for any `0 <= N <= 3`), every time.
+    """
+
+    def __init__(self, stable_urls: int) -> None:
+        """Store the stable-URL count and reset the per-URL fetch bookkeeping.
+
+        Args:
+            stable_urls: How many distinct URLs (in first-seen order) always
+                return stable content, however many times they are fetched.
+        """
+        self._stable_urls = stable_urls
+        self._seen_order: list[str] = []
+        self._fetch_counts: dict[str, int] = {}
+
+    def fetch(self, url: str) -> str:
+        """Return stable or mutated content for `url`, per this URL's slot.
+
+        Args:
+            url: The URL being fetched.
+
+        Returns:
+            Deterministic stable content (`f"fixture content for {url}"`) for
+            one of the first `stable_urls` distinct URLs seen (on any fetch of
+            it), or for any other URL's very first fetch; mutated,
+            fetch-count-tagged content for that other URL's second-or-later
+            fetch.
+        """
+        if url not in self._seen_order:
+            self._seen_order.append(url)
+        self._fetch_counts[url] = self._fetch_counts.get(url, 0) + 1
+        stable_content = f"fixture content for {url}"
+        slot = self._seen_order.index(url)
+        if slot < self._stable_urls or self._fetch_counts[url] == 1:
+            return stable_content
+        return f"mutated content for {url} (fetch #{self._fetch_counts[url]})"
+
+
+@pytest.fixture
+def make_raising_fetch_transport() -> Callable[[], RaisingFetchTransport]:
+    """Provide a factory for fresh `RaisingFetchTransport` instances.
+
+    A factory (mirroring `make_fake_vote_transport`) so citation-verification
+    tests can build a fresh, independently-stateless double per test.
+    """
+    return RaisingFetchTransport
+
+
+@pytest.fixture
+def make_mutating_refetch_transport() -> Callable[..., MutatingRefetchTransport]:
+    """Provide a factory for fresh `MutatingRefetchTransport` instances.
+
+    Callable with `stable_urls` (positional or keyword), exactly like
+    constructing `MutatingRefetchTransport` directly -- mirrors
+    `make_fake_vote_transport`'s "the fixture body is literally the class"
+    convention.
+    """
+    return MutatingRefetchTransport
