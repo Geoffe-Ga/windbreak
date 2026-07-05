@@ -265,11 +265,25 @@ for all of them. Arrange, in this order of preference:
    (`ready`/`behind`/`pending`/`ci-failed`/`awaiting-review`) — and one line
    when a PR **disappears** (merged or closed, incl. `iteration-trigger.yml`
    auto-merges: "slot may be free, run a tick to release+refill"). Design
-   rules: seed state silently on the first pass (no spurious event), skip a
-   cycle on transient `gh` failures instead of emitting noise, and diff the
-   full status map so failures emit just like successes (silence must never
-   be mistaken for "still running"). If no fleet Monitor is running at the
-   end of a wake (session restart, TaskStop, crash), arm a fresh one.
+   rules learned the hard way (2026-07-05 incident — monitor went silent for
+   30+ min while 4 PRs transitioned):
+   - **Errors are isolated PER PR, never per cycle.** One PR's failed query
+     must not suppress other PRs' events. Retry the failed PR once, then
+     record `PR#N:query-error` — the transition to `query-error` emits
+     loudly. An `ok`-flag that skips the whole cycle turns one bad PR into
+     permanent, invisible silence.
+   - **The Monitor shell is zsh: unquoted `$var` does NOT word-split.**
+     Iterate lists with `for x in $(printf '%s\n' "$list")` (command
+     substitutions DO split), never `for x in $list` — the latter passes the
+     whole newline-joined list as one argument and every downstream call
+     fails.
+   - Seed state silently on the first pass (no spurious event); diff the
+     full status map so failures emit just like successes.
+   - If no fleet Monitor is running at the end of a wake (session restart,
+     TaskStop, crash), arm a fresh one. If the Monitor has emitted nothing
+     across a whole heartbeat interval while PRs are in flight, treat it as
+     suspect: verify liveness (compare its last events against live
+     `pr-ready.sh` output) and restart it if they disagree.
 3. **Per-PR webhook subscriptions** (`mcp__github__subscribe_pr_activity`),
    when the GitHub MCP server is available in the session, add push-grade
    latency for comment/CI-failure events. Idempotent — (re)subscribe each
