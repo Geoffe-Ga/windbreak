@@ -25,6 +25,7 @@ from hedgekit.config import (
     load_config,
     load_default_config,
 )
+from hedgekit.ledger import rebuild_command
 from hedgekit.logging_setup import configure_logging
 
 if TYPE_CHECKING:
@@ -136,13 +137,34 @@ def _add_run_arguments(run_parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_rebuild_arguments(rebuild_parser: argparse.ArgumentParser) -> None:
+    """Register the ``rebuild`` subcommand's options on its subparser.
+
+    Args:
+        rebuild_parser: The ``rebuild`` subparser to populate with options.
+    """
+    rebuild_parser.add_argument(
+        "--ledger-path",
+        type=Path,
+        required=True,
+        help="Path to the SQLite ledger database.",
+    )
+    rebuild_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        required=True,
+        help="Directory to write the read-model files into.",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the ``hedgekit`` command-line argument parser.
 
     Returns:
         A parser with a required ``run`` subcommand exposing
-        ``--heartbeat-interval``, ``--max-beats``, and ``--config``, plus a
-        developer-only ``alert-test`` subcommand hidden from ``--help``.
+        ``--heartbeat-interval``, ``--max-beats``, and ``--config``; a
+        ``rebuild`` subcommand exposing ``--ledger-path`` and ``--output-dir``;
+        and a developer-only ``alert-test`` subcommand hidden from ``--help``.
     """
     parser = argparse.ArgumentParser(
         prog="hedgekit",
@@ -155,6 +177,11 @@ def build_parser() -> argparse.ArgumentParser:
     # omitted from the detailed subcommand listing (a developer-only command).
     subparsers = parser.add_subparsers(dest="command", required=True, metavar="command")
     _add_run_arguments(subparsers.add_parser("run", help="Start the heartbeat loop."))
+    _add_rebuild_arguments(
+        subparsers.add_parser(
+            "rebuild", help="Rebuild derived read models from the ledger."
+        )
+    )
     alert_parser = subparsers.add_parser("alert-test")
     alert_parser.add_argument(
         "type",
@@ -320,6 +347,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     """
     args = build_parser().parse_args(argv)
     configure_logging(level=logging.INFO)
+    if args.command == "rebuild":
+        return rebuild_command(args)
     if args.command == "alert-test":
         return _run_alert_test(args)
     return _run_heartbeat(args)
