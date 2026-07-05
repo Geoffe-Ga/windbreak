@@ -4,6 +4,8 @@ An open-source, locally hosted, always-on AI forecast trader for fully collatera
 
 **Status:** Pre-implementation scaffold. Building against [`plans/SPEC_v3.md`](plans/SPEC_v3.md).
 
+**Quality metrics:** [📊 Live dashboard](https://geoffe-ga.github.io/hedgekit/dashboard.html) — regenerated on every push to `main` by the [Quality Metrics Dashboard workflow](.github/workflows/metrics.yml).
+
 **License target:** Apache-2.0
 
 ## What this is
