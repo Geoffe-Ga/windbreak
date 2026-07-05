@@ -230,8 +230,9 @@ class ForecastRecord:
         Raises:
             TypeError: If any ppm field is a ``bool`` or non-``int``.
             ValueError: If any ppm field is out of range, ``forecast_id`` or
-                ``market_ticker`` is empty, or ``triage_stage`` is
-                unrecognized. Each message names the offending field.
+                ``market_ticker`` is empty, ``triage_stage`` is unrecognized,
+                or the record is both ``coherence_flag``-ged incoherent and
+                ``eligible_for_live``. Each message names the offending field.
         """
         for field_name in _PPM_FIELDS:
             _require_ppm(getattr(self, field_name), field_name)
@@ -241,6 +242,10 @@ class ForecastRecord:
             allowed = ", ".join(sorted(_TRIAGE_STAGES))
             raise ValueError(
                 f"triage_stage must be one of {{{allowed}}}, got {self.triage_stage!r}"
+            )
+        if self.coherence_flag and self.eligible_for_live:
+            raise ValueError(
+                "eligible_for_live must be False when coherence_flag is True"
             )
 
 

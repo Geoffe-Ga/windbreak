@@ -17,6 +17,12 @@ from hedgekit.forecast.cassettes import (
     RecordingCassette,
     ReplayCassette,
 )
+from hedgekit.forecast.coherence import (
+    OTHER_BUCKET_KEY,
+    GroupCoherenceResult,
+    forecast_group,
+)
+from hedgekit.forecast.ensemble import VoteAggregate, aggregate_votes
 from hedgekit.forecast.pipeline import run_pipeline
 from hedgekit.forecast.records import (
     BaselineQuoteSnapshot,
@@ -27,17 +33,22 @@ from hedgekit.forecast.records import (
 )
 
 __all__ = [
+    "OTHER_BUCKET_KEY",
     "BaselineQuoteSnapshot",
     "CassetteMissError",
     "Citation",
     "ForbiddenLiveTransport",
     "ForecastRecord",
+    "GroupCoherenceResult",
     "LiveCallForbiddenError",
     "LlmRequest",
     "LlmTransport",
     "ModelVote",
     "RecordingCassette",
     "ReplayCassette",
+    "VoteAggregate",
+    "aggregate_votes",
+    "forecast_group",
     "forecast_record_to_payload",
     "run_pipeline",
 ]

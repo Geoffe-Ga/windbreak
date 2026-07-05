@@ -21,16 +21,17 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, NamedTuple
 
 from hedgekit.forecast.cassettes import LlmRequest
+from hedgekit.forecast.ensemble import aggregate_votes
 from hedgekit.forecast.records import Citation, ForecastRecord, ModelVote
 
 if TYPE_CHECKING:
     from hedgekit.connector.models import NormalizedMarket
     from hedgekit.forecast.cassettes import LlmTransport
+    from hedgekit.forecast.ensemble import VoteAggregate
     from hedgekit.forecast.records import BaselineQuoteSnapshot
 
 #: One full probability (1.0) expressed in parts-per-million; also the clamp
@@ -98,23 +99,6 @@ _VOTE_MODELS: tuple[_EnsembleMember, _EnsembleMember, _EnsembleMember] = (
     _EnsembleMember("anthropic", "claude-forecast", "2024-04-01"),
     _EnsembleMember("openai", "gpt-5-forecast-mini", "2024-06-01"),
 )
-
-
-@dataclass(frozen=True, slots=True)
-class _VoteAggregate:
-    """The median aggregation of an ensemble's votes.
-
-    Attributes:
-        probability_ppm: The median vote probability, in ppm.
-        ci_low_ppm: The lowest vote probability, in ppm.
-        ci_high_ppm: The highest vote probability, in ppm.
-        vote_dispersion_ppm: The high-minus-low spread, in ppm.
-    """
-
-    probability_ppm: int
-    ci_low_ppm: int
-    ci_high_ppm: int
-    vote_dispersion_ppm: int
 
 
 def _clamp_ppm(value: int) -> int:
@@ -357,25 +341,20 @@ def collect_model_votes(
     return tuple(votes)
 
 
-def aggregate_median(votes: tuple[ModelVote, ...]) -> _VoteAggregate:
-    """Stage 9: aggregate votes by median with min/max confidence bounds.
+def aggregate_median(votes: tuple[ModelVote, ...]) -> VoteAggregate:
+    """Stage 9: aggregate votes into a median with confidence bounds (S8.6).
+
+    Delegates to :func:`hedgekit.forecast.ensemble.aggregate_votes`, which owns
+    the integer-median and exclusive-median IQR math; ``vote_dispersion_ppm``
+    is now the inter-quartile spread rather than the raw max-minus-min range.
 
     Args:
         votes: The ensemble votes to aggregate.
 
     Returns:
-        The median probability with low/high bounds and dispersion.
+        The median probability with low/high bounds and IQR dispersion.
     """
-    probabilities = sorted(vote.probability_ppm for vote in votes)
-    low = probabilities[0]
-    high = probabilities[-1]
-    median = probabilities[len(probabilities) // 2]
-    return _VoteAggregate(
-        probability_ppm=median,
-        ci_low_ppm=low,
-        ci_high_ppm=high,
-        vote_dispersion_ppm=high - low,
-    )
+    return aggregate_votes(votes)
 
 
 def normalize_coherence(market: NormalizedMarket) -> int | None:
@@ -488,7 +467,7 @@ def build_forecast_record(
     created_at: datetime,
     question_hash: str,
     probability_ppm: int,
-    aggregate: _VoteAggregate,
+    aggregate: VoteAggregate,
     votes: tuple[ModelVote, ...],
     citations: tuple[Citation, ...],
     source_notes: tuple[str, ...],

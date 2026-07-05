@@ -143,6 +143,14 @@ def test_valid_triage_stage_values_are_accepted(triage_stage: str) -> None:
     assert record.triage_stage == triage_stage
 
 
+def test_coherence_flag_and_eligible_for_live_both_true_raises() -> None:
+    """A record cannot be both incoherence-flagged and live-eligible (#25):
+    `coherence_flag=True` must forbid `eligible_for_live=True`.
+    """
+    with pytest.raises(ValueError, match=r"coherence_flag|eligible_for_live"):
+        _record(coherence_flag=True, eligible_for_live=True)
+
+
 def test_forecast_record_is_frozen() -> None:
     """Mutating any field of a constructed ForecastRecord raises."""
     record = _record()
