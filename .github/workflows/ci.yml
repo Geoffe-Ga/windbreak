@@ -51,6 +51,14 @@ jobs:
         run: ./scripts/check-all.sh
 
       - name: Pre-commit (all files)
+        # no-commit-to-branch guards LOCAL commit-time only. On push-event runs
+        # actions/checkout attaches HEAD to main, so the hook fails on every
+        # merge (a category error — the commit already passed its PR gates),
+        # while PR-event runs pass via the detached merge ref. Skipping it here
+        # is not a gate-weakening: every other hook still runs, and the hook
+        # itself stays active for local commits. Issue #127.
+        env:
+          SKIP: no-commit-to-branch
         run: |
           pip install -c constraints-quality.txt pre-commit
           pre-commit run --all-files --show-diff-on-failure
