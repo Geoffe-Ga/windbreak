@@ -1,0 +1,26 @@
+{
+  "MKT-NOTAKER": [
+    {
+      "book": {
+        "fetched_at": "2025-01-01T00:00:00.000000Z",
+        "yes_bids": [
+          {"price": 6000, "quantity": 500},
+          {"price": 5900, "quantity": 1000}
+        ],
+        "yes_asks": []
+      },
+      "trades": []
+    },
+    {
+      "book": {
+        "fetched_at": "2025-01-01T00:05:00.000000Z",
+        "yes_bids": [
+          {"price": 6000, "quantity": 500},
+          {"price": 5900, "quantity": 1000}
+        ],
+        "yes_asks": []
+      },
+      "trades": []
+    }
+  ]
+}

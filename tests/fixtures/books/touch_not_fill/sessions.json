@@ -1,0 +1,22 @@
+{
+  "MKT-TOUCH": [
+    {
+      "book": {
+        "fetched_at": "2025-01-01T00:00:00.000000Z",
+        "yes_bids": [{"price": 4100, "quantity": 1000}],
+        "yes_asks": [{"price": 4300, "quantity": 1000}]
+      },
+      "trades": [
+        {"price": 4200, "quantity": 1000, "ts": "2025-01-01T00:01:00.000000Z"}
+      ]
+    },
+    {
+      "book": {
+        "fetched_at": "2025-01-01T00:02:00.000000Z",
+        "yes_bids": [{"price": 4100, "quantity": 1000}],
+        "yes_asks": [{"price": 4300, "quantity": 1000}]
+      },
+      "trades": []
+    }
+  ]
+}
