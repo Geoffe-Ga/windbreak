@@ -1,0 +1,53 @@
+{
+  "timestamp": "2026-07-05T20:38:01.145722+00:00",
+  "project": "hedgekit",
+  "thresholds": {
+    "coverage": 90,
+    "branch_coverage": 85,
+    "mutation_score": 80,
+    "complexity": 10,
+    "docs_coverage": 95,
+    "security_issues": 0,
+    "maintainability": 20,
+    "lint_violations": 0,
+    "type_errors": 0
+  },
+  "metrics": {
+    "coverage": null,
+    "coverage_status": "unknown",
+    "branch_coverage": null,
+    "branch_coverage_status": "unknown",
+    "complexity_avg": null,
+    "complexity_status": "unknown",
+    "maintainability_avg": null,
+    "maintainability_status": "unknown",
+    "docs_coverage": null,
+    "docs_status": "unknown",
+    "security_issues": null,
+    "security_status": "unknown",
+    "mutation_score": null,
+    "mutation_status": "unknown",
+    "lint_violations": null,
+    "lint_status": "unknown",
+    "type_errors": null,
+    "typecheck_status": "unknown",
+    "tests_total": null,
+    "tests_passed": null,
+    "tests_failed": null,
+    "tests_skipped": null,
+    "tests_status": "unknown",
+    "precommit_status": {
+      "total_hooks": 32,
+      "passing_hooks": 32,
+      "percentage": 100.0,
+      "status": "passing"
+    },
+    "ci_status": {
+      "total_jobs": 1,
+      "passing_jobs": 1,
+      "percentage": 100.0,
+      "status": "passing",
+      "run_url": "https://github.com/Geoffe-Ga/hedgekit/actions/runs/28754136253"
+    }
+  }
+}
