@@ -11,7 +11,10 @@ All code must meet these standards before merging to main:
 ### Test Coverage
 - **Code Coverage**: 90% minimum (branch coverage)
 - **Docstring Coverage**: 95% minimum (pydocstyle / ruff D rules)
-- **Mutation Score**: 80% minimum (mutmut)
+- **Mutation Score**: 80% minimum (mutmut) — **manual pre-v1.0.0 release gate,
+  NOT an automated check**. Run on demand via `./scripts/mutation.sh` or the
+  `mutation-gate.yml` workflow; enforced before shipping v1.0.0 (owner
+  directive, issue #107), never on push/PR/pre-commit.
 - **Test Types**: Unit, Integration, and E2E coverage required
 
 ### Type Checking
