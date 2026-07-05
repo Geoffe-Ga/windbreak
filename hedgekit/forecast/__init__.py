@@ -17,6 +17,12 @@ from hedgekit.forecast.cassettes import (
     RecordingCassette,
     ReplayCassette,
 )
+from hedgekit.forecast.coherence import (
+    OTHER_BUCKET_KEY,
+    GroupCoherenceResult,
+    forecast_group,
+)
+from hedgekit.forecast.ensemble import VoteAggregate, aggregate_votes
 from hedgekit.forecast.pipeline import run_pipeline
 from hedgekit.forecast.records import (
     BaselineQuoteSnapshot,
@@ -35,8 +41,18 @@ from hedgekit.forecast.sandbox import (
     build_research_tools,
     tool_registry,
 )
+from hedgekit.forecast.triage import (
+    TRIAGE_THRESHOLD_PPM,
+    InMemoryTriageLedger,
+    TriageEvent,
+    TriageLedgerWriter,
+    TriagePrior,
+    run_triaged_pipeline,
+)
 
 __all__ = [
+    "OTHER_BUCKET_KEY",
+    "TRIAGE_THRESHOLD_PPM",
     "BaselineQuoteSnapshot",
     "CassetteMissError",
     "Citation",
@@ -44,6 +60,8 @@ __all__ = [
     "FetchTransport",
     "ForbiddenLiveTransport",
     "ForecastRecord",
+    "GroupCoherenceResult",
+    "InMemoryTriageLedger",
     "LiveCallForbiddenError",
     "LlmRequest",
     "LlmTransport",
@@ -54,8 +72,15 @@ __all__ = [
     "ResearchTools",
     "SandboxPathViolationError",
     "SearchTransport",
+    "TriageEvent",
+    "TriageLedgerWriter",
+    "TriagePrior",
+    "VoteAggregate",
+    "aggregate_votes",
     "build_research_tools",
+    "forecast_group",
     "forecast_record_to_payload",
     "run_pipeline",
+    "run_triaged_pipeline",
     "tool_registry",
 ]
