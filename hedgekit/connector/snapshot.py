@@ -35,13 +35,18 @@ SCREEN_DECISION_EVENT: Final = "SCREEN_DECISION"
 _LOGGER = logging.getLogger("hedgekit.connector")
 
 
-def _utc_now_iso() -> str:
-    """Return the current UTC time as ISO-8601 with a trailing ``Z``.
+def utc_now_iso(moment: datetime | None = None) -> str:
+    """Render a moment as ISO-8601 UTC with a trailing ``Z``.
+
+    Args:
+        moment: The (timezone-aware) datetime to render, normalized to UTC.
+            Defaults to the current wall-clock UTC time when None.
 
     Returns:
         A string like ``2026-07-04T12:00:00.000000Z``.
     """
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
+    resolved = datetime.now(UTC) if moment is None else moment.astimezone(UTC)
+    return resolved.strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,7 +179,7 @@ class MarketSnapshotTask:
         event = ConnectorEvent(
             event_type=MARKET_SNAPSHOT_EVENT,
             payload=market_to_payload(market),
-            ts=_utc_now_iso(),
+            ts=utc_now_iso(),
         )
         self._record(event)
 
@@ -192,7 +197,7 @@ class MarketSnapshotTask:
                 "decision": decision.decision,
                 "reason": decision.reason,
             },
-            ts=_utc_now_iso(),
+            ts=utc_now_iso(),
         )
         self._record(event)
 

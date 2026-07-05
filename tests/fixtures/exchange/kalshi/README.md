@@ -97,3 +97,28 @@ methods beyond `get_fee_model` (`series_KXFED.json` / `series_KXBAD.json`).
 `FakeExchange.get_fills`; this directory's `fills.json` is the
 Kalshi-raw-shape sibling used only as semantics evidence, not loaded by
 `FakeExchange`.
+
+## `faults/`: schema-drift fixtures (issue #20)
+
+Two hand-authored variants of the recorded `orderbook_KXFED-24DEC.json`
+payload back `hedgekit.connector.validation`'s fail-closed schema-drift
+tests (`tests/connector/test_validation.py`,
+`tests/connector/kalshi/test_client_resilience.py`):
+
+* `orderbook_drift_money_fee.json` -- the same `yes`/`no` book, plus an
+  unrecognized `fee` key nested *inside* the `orderbook` object (sibling to
+  `yes`/`no`). Neither recognized nor cosmetic in
+  `kalshi_default_schema_registry()`'s orderbook schema, so validating this
+  payload must ledger a `SCHEMA_ANOMALY` event and raise
+  `SchemaAnomalyHaltError` -- an unrecognized *money/risk* field is exactly the
+  drift this validator exists to catch, fail closed rather than silently
+  misread.
+* `orderbook_drift_cosmetic.json` -- the same book, plus a top-level
+  `display_label` key. `display_label` is deliberately listed in the
+  orderbook schema's `cosmetic` allowlist, so validating this payload must
+  only log a warning -- no ledger event, no raise.
+
+The 5xx / 429 / malformed-JSON fault cases are session-scripted (see
+`ScriptedFaultSession` in `tests/connector/kalshi/conftest.py`) rather than
+fixture files, since they are HTTP-transport-level faults, not payload-shape
+drift.

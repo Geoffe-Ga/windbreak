@@ -39,6 +39,7 @@ from hedgekit.connector.kalshi.normalize import (
     normalize_order_book,
     payload_hash,
 )
+from hedgekit.connector.resilience import CONNECTOR_HALT_EVENT, MaintenanceHaltError
 from hedgekit.connector.semantics import (
     BalanceSemantics,
     CancelCollateralRelease,
@@ -102,6 +103,14 @@ _QUADRATIC_FEE_TYPE: Final = "quadratic"
 #: A market ticker's series ticker is the segment before the first ``-`` (e.g.
 #: ``"KXFED-24DEC"`` -> ``"KXFED"``); a bare series ticker has no separator.
 _SERIES_TICKER_SEPARATOR: Final = "-"
+
+#: The exchange status that permits market-data fetches to proceed; any other
+#: status (paused/closed) suspends fetches via :class:`MaintenanceHaltError`.
+_OPEN_STATUS: Final = "open"
+
+#: The ``reason`` stamped on the ``CONNECTOR_HALT`` event when the exchange is
+#: not open, distinguishing a maintenance suspension from a breaker trip.
+_MAINTENANCE_REASON: Final = "maintenance"
 
 #: Kalshi's recorded balance-interpretation semantics: five fields pinned to
 #: documented behavior, three left ``UNKNOWN`` for lack of public evidence. See
@@ -255,6 +264,30 @@ class KalshiConnector:
         self._ledger_writer = ledger_writer
         self._clock = clock
 
+    def _ensure_operational(self) -> None:
+        """Fail closed while the exchange is not open for trading.
+
+        Fetches the current exchange status; when it is anything other than
+        open, ledgers one ``CONNECTOR_HALT`` event (reason maintenance) and
+        refuses to proceed, so no market-data transport runs against a paused
+        or closed venue.
+
+        Raises:
+            MaintenanceHaltError: If the exchange status is not open.
+        """
+        status = self.get_exchange_status()
+        if status.status == _OPEN_STATUS:
+            return
+        event = ConnectorEvent(
+            event_type=CONNECTOR_HALT_EVENT,
+            payload={"reason": _MAINTENANCE_REASON, "status": status.status},
+            ts=_iso_timestamp(self._clock()),
+        )
+        self._record(event)
+        raise MaintenanceHaltError(
+            f"exchange is not open for trading (status={status.status!r})"
+        )
+
     def _paginate(self, endpoint: str, item_key: str) -> list[Mapping[str, Any]]:
         """Follow a Kalshi ``cursor`` across every page of one list endpoint.
 
@@ -312,7 +345,11 @@ class KalshiConnector:
 
         Returns:
             The normalized binary markets the venue currently offers.
+
+        Raises:
+            MaintenanceHaltError: If the exchange is not open for trading.
         """
+        self._ensure_operational()
         events = self._event_index()
         normalized: list[NormalizedMarket] = []
         for raw in self._raw_markets():
@@ -420,8 +457,10 @@ class KalshiConnector:
             The order-book snapshot, stamped with the injected clock.
 
         Raises:
+            MaintenanceHaltError: If the exchange is not open for trading.
             UnknownMarketError: If the venue has no book for that ticker.
         """
+        self._ensure_operational()
         try:
             response = self._client.get("markets", ticker, "orderbook")
         except KalshiApiError as exc:

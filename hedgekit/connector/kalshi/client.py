@@ -18,16 +18,23 @@ the request timeout is an ``int`` and no ``/`` or ``float`` appears anywhere.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC
+from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Final, Protocol, cast
 from urllib.parse import quote
 
 import requests
 
+from hedgekit.connector.snapshot import LoggingEventLedgerWriter
+from hedgekit.connector.validation import (
+    SchemaValidator,
+    kalshi_default_schema_registry,
+)
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
-    from datetime import datetime
+
+    from hedgekit.connector.resilience import ResilientCaller
 
 #: The current-generation Kalshi public API base (SPEC S7.1).
 KALSHI_API_BASE: Final = "https://api.elections.kalshi.com/trade-api/v2"
@@ -177,6 +184,11 @@ class _RedirectFreeSession:
         )
 
 
+def _default_wall_clock() -> datetime:
+    """Return the current UTC time, the default validator's event-stamp clock."""
+    return datetime.now(UTC)
+
+
 class KalshiClient:
     """A thin HTTPS JSON GET client over Kalshi's public v2 REST API."""
 
@@ -186,6 +198,8 @@ class KalshiClient:
         *,
         timeout: int = DEFAULT_TIMEOUT_SECONDS,
         session: Session | None = None,
+        resilience: ResilientCaller | None = None,
+        validator: SchemaValidator | None = None,
     ) -> None:
         """Initialize the client, validating the base URL scheme.
 
@@ -194,6 +208,12 @@ class KalshiClient:
             timeout: Per-request timeout, in whole seconds.
             session: An injected ``requests``-like session; a real
                 :class:`requests.Session` is created lazily when None.
+            resilience: An optional caller wrapping transport+parse in rate
+                limiting, retries, and a circuit breaker; passthrough when None.
+            validator: The schema validator run on every parsed payload;
+                defaults to an on-by-default validator built from
+                :func:`kalshi_default_schema_registry`, so schema drift fails
+                closed for every endpoint unless a caller opts into another.
 
         Raises:
             ValueError: If ``base_url`` does not begin with ``https://``.
@@ -207,6 +227,15 @@ class KalshiClient:
         self._session: Session = (
             session if session is not None else _RedirectFreeSession(requests.Session())
         )
+        self._resilience = resilience
+        if validator is not None:
+            self._validator = validator
+        else:
+            self._validator = SchemaValidator(
+                kalshi_default_schema_registry(),
+                LoggingEventLedgerWriter(),
+                wall_clock=_default_wall_clock,
+            )
 
     def _build_url(self, segments: tuple[str, ...]) -> str:
         """Join percent-encoded path segments onto the base URL.
@@ -227,9 +256,46 @@ class KalshiClient:
     ) -> KalshiResponse:
         """Perform a GET over the joined path segments and parse the response.
 
+        Transport and parsing run through the injected
+        :class:`~hedgekit.connector.resilience.ResilientCaller` when one is
+        wired (rate limiting, retries, breaker), or directly otherwise. The
+        parsed payload is then always run through the schema validator, so a
+        :class:`~hedgekit.connector.validation.SchemaAnomalyHaltError` is raised
+        *outside* any retry loop -- schema drift is never retried and never
+        counted against the circuit breaker.
+
         Args:
             *segments: Path segments appended to the base URL, each
                 percent-encoded individually.
+            params: Optional query parameters, forwarded unchanged.
+
+        Returns:
+            The parsed successful response.
+
+        Raises:
+            KalshiApiError: If the response status is outside the 2xx range.
+            SchemaAnomalyHaltError: If the parsed payload fails schema validation.
+        """
+
+        def _fetch() -> KalshiResponse:
+            """Run one transport+parse attempt (retried by the resilient caller)."""
+            return self._transport(segments, params)
+
+        response = (
+            self._resilience.call(_fetch) if self._resilience is not None else _fetch()
+        )
+        self._validator.validate(
+            segments, cast("Mapping[str, object]", response.payload)
+        )
+        return response
+
+    def _transport(
+        self, segments: tuple[str, ...], params: Mapping[str, str] | None
+    ) -> KalshiResponse:
+        """Perform one GET and parse a 2xx response, raising on any non-2xx.
+
+        Args:
+            segments: The path segments to build the request URL from.
             params: Optional query parameters, forwarded unchanged.
 
         Returns:

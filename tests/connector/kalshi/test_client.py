@@ -88,7 +88,11 @@ class _RecordingSession:
 
 def test_get_joins_quoted_segments_onto_base_url() -> None:
     """A segment containing `/` or a space is percent-encoded, not split."""
-    session = _RecordingSession(_FakeResponse(200, {"ok": True}))
+    # A schema-clean order book: the on-by-default validator inspects every
+    # parsed payload, so a synthetic ``{"ok": True}`` would now (correctly)
+    # raise ``SchemaAnomalyHaltError`` -- this test only cares about URL building.
+    clean_orderbook = {"orderbook": {"yes": [], "no": []}}
+    session = _RecordingSession(_FakeResponse(200, clean_orderbook))
     client = KalshiClient(
         base_url="https://example.kalshi.test", timeout=7, session=session
     )
@@ -103,7 +107,10 @@ def test_get_joins_quoted_segments_onto_base_url() -> None:
 
 def test_get_forwards_params_and_int_timeout() -> None:
     """`params` and the constructor's `timeout` reach `session.get` unchanged."""
-    session = _RecordingSession(_FakeResponse(200, {"ok": True}))
+    # A schema-clean ``/markets`` page: the on-by-default validator would reject
+    # a synthetic ``{"ok": True}`` payload; this test only checks param/timeout
+    # forwarding, so a valid empty page keeps its intent intact.
+    session = _RecordingSession(_FakeResponse(200, {"markets": [], "cursor": ""}))
     client = KalshiClient(
         base_url="https://example.kalshi.test", timeout=9, session=session
     )
