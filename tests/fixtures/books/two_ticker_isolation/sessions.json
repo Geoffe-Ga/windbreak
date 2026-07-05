@@ -1,0 +1,40 @@
+{
+  "MKT-ISO-A": [
+    {
+      "book": {
+        "fetched_at": "2025-01-01T00:00:00.000000Z",
+        "yes_bids": [{"price": 4200, "quantity": 500}],
+        "yes_asks": [{"price": 4400, "quantity": 1000}]
+      },
+      "trades": [
+        {"price": 4150, "quantity": 2000, "ts": "2025-01-01T00:01:00.000000Z"}
+      ]
+    },
+    {
+      "book": {
+        "fetched_at": "2025-01-01T00:02:00.000000Z",
+        "yes_bids": [{"price": 4200, "quantity": 500}],
+        "yes_asks": [{"price": 4400, "quantity": 1000}]
+      },
+      "trades": []
+    }
+  ],
+  "MKT-ISO-B": [
+    {
+      "book": {
+        "fetched_at": "2025-01-01T00:00:00.000000Z",
+        "yes_bids": [{"price": 3000, "quantity": 500}],
+        "yes_asks": [{"price": 3400, "quantity": 1000}]
+      },
+      "trades": []
+    },
+    {
+      "book": {
+        "fetched_at": "2025-01-01T00:02:00.000000Z",
+        "yes_bids": [{"price": 3000, "quantity": 500}],
+        "yes_asks": [{"price": 3400, "quantity": 1000}]
+      },
+      "trades": []
+    }
+  ]
+}

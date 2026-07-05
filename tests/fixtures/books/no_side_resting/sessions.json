@@ -1,0 +1,28 @@
+{
+  "MKT-NORESTING": [
+    {
+      "book": {
+        "fetched_at": "2025-01-01T00:00:00.000000Z",
+        "yes_bids": [],
+        "yes_asks": [
+          {"price": 5800, "quantity": 500},
+          {"price": 5900, "quantity": 1000}
+        ]
+      },
+      "trades": [
+        {"price": 5850, "quantity": 2000, "ts": "2025-01-01T00:01:00.000000Z"}
+      ]
+    },
+    {
+      "book": {
+        "fetched_at": "2025-01-01T00:02:00.000000Z",
+        "yes_bids": [],
+        "yes_asks": [
+          {"price": 5800, "quantity": 500},
+          {"price": 5900, "quantity": 1000}
+        ]
+      },
+      "trades": []
+    }
+  ]
+}
