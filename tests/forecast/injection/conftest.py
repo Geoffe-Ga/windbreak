@@ -56,6 +56,22 @@ if TYPE_CHECKING:
     from hedgekit.forecast.cassettes import LlmRequest, LlmTransport
     from hedgekit.forecast.sandbox import FetchTransport, SearchTransport
 
+    #: Factory-fixture return aliases: naming each ``make_*`` factory's
+    #: ``Callable`` return type keeps the fixture signatures on one line, where
+    #: ruff and black agree on formatting (an unaliased inline ``Callable[...]``
+    #: sits just over the line limit and the two formatters wrap it
+    #: incompatibly).
+    LoggingSearchTransportFactory = Callable[
+        [SearchTransport], "LoggingSearchTransport"
+    ]
+    PromptRecordingTransportFactory = Callable[
+        [LlmTransport], "PromptRecordingTransport"
+    ]
+    MaliciousVoteTransportFactory = Callable[[frozenset[int]], "MaliciousVoteTransport"]
+    MappingFetchTransportFactory = Callable[
+        [Mapping[str, str]], "MappingFetchTransport"
+    ]
+
 #: The directory holding the nine committed poisoned-page corpus fixtures.
 CORPUS_DIR: Path = Path(__file__).resolve().parent.joinpath("corpus")
 
@@ -271,9 +287,7 @@ def make_poisoned_fetch_transport() -> Callable[[str], PoisonedFetchTransport]:
 
 
 @pytest.fixture
-def make_logging_search_transport() -> (
-    Callable[[SearchTransport], LoggingSearchTransport]
-):
+def make_logging_search_transport() -> LoggingSearchTransportFactory:
     """Provide a factory for fresh `LoggingSearchTransport`s."""
     return LoggingSearchTransport
 
@@ -285,25 +299,19 @@ def make_logging_fetch_transport() -> Callable[[FetchTransport], LoggingFetchTra
 
 
 @pytest.fixture
-def make_prompt_recording_transport() -> (
-    Callable[[LlmTransport], PromptRecordingTransport]
-):
+def make_prompt_recording_transport() -> PromptRecordingTransportFactory:
     """Provide a factory for fresh `PromptRecordingTransport`s."""
     return PromptRecordingTransport
 
 
 @pytest.fixture
-def make_malicious_vote_transport() -> (
-    Callable[[frozenset[int]], MaliciousVoteTransport]
-):
+def make_malicious_vote_transport() -> MaliciousVoteTransportFactory:
     """Provide a factory for fresh `MaliciousVoteTransport`s."""
     return MaliciousVoteTransport
 
 
 @pytest.fixture
-def make_mapping_fetch_transport() -> (
-    Callable[[Mapping[str, str]], MappingFetchTransport]
-):
+def make_mapping_fetch_transport() -> MappingFetchTransportFactory:
     """Provide a factory for fresh `MappingFetchTransport`s."""
     return MappingFetchTransport
 
