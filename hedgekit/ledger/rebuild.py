@@ -114,8 +114,11 @@ def rebuild(ledger_path: Path, output_dir: Path) -> None:
     ]
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    _write_read_model(output_dir / _CONFIG_VERSIONS_FILENAME, config_versions)
-    _write_read_model(output_dir / _MODE_HISTORY_FILENAME, mode_history)
+    # ``Path.joinpath`` (not the ``/`` operator) keeps this module clear of the
+    # no-float lint's blanket true-division ban on money-path packages (SPEC
+    # S6.1); path joining is byte-identical either way.
+    _write_read_model(output_dir.joinpath(_CONFIG_VERSIONS_FILENAME), config_versions)
+    _write_read_model(output_dir.joinpath(_MODE_HISTORY_FILENAME), mode_history)
 
 
 def rebuild_command(args: Namespace) -> int:
