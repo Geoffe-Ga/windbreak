@@ -38,6 +38,17 @@ if TYPE_CHECKING:
 #: of the SPEC mode machine; hedgekit ships research-only for now.
 MODE_RESEARCH = "RESEARCH"
 
+#: The four SPEC processes ``hedgekit run --process`` can represent, in SPEC
+#: order. Each invocation stands in for exactly one; the chosen token is
+#: stamped as the ``component`` on every heartbeat and shutdown log line. The
+#: gateway token is underscore-separated (``order_gateway``) to match its
+#: Python package name, even though its compose/systemd unit names are
+#: hyphenated (``order-gateway``).
+PROCESS_CHOICES = ("pipeline", "riskkernel", "order_gateway", "dashboard")
+
+#: Default process represented when ``--process`` is omitted.
+_DEFAULT_PROCESS = "pipeline"
+
 #: Seconds between heartbeats when ``--heartbeat-interval`` is omitted.
 _DEFAULT_HEARTBEAT_INTERVAL = 5.0
 
@@ -130,6 +141,12 @@ def _add_run_arguments(run_parser: argparse.ArgumentParser) -> None:
         help="Stop after this many heartbeats (default: run until signalled).",
     )
     run_parser.add_argument(
+        "--process",
+        choices=PROCESS_CHOICES,
+        default=_DEFAULT_PROCESS,
+        help="Which SPEC process this invocation represents (default: %(default)s).",
+    )
+    run_parser.add_argument(
         "--snapshot-fixture-dir",
         default=None,
         help=(
@@ -170,9 +187,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     Returns:
         A parser with a required ``run`` subcommand exposing
-        ``--heartbeat-interval``, ``--max-beats``, and ``--config``; a
-        ``rebuild`` subcommand exposing ``--ledger-path`` and ``--output-dir``;
-        and a developer-only ``alert-test`` subcommand hidden from ``--help``.
+        ``--heartbeat-interval``, ``--max-beats``, ``--process``,
+        ``--snapshot-fixture-dir``, and ``--config``; a ``rebuild`` subcommand
+        exposing ``--ledger-path`` and
+        ``--output-dir``; and a developer-only ``alert-test`` subcommand hidden
+        from ``--help``.
     """
     parser = argparse.ArgumentParser(
         prog="hedgekit",
@@ -210,6 +229,7 @@ def run_loop(
     max_beats: int | None = None,
     stop_event: threading.Event | None = None,
     state: ShutdownState | None = None,
+    component: str = _DEFAULT_PROCESS,
     on_beat: Callable[[int], None] | None = None,
 ) -> None:
     """Emit heartbeats until stopped by the stop event or a beat budget.
@@ -224,6 +244,10 @@ def run_loop(
         state: Optional shared shutdown state. When a signal handler has
             recorded a signal name on it, that name becomes the shutdown
             reason; otherwise the generic ``signal`` reason is used.
+        component: Which SPEC process (one of :data:`PROCESS_CHOICES`) this
+            loop represents. Stamped as the ``component`` extra on every
+            heartbeat and shutdown log record; the rendered message text is
+            unchanged.
         on_beat: Optional hook invoked once per beat with the 1-based sequence
             number, after that beat's heartbeat is logged. None (the default)
             leaves the heartbeat behavior unchanged.
@@ -242,12 +266,17 @@ def run_loop(
             reason = _REASON_MAX_BEATS
             break
         seq += 1
-        _LOGGER.info("mode=%s heartbeat seq=%d", MODE_RESEARCH, seq)
+        _LOGGER.info(
+            "mode=%s heartbeat seq=%d",
+            MODE_RESEARCH,
+            seq,
+            extra={"component": component},
+        )
         if on_beat is not None:
             on_beat(seq)
         stop_event.wait(interval_seconds)
 
-    _LOGGER.info("shutdown reason=%s", reason)
+    _LOGGER.info("shutdown reason=%s", reason, extra={"component": component})
 
 
 def _install_signal_handlers(state: ShutdownState) -> None:
@@ -352,8 +381,12 @@ def _run_heartbeat(args: argparse.Namespace) -> int:
     (issue #14) composed into one flow.
 
     Args:
-        args: Parsed ``run`` arguments carrying ``config``,
-            ``heartbeat_interval``, and ``max_beats``.
+        args: Parsed ``run`` arguments carrying ``config``, ``process``,
+            ``heartbeat_interval``, ``max_beats``, and ``snapshot_fixture_dir``.
+            The loaded config and the ``--process`` component compose here: the
+            config is loaded and logged, then the heartbeat loop runs stamped
+            with that component. When ``--snapshot-fixture-dir`` is given, a
+            per-beat snapshot hook is wired in alongside.
 
     Returns:
         The process exit code (0 on success, 1 on a fatal config error).
@@ -383,6 +416,7 @@ def _run_heartbeat(args: argparse.Namespace) -> int:
         max_beats=args.max_beats,
         stop_event=state.stop_event,
         state=state,
+        component=args.process,
         on_beat=on_beat,
     )
     return 0
