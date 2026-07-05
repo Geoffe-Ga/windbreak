@@ -34,3 +34,38 @@ forbidden_modules =
     hedgekit.connector.snapshot
     hedgekit.connector.fake
     hedgekit.connector.kalshi
+
+# Signing-key isolation boundary (SPEC S5.3).
+#
+# Notes:
+#   1. Only the `hedgekit.riskkernel` package may import the approval-token
+#      signing key handle; every other shipped module is enumerated below as a
+#      forbidden source. `hedgekit.riskkernel` itself is deliberately absent
+#      from `source_modules`, so the package that owns the key may still reach
+#      its own signing submodule.
+#   2. As with the forecast boundary above, the PRIMARY, enforcing gate is the
+#      pure-stdlib `ast` check in tests/riskkernel/test_process_isolation.py --
+#      it is strictly STRONGER than this config (it also flags a bare
+#      `from hedgekit.riskkernel import signing` module-plus-symbol import AND
+#      every relative import, loopholes a forbidden-modules contract cannot
+#      express). Wiring import-linter into CI is a follow-up; until then this
+#      file documents the contract and the pytest AST check enforces it.
+
+[importlinter:contract:signing-key-isolation]
+name = Only the Risk Kernel may import the approval-token signing key handle (SPEC S5.3)
+type = forbidden
+source_modules =
+    hedgekit.alerts
+    hedgekit.config
+    hedgekit.connector
+    hedgekit.dashboard
+    hedgekit.forecast
+    hedgekit.ledger
+    hedgekit.numeric
+    hedgekit.order_gateway
+    hedgekit.pipeline
+    hedgekit.screener
+    hedgekit.main
+    hedgekit.logging_setup
+forbidden_modules =
+    hedgekit.riskkernel.signing
