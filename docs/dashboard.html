@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>hedgekit - Quality Metrics Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto',
+                         'Helvetica', 'Arial', sans-serif;
+            background: #0d1117;
+            color: #c9d1d9;
+            padding: 2rem;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+            color: #58a6ff;
+        }
+        .subtitle {
+            color: #8b949e;
+            margin-bottom: 2rem;
+        }
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+        .metric-card {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 1.5rem;
+            transition: transform 0.2s, border-color 0.2s;
+        }
+        .metric-card:hover {
+            transform: translateY(-2px);
+            border-color: #58a6ff;
+        }
+        .metric-name {
+            font-size: 0.875rem;
+            color: #8b949e;
+            margin-bottom: 0.5rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .metric-value {
+            font-size: 2rem;
+            font-weight: bold;
+            color: #58a6ff;
+            margin-bottom: 0.5rem;
+        }
+        .metric-threshold {
+            font-size: 0.875rem;
+            color: #8b949e;
+        }
+        .metric-status {
+            display: inline-block;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-top: 0.5rem;
+        }
+        .status-pass {
+            background: #238636;
+            color: #fff;
+        }
+        .status-warn {
+            background: #9e6a03;
+            color: #fff;
+        }
+        .status-fail {
+            background: #da3633;
+            color: #fff;
+        }
+        .status-unknown {
+            background: #30363d;
+            color: #8b949e;
+        }
+        .footer {
+            text-align: center;
+            margin-top: 3rem;
+            padding-top: 2rem;
+            border-top: 1px solid #30363d;
+            color: #8b949e;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>hedgekit</h1>
+        <p class="subtitle">Quality Metrics Dashboard</p>
+
+        <div class="metrics-grid">
+            <div class="metric-card" id="precommit-status">
+                <div class="metric-name">Pre-Commit Status</div>
+                <div class="metric-value" id="precommit-value">--</div>
+                <div class="metric-threshold">
+                    Threshold:
+                    <span id="precommit-threshold">31/31 Hooks</span>
+                </div>
+                <div class="metric-status status-pass" id="precommit-status-badge">
+                    PASSING
+                </div>
+            </div>
+
+            <div class="metric-card" id="ci-status">
+                <div class="metric-name">CI Status</div>
+                <div class="metric-value" id="ci-value">--</div>
+                <div class="metric-threshold">
+                    Threshold:
+                    <span id="ci-threshold">27/27 Jobs</span>
+                </div>
+                <div class="metric-status status-pass" id="ci-status-badge">
+                    PASSING
+                </div>
+            </div>
+
+            <div class="metric-card">
+                <div class="metric-name">Code Coverage</div>
+                <div class="metric-value" id="coverage-value">--</div>
+                <div class="metric-threshold">
+                    Threshold: ≥90%
+                </div>
+                <div class="metric-status status-pass" id="coverage-status">
+                    PASSING
+                </div>
+            </div>
+
+            <div class="metric-card">
+                <div class="metric-name">Branch Coverage</div>
+                <div class="metric-value" id="branch-value">--</div>
+                <div class="metric-threshold">
+                    Threshold: ≥85%
+                </div>
+                <div class="metric-status status-pass" id="branch-status">PASSING</div>
+            </div>
+
+            <div class="metric-card">
+                <div class="metric-name">Mutation Score</div>
+                <div class="metric-value" id="mutation-value">--</div>
+                <div class="metric-threshold">
+                    Threshold: ≥80%
+                </div>
+                <div class="metric-status status-pass" id="mutation-status">
+                    PASSING
+                </div>
+            </div>
+
+            <div class="metric-card">
+                <div class="metric-name">Cyclomatic Complexity</div>
+                <div class="metric-value" id="complexity-value">--</div>
+                <div class="metric-threshold">
+                    Threshold: ≤10
+                </div>
+                <div class="metric-status status-pass" id="complexity-status">
+                    PASSING
+                </div>
+            </div>
+
+            <div class="metric-card">
+                <div class="metric-name">Documentation Coverage</div>
+                <div class="metric-value" id="docs-value">--</div>
+                <div class="metric-threshold">
+                    Threshold: ≥95%
+                </div>
+                <div class="metric-status status-pass" id="docs-status">PASSING</div>
+            </div>
+
+            <div class="metric-card">
+                <div class="metric-name">Security Issues</div>
+                <div class="metric-value" id="security-value">--</div>
+                <div class="metric-threshold">Threshold: 0 critical/high</div>
+                <div class="metric-status status-pass" id="security-status">
+                    PASSING
+                </div>
+            </div>
+
+            <div class="metric-card">
+                <div class="metric-name">Maintainability Index</div>
+                <div class="metric-value" id="maintainability-value">--</div>
+                <div class="metric-threshold">
+                    Threshold: ≥20
+                </div>
+                <div class="metric-status status-pass" id="maintainability-status">
+                    PASSING
+                </div>
+            </div>
+
+            <div class="metric-card">
+                <div class="metric-name">Lint Violations</div>
+                <div class="metric-value" id="lint-value">--</div>
+                <div class="metric-threshold">Threshold: 0</div>
+                <div class="metric-status status-pass" id="lint-status">
+                    PASSING
+                </div>
+            </div>
+
+            <div class="metric-card">
+                <div class="metric-name">Type Errors</div>
+                <div class="metric-value" id="typecheck-value">--</div>
+                <div class="metric-threshold">Threshold: 0</div>
+                <div class="metric-status status-pass" id="typecheck-status">
+                    PASSING
+                </div>
+            </div>
+
+            <div class="metric-card">
+                <div class="metric-name">Test Count</div>
+                <div class="metric-value" id="tests-value">--</div>
+                <div class="metric-threshold">Threshold: All passing</div>
+                <div class="metric-status status-pass" id="tests-status">
+                    PASSING
+                </div>
+            </div>
+        </div>
+
+        <div class="footer">
+            <p>Generated by Start Green Stay Green</p>
+            <p>Last updated: <span id="last-updated">--</span></p>
+        </div>
+    </div>
+
+    <script>
+        // Production workflow: Fetch metrics from CI artifacts
+        // Supports: local metrics.json, GitHub Pages, or GitHub Actions artifacts
+
+        async function loadMetrics() {
+            try {
+                // Try to load from local metrics.json (same directory as dashboard)
+                const response = await fetch('metrics.json');
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+
+                const data = await response.json();
+                updateDashboard(data);
+            } catch (error) {
+                console.warn('Could not load metrics.json:', error.message);
+                // Fallback: Show placeholder or error state
+                updatePlaceholder();
+            }
+        }
+
+        function updateDashboard(data) {
+            const metrics = data.metrics;
+            const thresholds = data.thresholds;
+
+            // Update timestamp
+            document.getElementById('last-updated').textContent =
+                new Date(data.timestamp).toLocaleString();
+
+            // Pre-Commit Status (index 0): green 100%, yellow 90-99%, red <90%
+            updatePrecommitStatus(metrics.precommit_status);
+
+            // CI Status (index 1): green 100%, yellow 85-99%, red <85%
+            updateCIStatus(metrics.ci_status);
+
+            // Coverage
+            if (metrics.coverage !== undefined) {
+                if (metrics.coverage === null) {
+                    document.getElementById('coverage-value').textContent = 'N/A';
+                    updateStatus('coverage', 'N/A', false);
+                } else {
+                    updateMetric('coverage', metrics.coverage, '%',
+                        metrics.coverage >= thresholds.coverage);
+                }
+            }
+
+            // Branch Coverage
+            if (metrics.branch_coverage !== undefined) {
+                if (metrics.branch_coverage === null) {
+                    document.getElementById('branch-value').textContent = 'N/A';
+                    updateStatus('branch', 'N/A', false);
+                } else {
+                    updateMetric('branch', metrics.branch_coverage, '%',
+                        metrics.branch_coverage >= thresholds.branch_coverage);
+                }
+            }
+
+            // Mutation Score (Issue #217): null (no .mutmut-cache in CI)
+            // renders the gray N/A treatment via updateStatus, never red.
+            if (metrics.mutation_score !== undefined) {
+                if (metrics.mutation_score === null) {
+                    document.getElementById('mutation-value').textContent = 'N/A';
+                    updateStatus('mutation', 'N/A', false);
+                } else {
+                    updateMetric('mutation', metrics.mutation_score, '%',
+                        metrics.mutation_score >= thresholds.mutation_score);
+                }
+            }
+
+            // Complexity
+            if (metrics.complexity_avg !== undefined) {
+                if (metrics.complexity_avg === null) {
+                    document.getElementById('complexity-value').textContent = 'N/A';
+                    updateStatus('complexity', 'N/A', false);
+                } else {
+                    updateMetric('complexity', metrics.complexity_avg, '',
+                        metrics.complexity_avg <= thresholds.complexity);
+                }
+            }
+
+            // Documentation Coverage (Issue #217): sourced from
+            // metrics-docs.sh (ruff D rules); null renders gray N/A.
+            if (metrics.docs_coverage !== undefined) {
+                if (metrics.docs_coverage === null) {
+                    document.getElementById('docs-value').textContent = 'N/A';
+                    updateStatus('docs', 'N/A', false);
+                } else {
+                    updateMetric('docs', metrics.docs_coverage, '%',
+                        metrics.docs_coverage >= thresholds.docs_coverage);
+                }
+            }
+
+            // Security
+            if (metrics.security_issues !== undefined) {
+                if (metrics.security_issues === null) {
+                    document.getElementById('security-value').textContent = 'N/A';
+                    updateStatus('security', 'N/A', false);
+                } else {
+                    const elem = document.getElementById('security-value');
+                    elem.textContent = metrics.security_issues;
+                    updateStatus('security',
+                        metrics.security_issues === 0 ? 'PASSING' : 'FAILING',
+                        metrics.security_issues === 0);
+                }
+            }
+
+            // Maintainability Index
+            if (metrics.maintainability_avg !== undefined) {
+                if (metrics.maintainability_avg === null) {
+                    const mv = document.getElementById('maintainability-value');
+                    mv.textContent = 'N/A';
+                    updateStatus('maintainability', 'N/A', false);
+                } else {
+                    const t = thresholds.maintainability || 20;
+                    updateMetric('maintainability',
+                        metrics.maintainability_avg, '',
+                        metrics.maintainability_avg >= t);
+                }
+            }
+
+            // Lint Violations
+            if (metrics.lint_violations !== undefined) {
+                if (metrics.lint_violations === null) {
+                    document.getElementById('lint-value').textContent = 'N/A';
+                    updateStatus('lint', 'N/A', false);
+                } else {
+                    const elem = document.getElementById('lint-value');
+                    elem.textContent = metrics.lint_violations;
+                    updateStatus('lint',
+                        metrics.lint_violations === 0 ? 'PASSING' : 'FAILING',
+                        metrics.lint_violations === 0);
+                }
+            }
+
+            // Type Errors
+            if (metrics.type_errors !== undefined) {
+                if (metrics.type_errors === null) {
+                    document.getElementById('typecheck-value').textContent = 'N/A';
+                    updateStatus('typecheck', 'N/A', false);
+                } else {
+                    const elem = document.getElementById('typecheck-value');
+                    elem.textContent = metrics.type_errors;
+                    updateStatus('typecheck',
+                        metrics.type_errors === 0 ? 'PASSING' : 'FAILING',
+                        metrics.type_errors === 0);
+                }
+            }
+
+            // Test Count
+            if (metrics.tests_total !== undefined) {
+                if (metrics.tests_total === null) {
+                    document.getElementById('tests-value').textContent = 'N/A';
+                    updateStatus('tests', 'N/A', false);
+                } else {
+                    const elem = document.getElementById('tests-value');
+                    const failed = metrics.tests_failed || 0;
+                    elem.textContent = metrics.tests_total +
+                        (failed > 0 ? ' (' + failed + ' failed)' : '');
+                    updateStatus('tests',
+                        failed === 0 ? 'PASSING' : 'FAILING',
+                        failed === 0);
+                }
+            }
+        }
+
+        function updatePrecommitStatus(precommit) {
+            const valueElem = document.getElementById('precommit-value');
+            const thresholdElem = document.getElementById('precommit-threshold');
+            const badgeElem =
+                document.getElementById('precommit-status-badge');
+
+            // No-data guard (Issue #154): when there is no precommit data, or
+            // the status is 'unknown' (no .pre-commit-config.yaml), render the
+            // gray N/A treatment BEFORE the percentage thresholds so a 0%
+            // unknown card does not fall through to red FAILING.
+            if (!precommit || precommit.status === 'unknown') {
+                valueElem.textContent = 'N/A';
+                thresholdElem.textContent = 'No data';
+                badgeElem.textContent = 'N/A';
+                badgeElem.className = 'metric-status status-unknown';
+                return;
+            }
+
+            const total = precommit.total_hooks || 0;
+            const passing = precommit.passing_hooks || 0;
+            const percentage = (precommit.percentage !== undefined &&
+                precommit.percentage !== null)
+                ? precommit.percentage
+                : (total > 0 ? (passing / total) * 100 : 0);
+
+            valueElem.textContent = percentage.toFixed(0) + '%';
+            thresholdElem.textContent = passing + '/' + total + ' Hooks';
+
+            // Color coding per Issue #154:
+            // green (100%), yellow (90-99%), red (<90%)
+            let statusClass;
+            let statusText;
+            if (percentage >= 100) {
+                statusClass = 'status-pass';
+                statusText = 'PASSING';
+            } else if (percentage >= 90) {
+                statusClass = 'status-warn';
+                statusText = 'WARNING';
+            } else {
+                statusClass = 'status-fail';
+                statusText = 'FAILING';
+            }
+            badgeElem.textContent = statusText;
+            badgeElem.className = 'metric-status ' + statusClass;
+        }
+
+        function updateCIStatus(ci) {
+            const valueElem = document.getElementById('ci-value');
+            const thresholdElem = document.getElementById('ci-threshold');
+            const badgeElem = document.getElementById('ci-status-badge');
+
+            // No-data guard (Issue #159): when there is no CI data, or the
+            // status is 'unknown' (static workflow count or API failure),
+            // render the gray N/A treatment BEFORE the percentage
+            // thresholds so a 0% unknown card does not fall through to red
+            // FAILING.
+            if (!ci || ci.status === 'unknown') {
+                valueElem.textContent = 'N/A';
+                thresholdElem.textContent = 'No data';
+                badgeElem.textContent = 'N/A';
+                badgeElem.className = 'metric-status status-unknown';
+                return;
+            }
+
+            const total = ci.total_jobs || 0;
+            const passing = ci.passing_jobs || 0;
+            const percentage = (ci.percentage !== undefined &&
+                ci.percentage !== null)
+                ? ci.percentage
+                : (total > 0 ? (passing / total) * 100 : 0);
+
+            valueElem.textContent = percentage.toFixed(0) + '%';
+            thresholdElem.textContent = passing + '/' + total + ' Jobs';
+
+            // Color coding per Issue #159:
+            // green (100%), yellow (85-99%), red (<85%)
+            let statusClass;
+            let statusText;
+            if (percentage >= 100) {
+                statusClass = 'status-pass';
+                statusText = 'PASSING';
+            } else if (percentage >= 85) {
+                statusClass = 'status-warn';
+                statusText = 'WARNING';
+            } else {
+                statusClass = 'status-fail';
+                statusText = 'FAILING';
+            }
+            badgeElem.textContent = statusText;
+            badgeElem.className = 'metric-status ' + statusClass;
+        }
+
+        function updateMetric(name, value, suffix, passing) {
+            const elem = document.getElementById(`${name}-value`);
+            elem.textContent = value.toFixed(2) + suffix;
+            updateStatus(name, passing ? 'PASSING' : 'FAILING', passing);
+        }
+
+        function updateStatus(name, text, passing) {
+            const elem = document.getElementById(`${name}-status`);
+            if (!elem) return;
+            elem.textContent = text;
+            // No-data cards pass 'N/A' (Issue #154): map to the gray
+            // status-unknown state so a fresh project does not surface
+            // alarming red "no data" badges.
+            let statusClass;
+            if (text === 'N/A') {
+                statusClass = 'status-unknown';
+            } else {
+                statusClass = passing ? 'status-pass' : 'status-fail';
+            }
+            elem.className = 'metric-status ' + statusClass;
+        }
+
+        function updatePlaceholder() {
+            // Show friendly message when metrics.json is not available
+            document.getElementById('last-updated').textContent = 'No data available';
+            const statusElements = document.querySelectorAll('.metric-status');
+            statusElements.forEach(elem => {
+                elem.textContent = 'NO DATA';
+                elem.className = 'metric-status status-warn';
+            });
+        }
+
+        // Load metrics on page load
+        document.addEventListener('DOMContentLoaded', loadMetrics);
+    </script>
+</body>
+</html>

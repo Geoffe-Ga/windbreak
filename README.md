@@ -2,7 +2,7 @@
 
 An open-source, locally hosted, always-on AI forecast trader for fully collateralized binary event markets (e.g., Kalshi).
 
-**Status:** Draft / pre-implementation. Building against [`SPEC_v3.md`](plans/SPEC_v3.md).
+**Status:** Pre-implementation scaffold. Building against [`plans/SPEC_v3.md`](plans/SPEC_v3.md).
 
 **License target:** Apache-2.0
 
@@ -47,12 +47,60 @@ Four isolated processes sharing only a ledger volume and localhost sockets:
 
 Order flow has exactly one path: market snapshot → screen → (triage) → forecast → selector decision → order intent → Risk Kernel checks → capital reservation → signed approval token → Order Gateway verification → exchange submission → reconciliation → ledgered terminal state.
 
-See [`plans/SPEC_v3.md`](plans/SPEC_v3.md) for the full specification, including the threat model, canonical data model, evaluation methodology, configuration reference, testing strategy, and milestone plan.
+See [`plans/SPEC_v3.md`](plans/SPEC_v3.md) for the full specification: threat model, canonical data model, evaluation methodology, configuration reference, testing strategy, and milestone plan.
 
-## Recommended language / stack
+## Development
 
-The spec's data model and tooling are Python-native: typed dataclasses/models for the canonical data types (`NormalizedMarket`, `ForecastRecord`, `NormalizedOrderIntent`, etc.), `mypy --strict` for type checking, `hypothesis` for property-based testing, `mutmut` for mutation testing, and `import-linter` for enforcing process/credential import boundaries in CI. SQLite (WAL mode) is the default ledger store, with Postgres supported behind the same repository interface.
+Scaffolded with [Start Green Stay Green](https://github.com/Geoffe-Ga/start_green_stay_green): quality gates, CI/CD, AI subagents, and the Ralph autonomous fleet loop are pre-configured.
 
-## Status
+### Setup
 
-Pre-implementation. No code has been written yet — this repository currently holds only the specification. Milestones (`M0`–`M8`) and their dependency graph are defined in §18 of the spec.
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt -r requirements-dev.txt
+pre-commit install
+```
+
+### Quality checks
+
+```bash
+pre-commit run --all-files   # all 32 hooks (recommended before commit)
+
+./scripts/test.sh            # pytest with coverage
+./scripts/lint.sh            # ruff
+./scripts/format.sh --fix    # black + isort
+./scripts/typecheck.sh       # mypy --strict
+./scripts/security.sh        # bandit + pip-audit
+./scripts/complexity.sh      # radon/xenon (≤10 cyclomatic)
+./scripts/mutation.sh        # mutmut
+./scripts/check-all.sh       # everything
+```
+
+### Quality standards
+
+- **Test coverage:** ≥90% (spec requires 100% branch coverage + ≥90% mutation score on `riskkernel`, fixed-point accounting, and token verification — see SPEC §17.6)
+- **Cyclomatic complexity:** ≤10 per function
+- **Type hints:** 100%, `mypy --strict`
+- **All linters:** zero violations
+
+### Repository layout
+
+```
+hedgekit/            # Main package
+tests/               # Test suite
+scripts/             # Quality-gate scripts + Ralph fleet mechanics (scripts/ralph/)
+plans/               # SPEC_v3.md and planning documents
+prompts/             # Maintenance-scan prompts
+.github/workflows/   # CI, AI code review, maintenance scans, metrics dashboard
+.claude/             # CLAUDE.md docs, skills, and subagent profiles
+docs/                # Live metrics dashboard (GitHub Pages)
+```
+
+### Ralph fleet loop
+
+The repo includes the opt-in Ralph autonomous fleet loop (`.claude/commands/ralph-tick.md`, `scripts/ralph/`, maintenance-scan workflows). It assumes a GitHub-hosted issue/PR backlog and git worktrees, and requires manual secret/label setup — see `scripts/ralph/FLEET.md` and `scripts/ralph/PROMPT.md`.
+
+## Attribution
+
+Generated with [Start Green Stay Green](https://github.com/Geoffe-Ga/start_green_stay_green) — maximum-quality Python projects from day one.

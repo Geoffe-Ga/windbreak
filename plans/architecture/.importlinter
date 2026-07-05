@@ -1,0 +1,27 @@
+[importlinter]
+root_package = hedgekit
+
+[importlinter:contract:layers]
+name = Enforce layered architecture
+type = layers
+layers =
+    presentation
+    application
+    domain
+    infrastructure
+
+[importlinter:contract:independence]
+name = Domain layer independence
+type = forbidden
+source_modules =
+    hedgekit.domain
+forbidden_modules =
+    hedgekit.presentation
+    hedgekit.application
+    hedgekit.infrastructure
+
+[importlinter:contract:no-cycles]
+name = Prevent circular dependencies
+type = independence
+modules =
+    hedgekit

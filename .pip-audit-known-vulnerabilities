@@ -1,0 +1,8 @@
+# Known vulnerabilities in transitive dependencies that cannot be fixed.
+# Each line is a vulnerability ID to ignore via pip-audit --ignore-vuln.
+# Format: VULN_ID  # package - reason - tracking issue
+#
+# Review periodically and remove entries when fixes become available.
+#
+# Example (uncomment and edit):
+# CVE-2025-00000    # example-package - no fix yet - tracking #123

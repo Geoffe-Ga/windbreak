@@ -1,0 +1,70 @@
+name: Quality Metrics Dashboard
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:  # Allow manual trigger
+
+permissions:
+  contents: read
+
+jobs:
+  generate-metrics:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # For GitHub Pages deployment
+    env:
+      VIRTUAL_ENV: ${{ github.workspace }}/.venv
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies in .venv
+        run: |
+          python -m venv .venv
+          . .venv/bin/activate
+          pip install -e .
+          pip install -r requirements-dev.txt
+
+      - name: Generate metrics.json via script mode
+        env:
+          # Enables the CI Status card's GitHub API path (Issue #159);
+          # without it, collection degrades to a static job count.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # Script mode sources every metric from scripts/*.sh (Issue #217):
+        # - Documentation Coverage runs metrics-docs.sh (ruff D rules)
+        # - Mutation Score reads .mutmut-cache; absent in CI (mutmut is a
+        #   periodic gate), so it degrades to null and the dashboard
+        #   renders a gray N/A tile instead of failing.
+        run: |
+          . .venv/bin/activate
+          python scripts/collect_metrics.py \
+            --project-name hedgekit \
+            --output docs/metrics.json \
+            --metrics-mode script \
+            --scripts-dir scripts/
+
+      - name: Regenerate dashboard.html from template
+        run: |
+          . .venv/bin/activate
+          python scripts/regenerate_dashboard.py
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./docs
+          keep_files: false
+
+      - name: Summary
+        run: |
+          echo "## 📊 Metrics Dashboard Updated" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Dashboard URL: https://geoffe-ga.github.io/start_green_stay_green/dashboard.html" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Latest Metrics" >> $GITHUB_STEP_SUMMARY
+          jq -r '.metrics | to_entries | .[] | "- **\(.key)**: \(.value)"' docs/metrics.json >> $GITHUB_STEP_SUMMARY || true
