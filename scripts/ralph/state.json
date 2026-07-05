@@ -1,8 +1,8 @@
 {
-  "completed_since_groom": 13,
+  "completed_since_groom": 0,
   "total_completed": 13,
   "groom_interval": 10,
-  "last_groom_at": null,
+  "last_groom_at": "2026-07-05T03:17:49.250241",
   "completed_since_deslop": 13,
   "deslop_interval": 30,
   "last_deslop_at": null,
