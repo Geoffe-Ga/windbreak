@@ -27,6 +27,7 @@ from hedgekit.config import (
 )
 from hedgekit.ledger import rebuild_command
 from hedgekit.logging_setup import configure_logging
+from hedgekit.riskkernel.kill import KILL_FILENAME, REARM_FILENAME
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -182,6 +183,34 @@ def _add_rebuild_arguments(rebuild_parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_kill_arguments(kill_parser: argparse.ArgumentParser) -> None:
+    """Register the ``kill`` subcommand's options on its subparser.
+
+    Args:
+        kill_parser: The ``kill`` subparser to populate with options.
+    """
+    kill_parser.add_argument(
+        "--state-dir",
+        type=Path,
+        required=True,
+        help="Directory to write the KILL file into.",
+    )
+
+
+def _add_rearm_arguments(rearm_parser: argparse.ArgumentParser) -> None:
+    """Register the ``rearm`` subcommand's options on its subparser.
+
+    Args:
+        rearm_parser: The ``rearm`` subparser to populate with options.
+    """
+    rearm_parser.add_argument(
+        "--state-dir",
+        type=Path,
+        required=True,
+        help="Directory to write the REARM file into.",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the ``hedgekit`` command-line argument parser.
 
@@ -189,9 +218,9 @@ def build_parser() -> argparse.ArgumentParser:
         A parser with a required ``run`` subcommand exposing
         ``--heartbeat-interval``, ``--max-beats``, ``--process``,
         ``--snapshot-fixture-dir``, and ``--config``; a ``rebuild`` subcommand
-        exposing ``--ledger-path`` and
-        ``--output-dir``; and a developer-only ``alert-test`` subcommand hidden
-        from ``--help``.
+        exposing ``--ledger-path`` and ``--output-dir``; ``kill`` and ``rearm``
+        subcommands exposing ``--state-dir``; and a developer-only
+        ``alert-test`` subcommand hidden from ``--help``.
     """
     parser = argparse.ArgumentParser(
         prog="hedgekit",
@@ -207,6 +236,17 @@ def build_parser() -> argparse.ArgumentParser:
     _add_rebuild_arguments(
         subparsers.add_parser(
             "rebuild", help="Rebuild derived read models from the ledger."
+        )
+    )
+    _add_kill_arguments(
+        subparsers.add_parser(
+            "kill", help="Engage the kill switch (write a KILL file)."
+        )
+    )
+    _add_rearm_arguments(
+        subparsers.add_parser(
+            "rearm",
+            help="Re-arm after a kill (write the typed phrase to a REARM file).",
         )
     )
     alert_parser = subparsers.add_parser("alert-test")
@@ -339,6 +379,42 @@ def _run_alert_test(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_kill(args: argparse.Namespace) -> int:
+    """Engage the kill switch by dropping a ``KILL`` file into ``--state-dir``.
+
+    The file's mere presence is the durable kill signal a running kernel's file
+    watcher acts on; its content is never read, so an empty file suffices.
+
+    Args:
+        args: Parsed ``kill`` arguments carrying ``state_dir``.
+
+    Returns:
+        The process exit code (always 0).
+    """
+    args.state_dir.mkdir(parents=True, exist_ok=True)
+    (args.state_dir / KILL_FILENAME).write_text("", encoding="utf-8")
+    return 0
+
+
+def _run_rearm(args: argparse.Namespace) -> int:
+    """Write the typed re-arm phrase *verbatim* to a ``REARM`` file.
+
+    The phrase is written exactly as typed -- no stripping, no case change --
+    because the kernel's re-arm compares it byte-for-byte against the expected
+    confirmation, so any normalization here would silently break re-arm.
+
+    Args:
+        args: Parsed ``rearm`` arguments carrying ``state_dir``.
+
+    Returns:
+        The process exit code (always 0).
+    """
+    phrase = input()
+    args.state_dir.mkdir(parents=True, exist_ok=True)
+    (args.state_dir / REARM_FILENAME).write_text(phrase, encoding="utf-8")
+    return 0
+
+
 def _build_snapshot_on_beat(fixture_dir: str) -> Callable[[int], None]:
     """Build a per-beat hook that snapshots a fixture-backed exchange.
 
@@ -435,6 +511,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     configure_logging(level=logging.INFO)
     if args.command == "rebuild":
         return rebuild_command(args)
+    if args.command == "kill":
+        return _run_kill(args)
+    if args.command == "rearm":
+        return _run_rearm(args)
     if args.command == "alert-test":
         return _run_alert_test(args)
     return _run_heartbeat(args)

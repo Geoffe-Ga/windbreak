@@ -284,6 +284,82 @@ class DemotionTriggerFired(Event):
         _derive_typed_event(self, payload)
 
 
+@dataclass(frozen=True)
+class KillEngaged(Event):
+    """Records that the Risk Kernel kill switch engaged (issue #35).
+
+    The single announcement event every kill emits, whichever of the four
+    triggers fired it. It never carries a sell/close/submit/dump action: a kill
+    only halts and cancels, never trades (SPEC position-hold invariant).
+
+    Attributes:
+        trigger: The firing trigger's name (``KillTrigger.name``).
+        kill_sequence: The monotonic, strictly-increasing kill counter, so a
+            re-arm and a subsequent kill are always distinguishable.
+        epoch: The wall-clock instant of the kill, in whole epoch seconds (an
+            ``int``, never a float -- SPEC S6.1).
+    """
+
+    trigger: str
+    kill_sequence: int
+    epoch: int
+    event_type: str = field(init=False)
+    payload_schema_version: int = field(init=False)
+    payload: dict[str, object] = field(init=False)
+
+    def __post_init__(self) -> None:
+        """Assemble the payload and derive the base ``Event`` fields."""
+        payload: dict[str, object] = {
+            "trigger": self.trigger,
+            "kill_sequence": self.kill_sequence,
+            "epoch": self.epoch,
+        }
+        _derive_typed_event(self, payload)
+
+
+@dataclass(frozen=True)
+class CancelAllDirective(Event):
+    """Records the kill switch's one cancel-all-open-orders directive (issue #35).
+
+    The kill switch cancels resting orders; it never closes or sells the
+    positions those orders would have touched (SPEC position-hold invariant),
+    so the scope names only open *orders*.
+
+    Attributes:
+        scope: The cancellation scope (always ``"all_open_orders"``).
+    """
+
+    scope: str
+    event_type: str = field(init=False)
+    payload_schema_version: int = field(init=False)
+    payload: dict[str, object] = field(init=False)
+
+    def __post_init__(self) -> None:
+        """Assemble the payload and derive the base ``Event`` fields."""
+        payload: dict[str, object] = {"scope": self.scope}
+        _derive_typed_event(self, payload)
+
+
+@dataclass(frozen=True)
+class KillReArmed(Event):
+    """Records a successful typed-confirmation re-arm out of KILLED (issue #35).
+
+    Attributes:
+        kill_sequence: The kill counter of the kill this re-arm cleared, tying
+            the re-arm back to its originating kill in the audit trail.
+    """
+
+    kill_sequence: int
+    event_type: str = field(init=False)
+    payload_schema_version: int = field(init=False)
+    payload: dict[str, object] = field(init=False)
+
+    def __post_init__(self) -> None:
+        """Assemble the payload and derive the base ``Event`` fields."""
+        payload: dict[str, object] = {"kill_sequence": self.kill_sequence}
+        _derive_typed_event(self, payload)
+
+
 #: Maps each event_type string to its class, so a persisted envelope can be
 #: reconstructed as ``EVENT_TYPES[event_type](component=..., **data)``.
 EVENT_TYPES: dict[str, type[Event]] = {
@@ -293,4 +369,7 @@ EVENT_TYPES: dict[str, type[Event]] = {
     "PromotionEvaluated": PromotionEvaluated,
     "SignificanceOverrideApplied": SignificanceOverrideApplied,
     "DemotionTriggerFired": DemotionTriggerFired,
+    "KillEngaged": KillEngaged,
+    "CancelAllDirective": CancelAllDirective,
+    "KillReArmed": KillReArmed,
 }

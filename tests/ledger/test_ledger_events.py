@@ -34,9 +34,12 @@ from hedgekit.ledger.events import (
     EVENT_TYPES,
     GENESIS_PREV_HASH,
     AlertEmitted,
+    CancelAllDirective,
     ConfigLoaded,
     DemotionTriggerFired,
     Event,
+    KillEngaged,
+    KillReArmed,
     ModeHeartbeat,
     PromotionEvaluated,
     SignificanceOverrideApplied,
@@ -210,6 +213,9 @@ def test_event_types_registry_maps_type_name_to_class() -> None:
         "PromotionEvaluated": PromotionEvaluated,
         "SignificanceOverrideApplied": SignificanceOverrideApplied,
         "DemotionTriggerFired": DemotionTriggerFired,
+        "KillEngaged": KillEngaged,
+        "CancelAllDirective": CancelAllDirective,
+        "KillReArmed": KillReArmed,
     } == EVENT_TYPES
 
 

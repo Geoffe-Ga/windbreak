@@ -61,6 +61,7 @@ if TYPE_CHECKING:
 
     from hedgekit.riskkernel.context import EvaluationContext
     from hedgekit.riskkernel.demotion import DemotionTrigger
+    from hedgekit.riskkernel.kill import KillIntegration
     from hedgekit.riskkernel.promotion import (
         CriterionResult,
         GateEvidence,
@@ -74,6 +75,10 @@ _COMPONENT = "riskkernel"
 
 #: Event type recorded when the kernel vetoes an intent.
 _INTENT_VETOED_EVENT = "IntentVetoed"
+
+#: The single hard-veto reason a KILLED kernel returns, short-circuiting the
+#: whole check pipeline (issue #35) rather than accumulating pipeline reasons.
+_KILLED_VETO_REASON = "KILLED"
 
 #: Event type recorded when the kernel approves an intent (no check vetoed).
 _INTENT_APPROVED_EVENT = "IntentApproved"
@@ -229,6 +234,7 @@ class RiskKernel:
         verifier: ReadOnlyVerifier | None = None,
         clock: Callable[[], int] | None = None,
         evaluation_config: EvaluationConfig | None = None,
+        kill_integration: KillIntegration | None = None,
     ) -> None:
         """Initialize the kernel.
 
@@ -243,8 +249,13 @@ class RiskKernel:
                 Defaults to :func:`_default_clock`.
             evaluation_config: The promotion-threshold config the gates are
                 built from. Defaults to a stock :class:`EvaluationConfig`.
+            kill_integration: The kill switch and its trigger adapters (issue
+                #35), or ``None`` to run without kill wiring. When present, its
+                watcher is polled each beat and its monitor is fed each
+                verification outcome.
         """
         self._ledger_writer = ledger_writer
+        self._kill_integration = kill_integration
         self._mode_machine = (
             mode_machine
             if mode_machine is not None
@@ -470,8 +481,23 @@ class RiskKernel:
             return
         snapshot = self._verifier.run_cycle(self._clock())
         self._latest_verification = snapshot
+        self._feed_mismatch_monitor(snapshot.outcome)
         if snapshot.outcome is VerificationOutcome.BREACH:
             self._halt_on_breach(snapshot)
+
+    def _feed_mismatch_monitor(self, outcome: VerificationOutcome) -> None:
+        """Feed one verification outcome to the wired mismatch monitor, if any.
+
+        A no-op unless a kill integration with a monitor is wired (issue #35);
+        the monitor auto-kills on a sustained run of breaches.
+
+        Args:
+            outcome: The latest verification outcome to fold in.
+        """
+        integration = self._kill_integration
+        if integration is None or integration.monitor is None:
+            return
+        integration.monitor.observe(outcome)
 
     def _halt_on_breach(self, snapshot: VerificationSnapshot) -> None:
         """Transition to HALT on a breach, unless already HALT or KILLED.
@@ -545,7 +571,20 @@ class RiskKernel:
             beat += 1
             self._emit_heartbeat(beat)
             self.run_verification_cycle()
+            self._poll_kill_triggers()
             stop_event.wait(heartbeat_interval)
+
+    def _poll_kill_triggers(self) -> None:
+        """Poll the wired kill-file watcher once, if any (issue #35).
+
+        A no-op when no kill integration -- or no watcher within it -- is wired,
+        so the ordinary heartbeat path is untouched until a kill switch is
+        actually installed.
+        """
+        integration = self._kill_integration
+        if integration is None or integration.watcher is None:
+            return
+        integration.watcher.poll_once(self._clock())
 
     def evaluate_intent(
         self, intent: checks.OrderIntent, context: EvaluationContext
@@ -581,6 +620,8 @@ class RiskKernel:
             The :class:`~hedgekit.riskkernel.checks.Decision`, carrying the
             pipeline's ``vetoed``/``reasons`` and marked ledgered.
         """
+        if self._mode_machine.mode is Mode.KILLED:
+            return self._veto_killed(intent)
         effective = dataclasses.replace(context, mode=self._mode_machine.mode)
         if self._verifier is not None:
             effective = self._stamp_verification(effective)
@@ -603,6 +644,38 @@ class RiskKernel:
         )
         return checks.Decision(
             vetoed=decision.vetoed, reasons=decision.reasons, ledgered=True
+        )
+
+    def _veto_killed(self, intent: checks.OrderIntent) -> checks.Decision:
+        """Hard-veto an intent on a KILLED kernel without running the pipeline.
+
+        The kill switch's dead-hand at the evaluation seam (issue #35): a
+        ``KILLED`` kernel approves nothing, so it short-circuits the whole check
+        pipeline and returns the single ``"KILLED"`` reason -- distinct from any
+        ordinary multi-reason pipeline veto -- while still recording exactly one
+        ``IntentVetoed`` event, so the audit trail captures every rejected
+        intent even while dead.
+
+        Args:
+            intent: The order intent rejected out of hand.
+
+        Returns:
+            A vetoed, ledgered :class:`~hedgekit.riskkernel.checks.Decision`
+            carrying only the ``"KILLED"`` reason.
+        """
+        self._ledger_writer.record(
+            Event(
+                event_type=_INTENT_VETOED_EVENT,
+                component=_COMPONENT,
+                payload_schema_version=_PAYLOAD_SCHEMA_VERSION,
+                payload={
+                    "intent_id": intent.intent_id,
+                    "reasons": [_KILLED_VETO_REASON],
+                },
+            )
+        )
+        return checks.Decision(
+            vetoed=True, reasons=(_KILLED_VETO_REASON,), ledgered=True
         )
 
     def _stamp_verification(self, context: EvaluationContext) -> EvaluationContext:
