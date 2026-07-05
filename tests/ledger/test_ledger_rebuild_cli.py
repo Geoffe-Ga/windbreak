@@ -29,12 +29,12 @@ def test_build_parser_parses_rebuild_with_required_args() -> None:
     parser = build_parser()
 
     args = parser.parse_args(
-        ["rebuild", "--ledger-path", "/tmp/ledger.db", "--output-dir", "/tmp/out"]
+        ["rebuild", "--ledger-path", "ledger.db", "--output-dir", "out"]
     )
 
     assert args.command == "rebuild"
-    assert args.ledger_path == Path("/tmp/ledger.db")
-    assert args.output_dir == Path("/tmp/out")
+    assert args.ledger_path == Path("ledger.db")
+    assert args.output_dir == Path("out")
 
 
 def test_build_parser_rebuild_requires_ledger_path() -> None:
@@ -42,7 +42,7 @@ def test_build_parser_rebuild_requires_ledger_path() -> None:
     parser = build_parser()
 
     with pytest.raises(SystemExit) as exc_info:
-        parser.parse_args(["rebuild", "--output-dir", "/tmp/out"])
+        parser.parse_args(["rebuild", "--output-dir", "out"])
 
     assert exc_info.value.code == 2
 
@@ -52,7 +52,7 @@ def test_build_parser_rebuild_requires_output_dir() -> None:
     parser = build_parser()
 
     with pytest.raises(SystemExit) as exc_info:
-        parser.parse_args(["rebuild", "--ledger-path", "/tmp/ledger.db"])
+        parser.parse_args(["rebuild", "--ledger-path", "ledger.db"])
 
     assert exc_info.value.code == 2
 
@@ -90,7 +90,6 @@ def test_main_rebuild_returns_one_on_tampered_ledger_and_reports_sequence_number
     tmp_path: Path,
     deterministic_clock: Callable[[], datetime],
     capsys: pytest.CaptureFixture[str],
-    ledger_table_name: str,
 ) -> None:
     """`main` returns 1 and prints `sequence_number=<n>` to stderr on corruption."""
     db_path = tmp_path / "ledger.db"
@@ -102,7 +101,7 @@ def test_main_rebuild_returns_one_on_tampered_ledger_and_reports_sequence_number
     conn = sqlite3.connect(db_path)
     try:
         conn.execute(
-            f"UPDATE {ledger_table_name} SET event_hash = ? WHERE sequence_number = 1",
+            "UPDATE ledger SET event_hash = ? WHERE sequence_number = 1",
             ("0" * 64,),
         )
         conn.commit()

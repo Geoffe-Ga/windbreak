@@ -162,7 +162,7 @@ def test_rebuild_on_empty_ledger_produces_valid_empty_read_models(
 
 
 def test_rebuild_skips_unknown_event_types_without_error(
-    tmp_path: Path, deterministic_clock: Callable[[], datetime], ledger_table_name: str
+    tmp_path: Path, deterministic_clock: Callable[[], datetime]
 ) -> None:
     """An event_type absent from EVENT_TYPES is silently skipped, not an error."""
     db_path = tmp_path / "ledger.db"
@@ -178,13 +178,13 @@ def test_rebuild_skips_unknown_event_types_without_error(
     conn = sqlite3.connect(db_path)
     try:
         prev_hash = conn.execute(
-            f"SELECT event_hash FROM {ledger_table_name} WHERE sequence_number = 1"
+            "SELECT event_hash FROM ledger WHERE sequence_number = 1"
         ).fetchone()[0]
         event_hash = compute_event_hash(
             2, "FutureEvent", created_at, payload_json, prev_hash
         )
         conn.execute(
-            f"INSERT INTO {ledger_table_name} ("
+            "INSERT INTO ledger ("
             "sequence_number, event_type, created_at, component, "
             "payload_json, payload_schema_version, prev_hash, event_hash"
             ") VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -212,7 +212,7 @@ def test_rebuild_skips_unknown_event_types_without_error(
 
 
 def test_rebuild_on_tampered_ledger_raises_chain_integrity_error(
-    tmp_path: Path, deterministic_clock: Callable[[], datetime], ledger_table_name: str
+    tmp_path: Path, deterministic_clock: Callable[[], datetime]
 ) -> None:
     """rebuild verifies the chain first, so a corrupt ledger never projects."""
     db_path = tmp_path / "ledger.db"
@@ -224,7 +224,7 @@ def test_rebuild_on_tampered_ledger_raises_chain_integrity_error(
     conn = sqlite3.connect(db_path)
     try:
         conn.execute(
-            f"UPDATE {ledger_table_name} SET event_hash = ? WHERE sequence_number = 3",
+            "UPDATE ledger SET event_hash = ? WHERE sequence_number = 3",
             ("0" * 64,),
         )
         conn.commit()

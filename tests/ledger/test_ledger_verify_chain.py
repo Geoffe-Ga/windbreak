@@ -47,6 +47,25 @@ _TAMPER_CASES = [
     ("event_hash", "2" * 64),
 ]
 
+#: Fully literal, per-column tamper statements against the fixed ``ledger``
+#: table. A column name cannot be bound as a SQL ``?`` parameter, so rather
+#: than interpolate it (which builds a query string and trips bandit B608),
+#: each targetable column maps to its own pre-written literal ``UPDATE``.
+_TAMPER_SQL = {
+    "sequence_number": (
+        "UPDATE ledger SET sequence_number = ? WHERE sequence_number = ?"
+    ),
+    "event_type": "UPDATE ledger SET event_type = ? WHERE sequence_number = ?",
+    "created_at": "UPDATE ledger SET created_at = ? WHERE sequence_number = ?",
+    "component": "UPDATE ledger SET component = ? WHERE sequence_number = ?",
+    "payload_json": "UPDATE ledger SET payload_json = ? WHERE sequence_number = ?",
+    "payload_schema_version": (
+        "UPDATE ledger SET payload_schema_version = ? WHERE sequence_number = ?"
+    ),
+    "prev_hash": "UPDATE ledger SET prev_hash = ? WHERE sequence_number = ?",
+    "event_hash": "UPDATE ledger SET event_hash = ? WHERE sequence_number = ?",
+}
+
 
 def test_verify_chain_passes_on_empty_ledger(
     ledger_store_factory: Callable[..., SqliteLedgerStore],
@@ -78,24 +97,21 @@ def test_verify_chain_passes_on_n_untampered_events(
     store.verify_chain()
 
 
-def _tamper(
-    db_path: Path, table: str, sequence_number: int, column: str, value: object
-) -> None:
+def _tamper(db_path: Path, sequence_number: int, column: str, value: object) -> None:
     """Directly UPDATE one column of one row via raw sqlite3 (test-only).
 
     Args:
         db_path: Path to the SQLite database file.
-        table: Name of the ledger table.
         sequence_number: The row's `sequence_number` to target.
-        column: The column to corrupt.
+        column: The column to corrupt; must be one of `_TAMPER_SQL`'s keys.
         value: The tampered value to write.
+
+    Raises:
+        KeyError: If `column` is not a known, tamperable ledger column.
     """
     conn = sqlite3.connect(db_path)
     try:
-        conn.execute(
-            f"UPDATE {table} SET {column} = ? WHERE sequence_number = ?",
-            (value, sequence_number),
-        )
+        conn.execute(_TAMPER_SQL[column], (value, sequence_number))
         conn.commit()
     finally:
         conn.close()
@@ -105,7 +121,6 @@ def _tamper(
 def test_verify_chain_detects_tampering_in_every_column(
     ledger_store_factory: Callable[..., SqliteLedgerStore],
     tmp_path: Path,
-    ledger_table_name: str,
     column: str,
     value: object,
 ) -> None:
@@ -124,7 +139,6 @@ def test_verify_chain_detects_tampering_in_every_column(
 
     _tamper(
         tmp_path / db_name,
-        ledger_table_name,
         sequence_number=2,
         column=column,
         value=value,
@@ -144,7 +158,6 @@ def test_verify_chain_detects_tampering_in_every_column(
 def test_verify_chain_reports_the_first_violation_not_a_later_one(
     ledger_store_factory: Callable[..., SqliteLedgerStore],
     tmp_path: Path,
-    ledger_table_name: str,
 ) -> None:
     """When rows 2 and 4 are both tampered, verify_chain reports row 2 first."""
     db_name = "double_tamper.db"
@@ -156,14 +169,12 @@ def test_verify_chain_reports_the_first_violation_not_a_later_one(
     db_path = tmp_path / db_name
     _tamper(
         db_path,
-        ledger_table_name,
         sequence_number=4,
         column="event_hash",
         value="a" * 64,
     )
     _tamper(
         db_path,
-        ledger_table_name,
         sequence_number=2,
         column="event_hash",
         value="b" * 64,
@@ -182,7 +193,6 @@ def test_verify_chain_reports_the_first_violation_not_a_later_one(
 def test_verify_chain_catches_internally_consistent_forgery_via_prev_hash_linkage(
     ledger_store_factory: Callable[..., SqliteLedgerStore],
     tmp_path: Path,
-    ledger_table_name: str,
 ) -> None:
     """A forged row that recomputes its OWN hash correctly is still caught.
 
@@ -208,7 +218,7 @@ def test_verify_chain_catches_internally_consistent_forgery_via_prev_hash_linkag
     conn = sqlite3.connect(db_path)
     try:
         event_type, created_at, prev_hash = conn.execute(
-            f"SELECT event_type, created_at, prev_hash FROM {ledger_table_name} "
+            "SELECT event_type, created_at, prev_hash FROM ledger "
             "WHERE sequence_number = 2"
         ).fetchone()
         forged_payload_json = canonical_json(
@@ -222,7 +232,7 @@ def test_verify_chain_catches_internally_consistent_forgery_via_prev_hash_linkag
             2, event_type, created_at, forged_payload_json, prev_hash
         )
         conn.execute(
-            f"UPDATE {ledger_table_name} "
+            "UPDATE ledger "
             "SET payload_json = ?, event_hash = ? WHERE sequence_number = 2",
             (forged_payload_json, forged_event_hash),
         )
@@ -244,7 +254,6 @@ def test_verify_chain_catches_internally_consistent_forgery_via_prev_hash_linkag
 def test_verify_chain_detects_non_contiguous_starting_sequence(
     ledger_store_factory: Callable[..., SqliteLedgerStore],
     tmp_path: Path,
-    ledger_table_name: str,
 ) -> None:
     """A row that is internally self-consistent for seq=2 still fails at seq=1.
 
@@ -283,7 +292,7 @@ def test_verify_chain_detects_non_contiguous_starting_sequence(
     conn = sqlite3.connect(db_path)
     try:
         conn.execute(
-            f"INSERT INTO {ledger_table_name} ("
+            "INSERT INTO ledger ("
             "sequence_number, event_type, created_at, component, "
             "payload_json, payload_schema_version, prev_hash, event_hash"
             ") VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -329,7 +338,6 @@ _MALFORMED_ENVELOPE_CASES = [
 def test_verify_chain_wraps_malformed_envelope_as_chain_integrity_error(
     ledger_store_factory: Callable[..., SqliteLedgerStore],
     tmp_path: Path,
-    ledger_table_name: str,
     corrupt_payload_json: str,
 ) -> None:
     """A corrupt `payload_json` must surface as `ChainIntegrityError`.
@@ -356,13 +364,13 @@ def test_verify_chain_wraps_malformed_envelope_as_chain_integrity_error(
     conn = sqlite3.connect(db_path)
     try:
         created_at = conn.execute(
-            f"SELECT created_at FROM {ledger_table_name} WHERE sequence_number = 1"
+            "SELECT created_at FROM ledger WHERE sequence_number = 1"
         ).fetchone()[0]
         corrupt_event_hash = compute_event_hash(
             1, "ModeHeartbeat", created_at, corrupt_payload_json, GENESIS_PREV_HASH
         )
         conn.execute(
-            f"UPDATE {ledger_table_name} "
+            "UPDATE ledger "
             "SET payload_json = ?, event_hash = ? WHERE sequence_number = 1",
             (corrupt_payload_json, corrupt_event_hash),
         )

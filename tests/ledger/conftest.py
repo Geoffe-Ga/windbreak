@@ -8,12 +8,12 @@ Provides:
 - ``ledger_store_factory``: builds tmp-path-backed ``SqliteLedgerStore``
   instances using the deterministic clock by default, and closes every
   store it creates at teardown.
-- ``ledger_table_name``: the single source of truth for the SQLite table
-  name these tests assume ``SqliteLedgerStore`` uses when a test reaches
-  around the public API (via raw ``sqlite3``) to tamper with a row. This
-  is part of the on-disk contract pinned by this suite; if the
-  implementation names the table differently, only this fixture needs
-  to change.
+
+Tests that reach around the public API (via raw ``sqlite3``) to tamper
+with a row write the ``ledger`` table name as a literal in their SQL: it
+is a fixed part of the on-disk contract pinned by this suite, and keeping
+the SQL fully literal avoids string-built-query false positives from the
+security scanner (bandit B608).
 """
 
 from __future__ import annotations
@@ -105,18 +105,3 @@ def ledger_store_factory(
 
     for store in created:
         store.close()
-
-
-@pytest.fixture
-def ledger_table_name() -> str:
-    """Name of the SQLite table backing `SqliteLedgerStore`.
-
-    Pinned as ``"ledger"``: the single point of truth tests use when they
-    open a raw `sqlite3` connection to inject tampering that the public
-    `LedgerStore` API has no way to perform (by design -- see
-    `test_ledger_append_only_sql.py`).
-
-    Returns:
-        The literal table name `"ledger"`.
-    """
-    return "ledger"
