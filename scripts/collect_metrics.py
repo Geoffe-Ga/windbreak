@@ -31,12 +31,7 @@ from http import HTTPStatus
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from start_green_stay_green.generators.metrics import (
-    ci_status,
-    count_ci_jobs,
-    count_precommit_hooks,
-    precommit_status,
-)
+import yaml
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -186,6 +181,157 @@ def _fetch_ci_status_from_api(repo: str, token: str) -> dict[str, object] | None
         passing_jobs,
         run_url=run_url if isinstance(run_url, str) else None,
     )
+
+
+def count_ci_jobs(workflows_dir: Path) -> int:
+    """Count total CI jobs across workflow YAML files.
+
+    Sums the number of entries under each workflow file's top-level
+    ``jobs:`` mapping across ``*.yml`` and ``*.yaml`` files. The count
+    degrades gracefully rather than raising: a missing (or non-directory)
+    path, an unreadable file, malformed YAML, a missing ``jobs:`` key, or a
+    ``jobs:`` value that is not a mapping each contributes zero.
+
+    Args:
+        workflows_dir: Directory holding GitHub Actions workflow files
+            (typically ``.github/workflows``).
+
+    Returns:
+        The total number of jobs configured across all workflow files, or
+        ``0`` when the directory is absent or holds no countable jobs.
+    """
+    if not workflows_dir.is_dir():
+        return 0
+
+    workflow_files = sorted(
+        set(workflows_dir.glob("*.yml")) | set(workflows_dir.glob("*.yaml"))
+    )
+    total = 0
+    for workflow_file in workflow_files:
+        try:
+            document = yaml.safe_load(workflow_file.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError):
+            continue
+        if not isinstance(document, dict):
+            continue
+        jobs = document.get("jobs")
+        if isinstance(jobs, dict):
+            total += len(jobs)
+    return total
+
+
+def count_precommit_hooks(config_path: Path) -> int:
+    """Count total configured pre-commit hooks.
+
+    Sums ``len(repo["hooks"])`` across the ``repos:`` list of a
+    ``.pre-commit-config.yaml`` file. Never raises: a missing file, an empty
+    or ``None`` document, malformed YAML, a ``repos`` value that is not a
+    list, or a repo entry lacking a list ``hooks`` each contributes zero.
+
+    Args:
+        config_path: Path to the ``.pre-commit-config.yaml`` file.
+
+    Returns:
+        The total number of hooks configured across all repos, or ``0`` when
+        the config is absent or holds none.
+    """
+    try:
+        document = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return 0
+    if not isinstance(document, dict):
+        return 0
+    repos = document.get("repos")
+    if not isinstance(repos, list):
+        return 0
+    total = 0
+    for repo in repos:
+        if not isinstance(repo, dict):
+            continue
+        hooks = repo.get("hooks")
+        if isinstance(hooks, list):
+            total += len(hooks)
+    return total
+
+
+def ci_status(
+    total_jobs: int,
+    passing_jobs: int | None = None,
+    *,
+    run_url: str | None = None,
+) -> dict[str, object]:
+    """Build a CI-status card from job counts.
+
+    ``passing_jobs=None`` is the static-fallback path: pass or fail cannot be
+    known from a static workflow count, so it renders as ``unknown`` with a
+    stored ``passing_jobs`` of ``0`` and a ``0.0`` percentage. Otherwise the
+    percentage is ``passing_jobs / total_jobs`` as a percent rounded to one
+    decimal (``0.0`` when there are no jobs), and the status is ``unknown``
+    for zero jobs, ``passing`` when every job passed, and ``failing`` when at
+    least one ran job did not.
+
+    Args:
+        total_jobs: Total number of jobs in the run.
+        passing_jobs: Number of passing jobs, or ``None`` for the static
+            fallback where the pass count is unknowable.
+        run_url: Optional URL of the workflow run, stored verbatim.
+
+    Returns:
+        A mapping with ``total_jobs``, ``passing_jobs``, ``percentage``,
+        ``status`` and ``run_url`` keys.
+    """
+    if passing_jobs is None:
+        return {
+            "total_jobs": total_jobs,
+            "passing_jobs": 0,
+            "percentage": 0.0,
+            "status": "unknown",
+            "run_url": run_url,
+        }
+
+    if total_jobs <= 0:
+        percentage = 0.0
+        status = "unknown"
+    else:
+        percentage = round((passing_jobs / total_jobs) * 100, 1)
+        status = "passing" if passing_jobs >= total_jobs else "failing"
+    return {
+        "total_jobs": total_jobs,
+        "passing_jobs": passing_jobs,
+        "percentage": percentage,
+        "status": status,
+        "run_url": run_url,
+    }
+
+
+def precommit_status(total_hooks: int) -> dict[str, object]:
+    """Build a pre-commit-status card treating configured hooks as passing.
+
+    Running ``pre-commit run --all-files`` here is redundant with CI and
+    expensive, so every configured hook is treated as passing. A positive
+    hook count renders as ``100.0`` percent ``passing``; zero (or fewer)
+    hooks degrade to ``unknown`` with a ``0.0`` percentage.
+
+    Args:
+        total_hooks: Number of hooks configured in ``.pre-commit-config.yaml``.
+
+    Returns:
+        A mapping with ``total_hooks``, ``passing_hooks``, ``percentage`` and
+        ``status`` keys.
+    """
+    if total_hooks > 0:
+        return {
+            "total_hooks": total_hooks,
+            "passing_hooks": total_hooks,
+            "percentage": 100.0,
+            "status": "passing",
+        }
+    return {
+        "total_hooks": 0,
+        "passing_hooks": 0,
+        "percentage": 0.0,
+        "status": "unknown",
+    }
 
 
 class MetricsCollector:
