@@ -12,12 +12,12 @@ import argparse
 import logging
 import math
 import signal
-import sys
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from hedgekit.alerts import AlertDispatcher, AlertType, LoggingLedgerWriter, cli_token
 from hedgekit.config import (
     ConfigError,
     InMemoryConfigEventRecorder,
@@ -25,6 +25,7 @@ from hedgekit.config import (
     load_config,
     load_default_config,
 )
+from hedgekit.logging_setup import configure_logging
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -39,8 +40,11 @@ MODE_RESEARCH = "RESEARCH"
 #: Seconds between heartbeats when ``--heartbeat-interval`` is omitted.
 _DEFAULT_HEARTBEAT_INTERVAL = 5.0
 
-#: Log-record format for the console handler installed by :func:`main`.
-_LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
+#: Default alert body dispatched by the ``alert-test`` subcommand.
+_DEFAULT_ALERT_MESSAGE = "test alert"
+
+#: Maps each alert's CLI token back to its :class:`AlertType` member.
+_TOKEN_TO_ALERT_TYPE = {cli_token(alert_type): alert_type for alert_type in AlertType}
 
 #: Shutdown reason logged when the loop exhausts its ``--max-beats`` budget.
 _REASON_MAX_BEATS = "max_beats"
@@ -137,14 +141,31 @@ def build_parser() -> argparse.ArgumentParser:
 
     Returns:
         A parser with a required ``run`` subcommand exposing
-        ``--heartbeat-interval`` and ``--max-beats``.
+        ``--heartbeat-interval``, ``--max-beats``, and ``--config``, plus a
+        developer-only ``alert-test`` subcommand hidden from ``--help``.
     """
     parser = argparse.ArgumentParser(
         prog="hedgekit",
         description="hedgekit always-on forecast trader CLI.",
     )
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    # ``metavar`` keeps the auto-generated ``{run,alert-test}`` choice list --
+    # which would otherwise leak the hidden ``alert-test`` command -- out of the
+    # top-level usage line. The ``alert-test`` parser below is registered without
+    # a ``help`` argument, so argparse creates no pseudo-action for it and it is
+    # omitted from the detailed subcommand listing (a developer-only command).
+    subparsers = parser.add_subparsers(dest="command", required=True, metavar="command")
     _add_run_arguments(subparsers.add_parser("run", help="Start the heartbeat loop."))
+    alert_parser = subparsers.add_parser("alert-test")
+    alert_parser.add_argument(
+        "type",
+        choices=[cli_token(alert_type) for alert_type in AlertType],
+        help="Alert type (as a CLI token) to emit a test alert for.",
+    )
+    alert_parser.add_argument(
+        "--message",
+        default=_DEFAULT_ALERT_MESSAGE,
+        help="Alert body to dispatch (default: %(default)s).",
+    )
     return parser
 
 
@@ -228,22 +249,42 @@ def _load_configured(
     return load_default_config(recorder=recorder)
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    """Parse arguments and run the requested hedgekit command.
+def _run_alert_test(args: argparse.Namespace) -> int:
+    """Dispatch a single test alert through the log-only fallback.
+
+    With no real sinks configured, the dispatcher's fallback fires and the
+    ledger writer logs the resulting :class:`~hedgekit.alerts.AlertEmitted`
+    event, both observable as JSON on stderr.
 
     Args:
-        argv: Optional argument vector; defaults to ``sys.argv[1:]``.
+        args: Parsed ``alert-test`` arguments carrying ``type`` and
+            ``message``.
+
+    Returns:
+        The process exit code (always 0).
+    """
+    alert_type = _TOKEN_TO_ALERT_TYPE[args.type]
+    dispatcher = AlertDispatcher(sinks=[], ledger_writer=LoggingLedgerWriter())
+    dispatcher.dispatch(alert_type, args.message)
+    return 0
+
+
+def _run_heartbeat(args: argparse.Namespace) -> int:
+    """Load the requested config, log it, then drive the heartbeat loop.
+
+    Structured logging is already installed by :func:`main`, so the config
+    diagnostics emitted here (the ``config loaded`` line, or a ``FATAL``
+    critical on a bad ``--config``) are JSON records like every other log
+    line -- the ``--config`` loader (issue #11) and the JSON logging pipeline
+    (issue #14) composed into one flow.
+
+    Args:
+        args: Parsed ``run`` arguments carrying ``config``,
+            ``heartbeat_interval``, and ``max_beats``.
 
     Returns:
         The process exit code (0 on success, 1 on a fatal config error).
     """
-    args = build_parser().parse_args(argv)
-    logging.basicConfig(
-        stream=sys.stderr,
-        force=True,
-        level=logging.INFO,
-        format=_LOG_FORMAT,
-    )
     recorder = InMemoryConfigEventRecorder()
     try:
         config = _load_configured(args, recorder)
@@ -266,6 +307,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         state=state,
     )
     return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Parse arguments and run the requested hedgekit command.
+
+    Args:
+        argv: Optional argument vector; defaults to ``sys.argv[1:]``.
+
+    Returns:
+        The process exit code (0 on success, 1 on a fatal config error).
+    """
+    args = build_parser().parse_args(argv)
+    configure_logging(level=logging.INFO)
+    if args.command == "alert-test":
+        return _run_alert_test(args)
+    return _run_heartbeat(args)
 
 
 if __name__ == "__main__":

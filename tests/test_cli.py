@@ -8,6 +8,8 @@ after a bounded number of beats.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from hedgekit.main import build_parser, main
@@ -114,3 +116,105 @@ def test_main_run_emits_heartbeats_and_max_beats_shutdown(
     assert "seq=1" in captured.err
     assert "seq=2" in captured.err
     assert "shutdown reason=max_beats" in captured.err
+
+
+def test_main_run_emits_json_heartbeat_lines(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """With `configure_logging` installed, heartbeats are JSON, not plain text.
+
+    Every line on stderr must parse as JSON with `level == "INFO"` and the
+    heartbeat's `seq=1` marker inside `msg` -- pinning that `main()` routes
+    logging through `hedgekit.logging_setup.configure_logging` instead of
+    `logging.basicConfig`.
+    """
+    exit_code = main(["run", "--heartbeat-interval", "0", "--max-beats", "1"])
+
+    captured = capsys.readouterr()
+    lines = [line for line in captured.err.splitlines() if line]
+    payloads = [json.loads(line) for line in lines]
+
+    assert exit_code == 0
+    seq_one = next(payload for payload in payloads if "seq=1" in payload["msg"])
+    assert seq_one["level"] == "INFO"
+
+
+def test_alert_test_subcommand_dispatches_and_exits_zero(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`alert-test mode-change` dispatches via the log-only fallback and exits 0.
+
+    With no real sinks configured, `_run_alert_test` builds a dispatcher
+    with an empty sink list, so the fallback (log-only) fires and the
+    ledger writer logs an `AlertEmitted` line -- both observable as JSON on
+    stderr.
+    """
+    exit_code = main(["alert-test", "mode-change"])
+
+    captured = capsys.readouterr()
+    lines = [line for line in captured.err.splitlines() if line]
+    payloads = [json.loads(line) for line in lines]
+
+    assert exit_code == 0
+    assert any(payload.get("alert_type") == "mode change" for payload in payloads)
+    assert any("mode change" in json.dumps(payload) for payload in payloads)
+
+
+def test_alert_test_subcommand_rejects_unknown_type(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An alert type absent from the registry's cli tokens is a usage error."""
+    with pytest.raises(SystemExit) as exc_info:
+        main(["alert-test", "not-a-type"])
+
+    captured = capsys.readouterr()
+
+    assert exc_info.value.code == 2
+    assert "not-a-type" in captured.err
+
+
+def test_alert_test_subcommand_is_valid_but_hidden_from_help(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`alert-test` is a real subcommand that parses, but is excluded from --help.
+
+    `subparsers.add_parser("alert-test")` is registered *without* a `help`
+    argument, so argparse creates no pseudo-action for it and omits it from the
+    subcommand listing; combined with the subparsers' `metavar="command"` (which
+    suppresses the auto-generated `{run,alert-test}` choice list), the command
+    stays functional yet unadvertised in the top-level usage text.
+    """
+    parser = build_parser()
+
+    args = parser.parse_args(["alert-test", "veto"])
+    assert args.command == "alert-test"
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--help"])
+    captured = capsys.readouterr()
+    assert "alert-test" not in captured.out
+
+
+def test_alert_test_subcommand_accepts_all_registered_alert_types() -> None:
+    """Every `AlertType`'s `cli_token` is a valid `alert-test` positional choice."""
+    from hedgekit.alerts.registry import AlertType, cli_token
+
+    parser = build_parser()
+    for alert_type in AlertType:
+        args = parser.parse_args(["alert-test", cli_token(alert_type)])
+        assert args.command == "alert-test"
+        assert args.type == cli_token(alert_type)
+
+
+def test_alert_test_subcommand_message_defaults_to_test_alert() -> None:
+    """`--message` defaults to "test alert" when omitted."""
+    args = build_parser().parse_args(["alert-test", "veto"])
+
+    assert args.message == "test alert"
+
+
+def test_alert_test_subcommand_message_can_be_overridden() -> None:
+    """`--message` overrides the default alert body."""
+    args = build_parser().parse_args(["alert-test", "veto", "--message", "custom body"])
+
+    assert args.message == "custom body"
