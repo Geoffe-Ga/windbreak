@@ -55,9 +55,19 @@ die() {
   exit 1
 }
 
-# Resolve the repository root so the script works from any worktree/subdir.
+# Resolve the MAIN repository root, correct even when cwd is inside a linked
+# worktree. `git rev-parse --show-toplevel` returns the *worktree's* root from
+# inside a lane (e.g. .ralph/worktrees/issue-N), which silently pointed path
+# derivation, the worktree registry, and state.json reads at the wrong tree
+# (issue #83). `--git-common-dir` points at the main repo's .git even from a
+# linked worktree; the repo root is its parent. `--path-format=absolute`
+# normalizes the bare `.git` returned at the main root to an absolute path.
 repo_root() {
-  git rev-parse --show-toplevel 2>/dev/null || die "not inside a git repository"
+  local common
+  common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" \
+    || die "FATAL: not inside a git repository (could not resolve --git-common-dir)"
+  [[ -n "$common" ]] || die "FATAL: could not resolve the main git directory"
+  dirname "$common"
 }
 
 # Read an integer/bool field from state.json with a fallback. Pure-python so we

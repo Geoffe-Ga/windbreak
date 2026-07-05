@@ -49,9 +49,30 @@
 # on macOS use /opt/homebrew/bin/bash (bash 5), not the system bash 3.2.
 set -euo pipefail
 
+die() { echo "pick-next: $*" >&2; exit 2; }  # exit 2 == tooling/usage error
+
 if ! command -v gh >/dev/null 2>&1; then
   echo "pick-next: gh CLI not found" >&2
   exit 2
+fi
+
+# Main repo root — correct even when cwd is inside a linked worktree (issue #83).
+# `git rev-parse --show-toplevel` returns the *worktree's* own root from inside a
+# lane, so the worktree-exclusion below silently missed active lanes. Resolve the
+# MAIN repo's .git via --git-common-dir (points at the main repo even from a
+# linked worktree) and take its parent. This runs BEFORE the empty-backlog early
+# exit so running outside any git repo fails LOUD regardless of backlog contents.
+repo_common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" \
+  || die "FATAL: not inside a git repository (could not resolve --git-common-dir)"
+[[ -n "$repo_common" ]] || die "FATAL: could not resolve the main git directory"
+repo_root="$(dirname "$repo_common")"
+wt_dir="$repo_root/.ralph/worktrees"
+worktree_issues=""
+if [[ -d "$wt_dir" ]]; then
+  worktree_issues=$(
+    find "$wt_dir" -maxdepth 1 -type d -name 'issue-*' 2>/dev/null \
+      | sed 's#^.*/issue-##' | sort -u || true
+  )
 fi
 
 REQUIRE_LABELS="${RALPH_REQUIRE_LABELS:-}"
@@ -148,19 +169,8 @@ inflight=$(
   | sort -u || true
 )
 
-# Issue numbers with a live worktree (started, PR not yet opened).
-worktree_issues=""
-if repo_root=$(git rev-parse --show-toplevel 2>/dev/null); then
-  wt_dir="$repo_root/.ralph/worktrees"
-  if [[ -d "$wt_dir" ]]; then
-    worktree_issues=$(
-      find "$wt_dir" -maxdepth 1 -type d -name 'issue-*' 2>/dev/null \
-        | sed 's#^.*/issue-##' | sort -u || true
-    )
-  fi
-fi
-
-# The active set = in-flight PR issues ∪ worktree issues.
+# The active set = in-flight PR issues ∪ worktree issues (worktree_issues was
+# resolved up-front, before the empty-backlog early exit — see issue #83).
 active=$(printf '%s\n%s\n' "$inflight" "$worktree_issues" | grep -E '^[0-9]+$' | sort -u || true)
 
 is_active() { [[ -n "$active" ]] && grep -qx "$1" <<<"$active"; }

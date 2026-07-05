@@ -245,6 +245,39 @@ new_scenario prio_high_beats_medium
 ij_add 5 "priority-medium"; ij_add 9 "priority-high"; ij_finalize
 check "priority-high (tier 1) beats priority-medium (tier 2)" "9" "$(run_pick)"
 
+# --- real linked worktree: the existing worktree() helper only mkdir's a fake
+# dir, which never exercises `git rev-parse --show-toplevel` / a real
+# `--git-common-dir` at all. A genuine linked worktree is the only way to pin
+# the actual bug: from inside one, --show-toplevel returns the WORKTREE's own
+# root, so wt_dir misses the real .ralph/worktrees dir and the active issue
+# leaks through as still pickable. --------------------------------------------
+
+# 20) Active lane exclusion must hold even when cwd is inside a REAL linked
+#     worktree.
+new_scenario worktree_cwd_real
+git -C "$REPO" commit -q --allow-empty -m base
+candidate 10 ""; candidate 11 ""
+LANE="$REPO/.ralph/worktrees/issue-10"
+git -C "$REPO" worktree add -q "$LANE" -b issue/10-lane >/dev/null 2>&1
+check "active lane excluded even when cwd is inside a linked worktree" "11" \
+  "$(cd "$LANE" && PATH="$BIN:$PATH" "$PICK")"
+# Deregister the real worktree BEFORE the next new_scenario (which only
+# rm -rf's $REPO/.ralph) so git's admin dir under $REPO/.git/worktrees doesn't
+# dangle.
+git -C "$REPO" worktree remove --force "$LANE" >/dev/null 2>&1 || true
+git -C "$REPO" branch -D issue/10-lane >/dev/null 2>&1 || true
+
+# 21) Outside of any git repository at all, pick-next must fail LOUD — not
+#     silently degrade to "no worktree exclusion" the way the current
+#     `if repo_root=$(git rev-parse --show-toplevel 2>/dev/null); then ... fi`
+#     guard does today (it swallows the error and just proceeds as if no
+#     worktree dir exists at all).
+new_scenario outside_git_repo
+rc=0
+(cd "$WORK" && PATH="$BIN:$PATH" "$PICK") >/dev/null 2>&1 || rc=$?
+if [[ "$rc" -ne 0 ]]; then status=nonzero; else status=zero; fi
+check "pick-next exits non-zero when run outside any git repository" "nonzero" "$status"
+
 echo
 echo "pick-next tests: $PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]]
