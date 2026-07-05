@@ -15,7 +15,10 @@ import signal
 import sys
 import threading
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING
+
+from hedgekit.ledger import rebuild_command
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -97,7 +100,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     Returns:
         A parser with a required ``run`` subcommand exposing
-        ``--heartbeat-interval`` and ``--max-beats``.
+        ``--heartbeat-interval`` and ``--max-beats``, plus a ``rebuild``
+        subcommand exposing ``--ledger-path`` and ``--output-dir``.
     """
     parser = argparse.ArgumentParser(
         prog="hedgekit",
@@ -116,6 +120,21 @@ def build_parser() -> argparse.ArgumentParser:
         type=_non_negative_int,
         default=None,
         help="Stop after this many heartbeats (default: run until signalled).",
+    )
+    rebuild_parser = subparsers.add_parser(
+        "rebuild", help="Rebuild derived read models from the ledger."
+    )
+    rebuild_parser.add_argument(
+        "--ledger-path",
+        type=Path,
+        required=True,
+        help="Path to the SQLite ledger database.",
+    )
+    rebuild_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        required=True,
+        help="Directory to write the read-model files into.",
     )
     return parser
 
@@ -190,6 +209,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         The process exit code (0 on success).
     """
     args = build_parser().parse_args(argv)
+    if args.command == "rebuild":
+        return rebuild_command(args)
     logging.basicConfig(
         stream=sys.stderr,
         force=True,
