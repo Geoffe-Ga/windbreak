@@ -1,4 +1,9 @@
 # Development dependencies
+# Exact versions come from constraints-quality.txt (issue #104), the single
+# version authority for the quality toolchain. `pip install -r requirements-dev.txt`
+# applies the `-c` constraint below automatically — no separate flag needed.
+-c constraints-quality.txt
+
 # Testing
 pytest>=7.4.0
 pytest-cov>=4.1.0
@@ -10,8 +15,6 @@ hypothesis>=6.0
 
 # Code quality
 ruff>=0.1.0
-black>=23.0.0
-isort>=5.12.0
 mypy>=1.5.0
 
 # Security

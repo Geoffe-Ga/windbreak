@@ -172,7 +172,7 @@ Run all quality checks before every commit. This is the master quality gate.
 ```
 
 Executes:
-- Code formatting verification (ruff format, black, isort)
+- Code formatting verification (ruff format — single formatter authority, ADR-0002)
 - Linting (ruff, pylint)
 - Type checking (mypy)
 - Security scanning (bandit, pip-audit)
@@ -217,9 +217,7 @@ Auto-format all Python code.
 ```
 
 Applies:
-- ruff format (fast formatter)
-- black (code formatter)
-- isort (import sorting)
+- ruff format (the single authoritative formatter — black and isort removed per ADR-0002)
 
 Safe to run - only modifies formatting, not logic.
 
@@ -353,27 +351,27 @@ def process_items(
     metadata: Dict[str, str] | None = None
 ) -> List[T]:
     """Process items with optional filtering.
-    
+
     Args:
         items: Items to process.
         max_count: Maximum number of items to process. None means unlimited.
         metadata: Optional metadata dictionary.
-    
+
     Returns:
         Processed items as a list.
-    
+
     Raises:
         ValueError: If max_count is negative.
     """
     if max_count is not None and max_count < 0:
         raise ValueError("max_count must be non-negative")
-    
+
     result: List[T] = []
     for item in items:
         if max_count is not None and len(result) >= max_count:
             break
         result.append(item)
-    
+
     return result
 ```
 
@@ -382,20 +380,20 @@ def process_items(
 ```python
 class RiskCalculator:
     """Calculate risk scores for financial instruments.
-    
+
     This class provides methods to assess risk based on multiple factors
     including market volatility, historical performance, and credit ratings.
-    
+
     Attributes:
         volatility_threshold: Maximum acceptable volatility (0.0 to 1.0).
         use_historical: Whether to include historical trend analysis.
-    
+
     Example:
         >>> calc = RiskCalculator(volatility_threshold=0.25)
         >>> score = calc.calculate_risk(instrument_data)
         >>> print(f"Risk score: {score.value}")
     """
-    
+
     def __init__(
         self,
         volatility_threshold: float,
@@ -403,17 +401,17 @@ class RiskCalculator:
         use_historical: bool = True
     ) -> None:
         """Initialize the risk calculator.
-        
+
         Args:
             volatility_threshold: Maximum acceptable volatility (0.0 to 1.0).
             use_historical: Whether to include historical analysis.
-        
+
         Raises:
             ValueError: If volatility_threshold is not between 0 and 1.
         """
         if not 0 <= volatility_threshold <= 1:
             raise ValueError("volatility_threshold must be between 0 and 1")
-        
+
         self.volatility_threshold = volatility_threshold
         self.use_historical = use_historical
 ```
@@ -424,7 +422,7 @@ class RiskCalculator:
 # Good: Specific exceptions with context
 class InsufficientDataError(Exception):
     """Raised when insufficient data is available for calculation."""
-    
+
     def __init__(self, required: int, available: int) -> None:
         self.required = required
         self.available = available
@@ -435,23 +433,23 @@ class InsufficientDataError(Exception):
 
 def calculate_average(values: List[float]) -> float:
     """Calculate average of values.
-    
+
     Args:
         values: List of numeric values.
-    
+
     Returns:
         The arithmetic mean.
-    
+
     Raises:
         InsufficientDataError: If fewer than 2 values provided.
         ValueError: If values contain NaN or infinity.
     """
     if len(values) < 2:
         raise InsufficientDataError(required=2, available=len(values))
-    
+
     if any(not math.isfinite(v) for v in values):
         raise ValueError("Values must be finite numbers")
-    
+
     return sum(values) / len(values)
 ```
 
@@ -465,13 +463,13 @@ from typing import Iterator
 @contextmanager
 def temporary_config(config: Dict[str, Any]) -> Iterator[Config]:
     """Temporarily override configuration settings.
-    
+
     Args:
         config: Configuration overrides.
-    
+
     Yields:
         Config object with overrides applied.
-    
+
     Example:
         >>> with temporary_config({"debug": True}) as cfg:
         ...     # Debug mode active here
