@@ -43,12 +43,15 @@ if TYPE_CHECKING:
 #: ``**/*.py`` under each one that exists. Issue #16 extends the path with the
 #: exchange-facing ``hedgekit/connector`` (prices, quantities, balances) and
 #: ``hedgekit/screener`` (eligibility decisions derived from those values).
+#: Issue #22 extends the path with the probability/money-bearing
+#: ``hedgekit/forecast`` package (probability_ppm, research_cost_micros, ...).
 DENYLISTED_PACKAGES: tuple[str, ...] = (
     "hedgekit/numeric",
     "hedgekit/ledger",
     "hedgekit/riskkernel",
     "hedgekit/connector",
     "hedgekit/screener",
+    "hedgekit/forecast",
 )
 
 FLOAT_LITERAL_CODE = "FLOAT-001"
