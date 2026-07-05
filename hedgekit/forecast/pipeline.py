@@ -21,17 +21,19 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, NamedTuple
 
 from hedgekit.forecast.cassettes import LlmRequest
+from hedgekit.forecast.ensemble import aggregate_votes
 from hedgekit.forecast.records import Citation, ForecastRecord, ModelVote
 
 if TYPE_CHECKING:
     from hedgekit.connector.models import NormalizedMarket
     from hedgekit.forecast.cassettes import LlmTransport
+    from hedgekit.forecast.ensemble import VoteAggregate
     from hedgekit.forecast.records import BaselineQuoteSnapshot
+    from hedgekit.forecast.sandbox import ResearchTools
 
 #: One full probability (1.0) expressed in parts-per-million; also the clamp
 #: ceiling and the shrinkage denominator.
@@ -98,23 +100,6 @@ _VOTE_MODELS: tuple[_EnsembleMember, _EnsembleMember, _EnsembleMember] = (
     _EnsembleMember("anthropic", "claude-forecast", "2024-04-01"),
     _EnsembleMember("openai", "gpt-5-forecast-mini", "2024-06-01"),
 )
-
-
-@dataclass(frozen=True, slots=True)
-class _VoteAggregate:
-    """The median aggregation of an ensemble's votes.
-
-    Attributes:
-        probability_ppm: The median vote probability, in ppm.
-        ci_low_ppm: The lowest vote probability, in ppm.
-        ci_high_ppm: The highest vote probability, in ppm.
-        vote_dispersion_ppm: The high-minus-low spread, in ppm.
-    """
-
-    probability_ppm: int
-    ci_low_ppm: int
-    ci_high_ppm: int
-    vote_dispersion_ppm: int
 
 
 def _clamp_ppm(value: int) -> int:
@@ -263,27 +248,44 @@ def decompose_subquestions(market: NormalizedMarket) -> tuple[str, ...]:
 
 
 def bounded_web_research(
-    market: NormalizedMarket, subquestions: tuple[str, ...]
+    market: NormalizedMarket,
+    subquestions: tuple[str, ...],
+    *,
+    tools: ResearchTools,
 ) -> tuple[Citation, ...]:
-    """Stage 5: gather fixture-derived citations (network-free stub).
+    """Stage 5: gather citations through the sandboxed research tools.
+
+    Each subquestion is searched for a candidate URL, whose content is fetched
+    through the egress-allowlisted :meth:`ResearchTools.fetch` -- so a search
+    result off the allowlist raises :class:`EgressDeniedError` here, on the pipeline
+    path itself. The resulting citations are deterministic (the fixture
+    transports derive URL and content from their inputs) and integer-free.
 
     Args:
         market: The market under forecast.
         subquestions: The decomposed subquestions to research.
+        tools: The sandboxed research tools (search/fetch capabilities).
 
     Returns:
-        One deterministic citation per subquestion.
+        One deterministic citation per subquestion that yielded a candidate URL.
     """
-    return tuple(
-        Citation(
-            url=f"https://research.local/{market.ticker}/{index}",
-            content_hash=_content_hash(subquestion),
-            quoted_text=f"Evidence for: {subquestion}",
-            publication_date=_CITATION_PUBLICATION_DATE,
-            source_type="research_note",
+    citations: list[Citation] = []
+    for subquestion in subquestions:
+        urls = tools.search(subquestion)
+        if not urls:
+            continue
+        url = urls[0]
+        content = tools.fetch(url)
+        citations.append(
+            Citation(
+                url=url,
+                content_hash=_content_hash(content),
+                quoted_text=f"Evidence for {market.ticker}: {subquestion}",
+                publication_date=_CITATION_PUBLICATION_DATE,
+                source_type="research_note",
+            )
         )
-        for index, subquestion in enumerate(subquestions)
-    )
+    return tuple(citations)
 
 
 def assess_source_reliability(citations: tuple[Citation, ...]) -> tuple[str, ...]:
@@ -357,25 +359,20 @@ def collect_model_votes(
     return tuple(votes)
 
 
-def aggregate_median(votes: tuple[ModelVote, ...]) -> _VoteAggregate:
-    """Stage 9: aggregate votes by median with min/max confidence bounds.
+def aggregate_median(votes: tuple[ModelVote, ...]) -> VoteAggregate:
+    """Stage 9: aggregate votes into a median with confidence bounds (S8.6).
+
+    Delegates to :func:`hedgekit.forecast.ensemble.aggregate_votes`, which owns
+    the integer-median and exclusive-median IQR math; ``vote_dispersion_ppm``
+    is now the inter-quartile spread rather than the raw max-minus-min range.
 
     Args:
         votes: The ensemble votes to aggregate.
 
     Returns:
-        The median probability with low/high bounds and dispersion.
+        The median probability with low/high bounds and IQR dispersion.
     """
-    probabilities = sorted(vote.probability_ppm for vote in votes)
-    low = probabilities[0]
-    high = probabilities[-1]
-    median = probabilities[len(probabilities) // 2]
-    return _VoteAggregate(
-        probability_ppm=median,
-        ci_low_ppm=low,
-        ci_high_ppm=high,
-        vote_dispersion_ppm=high - low,
-    )
+    return aggregate_votes(votes)
 
 
 def normalize_coherence(market: NormalizedMarket) -> int | None:
@@ -488,7 +485,7 @@ def build_forecast_record(
     created_at: datetime,
     question_hash: str,
     probability_ppm: int,
-    aggregate: _VoteAggregate,
+    aggregate: VoteAggregate,
     votes: tuple[ModelVote, ...],
     citations: tuple[Citation, ...],
     source_notes: tuple[str, ...],
@@ -544,12 +541,15 @@ def run_pipeline(
     *,
     transport: LlmTransport,
     created_at: datetime,
+    research_tools: ResearchTools,
 ) -> ForecastRecord:
     """Run the twelve-stage pipeline into a schema-valid forecast record.
 
     All stages run offline and deterministically; only
     :func:`collect_model_votes` touches ``transport``, so wiring a forbidden
     or empty transport fails the run closed rather than reaching a network.
+    Stage 5 reaches the web only through ``research_tools``, whose egress
+    allowlist can make the run raise :class:`EgressDeniedError` before any vote.
     Given identical inputs and ``created_at``, two runs produce equal records
     and byte-identical payloads.
 
@@ -559,6 +559,8 @@ def run_pipeline(
         transport: The LLM transport for the vote stage (keyword-only).
         created_at: The injected creation instant, for determinism
             (keyword-only; never ``datetime.now()``).
+        research_tools: The sandboxed research tools threaded into stage 5's
+            bounded web research (keyword-only).
 
     Returns:
         The produced, immutable forecast record.
@@ -567,7 +569,7 @@ def run_pipeline(
     criteria = extract_resolution_criteria(market)
     base_rate_ppm = outside_view_base_rate(baseline)
     subquestions = decompose_subquestions(market)
-    citations = bounded_web_research(market, subquestions)
+    citations = bounded_web_research(market, subquestions, tools=research_tools)
     source_notes = assess_source_reliability(citations)
     counterpoints = adversarial_counterargument(subquestions)
     votes = collect_model_votes(market, baseline, transport=transport)

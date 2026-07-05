@@ -37,10 +37,24 @@ Cassette-fixture choice (populated replay cassette)
     structural tests in `test_cassettes.py`: a successful load, a *guaranteed*
     miss (their keys are human-readable placeholders, never a real 64-char
     hex digest), and float-leaf rejection.
+
+Sandbox-transport fixture choice (issue #24)
+    `FixtureSearchTransport` / `FixtureFetchTransport` below are the
+    `hedgekit.forecast.sandbox` analogue of `FakeVoteTransport`: deterministic,
+    network-free doubles for the `SearchTransport` / `FetchTransport`
+    injection seams. `research_tools_factory` defers its
+    `from hedgekit.forecast.sandbox import build_research_tools` to call time
+    (inside the returned closure, not at module import time) so this conftest
+    module keeps collecting cleanly for every other `tests/forecast/*` module
+    while `hedgekit/forecast/sandbox.py` does not yet exist -- only a test that
+    actually calls the factory (or the `research_tools` fixture) hits the
+    `ModuleNotFoundError`, which is the expected Gate 1 RED state for
+    issue #24.
 """
 
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -153,3 +167,110 @@ def baseline(created_at: datetime) -> BaselineQuoteSnapshot:
         price_pips=4500,
         fetched_at=created_at,
     )
+
+
+#: The single host every sandbox fixture below allowlists by default.
+_DEFAULT_ALLOWED_HOST = "research.local"
+
+
+class FixtureSearchTransport:
+    """Deterministic, network-free stand-in `SearchTransport` for RED-state tests.
+
+    Returns exactly one candidate URL per query, on a fixed host, so
+    `bounded_web_research` always has a single, reproducible candidate to
+    fetch -- no live network, no branching on query content.
+    """
+
+    def __init__(self, host: str = _DEFAULT_ALLOWED_HOST) -> None:
+        """Store the host embedded in every candidate URL this double returns.
+
+        Args:
+            host: The hostname every returned candidate URL resolves under.
+        """
+        self._host = host
+
+    def search(self, query: str) -> tuple[str, ...]:
+        """Return one deterministic candidate URL derived from `query`.
+
+        Args:
+            query: The subquestion text being searched for.
+
+        Returns:
+            A one-element tuple holding a URL on `self._host`, whose path is a
+            short sha256 digest of `query` (so distinct queries get distinct,
+            still-fully-deterministic, URLs).
+        """
+        digest = hashlib.sha256(query.encode("utf-8")).hexdigest()[:12]
+        return (f"https://{self._host}/{digest}",)
+
+
+class FixtureFetchTransport:
+    """Deterministic, network-free stand-in `FetchTransport` for RED-state tests.
+
+    Returns fixed content derived only from the URL itself, so fetching the
+    same URL twice is always byte-identical across runs.
+    """
+
+    def fetch(self, url: str) -> str:
+        """Return deterministic canned content for `url`.
+
+        Args:
+            url: The URL being fetched.
+
+        Returns:
+            A deterministic content string derived from `url`.
+        """
+        return f"fixture content for {url}"
+
+
+@pytest.fixture
+def research_tools_factory() -> Callable[..., object]:
+    """Provide a factory building a sandboxed `ResearchTools` over fixture doubles.
+
+    A factory (not one shared fixture) so tests that need an off-allowlist or
+    otherwise non-default transport can override just the piece they care
+    about while keeping the deterministic fixture doubles for everything
+    else. The `hedgekit.forecast.sandbox` import is deferred to the returned
+    closure's call time -- see the module docstring's "Sandbox-transport
+    fixture choice" note for why.
+    """
+
+    def _build(
+        *,
+        cache_dir: Path,
+        allowed_hosts: frozenset[str] = frozenset({_DEFAULT_ALLOWED_HOST}),
+        search_transport: object | None = None,
+        fetch_transport: object | None = None,
+    ) -> object:
+        """Build one `ResearchTools`, defaulting transports to fixture doubles.
+
+        Args:
+            cache_dir: The research-cache root this instance persists under.
+            allowed_hosts: The egress allowlist; defaults to
+                `{"research.local"}`.
+            search_transport: The `SearchTransport` to inject; defaults to a
+                fresh `FixtureSearchTransport`.
+            fetch_transport: The `FetchTransport` to inject; defaults to a
+                fresh `FixtureFetchTransport`.
+
+        Returns:
+            A `ResearchTools` built by `build_research_tools`.
+        """
+        from hedgekit.forecast.sandbox import build_research_tools
+
+        return build_research_tools(
+            allowed_hosts=allowed_hosts,
+            cache_dir=cache_dir,
+            search_transport=search_transport or FixtureSearchTransport(),
+            fetch_transport=fetch_transport or FixtureFetchTransport(),
+        )
+
+    return _build
+
+
+@pytest.fixture
+def research_tools(
+    tmp_path: Path, research_tools_factory: Callable[..., object]
+) -> object:
+    """Provide a `ResearchTools` sandboxed to the `research.local` allowlist."""
+    return research_tools_factory(cache_dir=tmp_path / "research-cache")
