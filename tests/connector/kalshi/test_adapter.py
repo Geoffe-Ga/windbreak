@@ -304,6 +304,33 @@ def test_fee_model_from_series_rejects_a_non_string_schedule_id(
         _fee_model_from_series(payload)
 
 
+@pytest.mark.parametrize(
+    "bad_leaf", ["maker_fee_bps", "taker_fee_bps", "settlement_fee_bps"]
+)
+def test_fee_model_from_series_rejects_a_negative_fee_leaf(bad_leaf: str) -> None:
+    """A negative fee leaf fails closed as UnknownFeeModelError, not a raw ValueError.
+
+    A ``*_fee_bps`` leaf of the right type but a negative value is still a
+    schedule this adapter cannot faithfully model; it must be refused with the
+    same fail-closed error as any other malformed leaf rather than surfacing the
+    bare ``ValueError`` ``FeeModel`` raises for a negative ppm rate -- misreading
+    a fee schedule is worse than admitting ignorance.
+    """
+    payload = {
+        "series": {
+            "fee_type": "quadratic",
+            "fee_schedule_id": "KXFED-STD",
+            "maker_fee_bps": 0,
+            "taker_fee_bps": 700,
+            "settlement_fee_bps": 0,
+            bad_leaf: -1,
+        }
+    }
+
+    with pytest.raises(UnknownFeeModelError):
+        _fee_model_from_series(payload)
+
+
 # --- get_balance_semantics (issue #18) --------------------------------------
 
 

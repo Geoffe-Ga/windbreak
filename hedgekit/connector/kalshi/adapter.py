@@ -156,7 +156,7 @@ def _fee_model_from_series(payload: Mapping[str, Any]) -> FeeModel:
     Raises:
         UnknownFeeModelError: If the document is missing the ``series`` block or
             a fee field, advertises a non-quadratic ``fee_type``, or carries a
-            non-integer fee leaf.
+            non-integer or negative fee leaf.
     """
     try:
         series = payload["series"]
@@ -178,12 +178,17 @@ def _fee_model_from_series(payload: Mapping[str, Any]) -> FeeModel:
         raise UnknownFeeModelError(
             f"series fee_schedule_id must be a non-empty str, got {schedule_id!r}"
         )
-    return FeeModel(
-        schedule_id=schedule_id,
-        maker_fee_ppm=_bps_to_ppm(maker_bps, "maker_fee_bps"),
-        taker_fee_ppm=_bps_to_ppm(taker_bps, "taker_fee_bps"),
-        settlement_fee_ppm=_bps_to_ppm(settlement_bps, "settlement_fee_bps"),
-    )
+    try:
+        return FeeModel(
+            schedule_id=schedule_id,
+            maker_fee_ppm=_bps_to_ppm(maker_bps, "maker_fee_bps"),
+            taker_fee_ppm=_bps_to_ppm(taker_bps, "taker_fee_bps"),
+            settlement_fee_ppm=_bps_to_ppm(settlement_bps, "settlement_fee_bps"),
+        )
+    except (TypeError, ValueError) as exc:
+        raise UnknownFeeModelError(
+            f"series fee schedule is not a shape this adapter models: {exc}"
+        ) from exc
 
 
 def _utc_now() -> datetime:
