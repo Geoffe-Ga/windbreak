@@ -79,7 +79,10 @@ Runs in order:
 5. Unit tests with coverage
 6. Coverage report validation (90% minimum)
 
-**Note**: Mutation testing is NOT included in check-all.sh due to long runtime. It runs automatically in CI on main branch merges.
+**Note**: Mutation testing is NOT included in check-all.sh (long runtime) and is
+NOT run by any automated trigger. It is the manual pre-v1.0.0 release gate (owner
+directive, issue #107) — run it on demand via `./scripts/mutation.sh` or
+`gh workflow run mutation-gate.yml`.
 
 ```bash
 # Before committing - REQUIRED
@@ -147,7 +150,8 @@ vim tests/unit/test_my_module.py
 ./scripts/check-all.sh
 
 # 10. (Optional) Run mutation tests locally for significant changes
-# This takes several minutes and is automatically run in CI
+# This takes several minutes. Mutation testing is the MANUAL pre-v1.0.0 release
+# gate — it is NOT run automatically in CI (issue #107).
 ./scripts/mutation.sh
 
 # 11. Commit (only if all checks pass)
@@ -157,7 +161,8 @@ git commit -m "feat(module): add my feature (#123)"
 # 12. Push
 git push origin feature/my-feature
 
-# 13. Create PR (all CI checks will pass, including mutation testing)
+# 13. Create PR (all automated CI checks will pass; mutation testing is a
+# manual pre-v1.0.0 gate, not part of PR CI)
 gh pr create --fill
 ```
 

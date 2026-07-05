@@ -1,0 +1,82 @@
+name: Mutation Gate (manual pre-v1.0.0)
+
+# Mutation testing is the PRE-RELEASE quality gate, run MANUALLY before a
+# v1.0.0 ship — never on push/PR/schedule. It was removed from automated CI
+# per the owner directive tracked in issue #107 (mutmut must never fail an
+# automated run while the project is far from v1.0.0). Trigger it on demand:
+#
+#   gh workflow run mutation-gate.yml
+#
+# or via the Actions tab "Run workflow" button.
+#
+# REVIVAL NOTE (why the old automated job failed, for the v1.0.0 run):
+# The unpinned `mutmut>=2.4.0` dev dependency resolves to mutmut 3.x, whose
+# config schema renamed `paths_to_mutate` -> `source_paths` and `tests_dir`
+# -> `pytest_add_cli_args_test_selection`. With the legacy `[tool.mutmut]`
+# keys still present in pyproject.toml, mutmut 3.x crashes on EVERY invocation
+# at config load with `TypeError: can only concatenate list (not "str") to
+# list` (configuration.py `_load_config`). Before reviving this gate:
+#   1. Either pin `mutmut<3` or migrate `[tool.mutmut]` in pyproject.toml to
+#      the 3.x schema (list-valued `source_paths` /
+#      `pytest_add_cli_args_test_selection`).
+#   2. Update the score-parsing below to match the chosen mutmut version's
+#      `mutmut results` output format (3.x changed it).
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  MIN_MUTATION_SCORE: 80
+  PYTHON_VERSION_PRIMARY: "3.12"
+
+jobs:
+  mutation-testing:
+    name: Mutation Testing
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION_PRIMARY }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -c constraints-quality.txt -r requirements.txt
+          pip install -c constraints-quality.txt -r requirements-dev.txt
+          pip install -c constraints-quality.txt pytest mutmut
+
+      - name: Run mutation tests
+        run: |
+          mutmut run --paths-to-mutate=. || true
+          mutmut results
+          mutmut html
+
+      - name: Check mutation score
+        run: |
+          MUTATION_SCORE=$(mutmut results | grep -oP 'Survived: \K\d+' || echo "100")
+          TOTAL=$(mutmut results | grep -oP 'Total: \K\d+' || echo "1")
+          SCORE=$((100 - (MUTATION_SCORE * 100 / TOTAL)))
+          echo "Mutation score: $SCORE%"
+          if [ "$SCORE" -lt "$MIN_MUTATION_SCORE" ]; then
+            echo "Mutation score $SCORE% is below minimum threshold of $MIN_MUTATION_SCORE%"
+            exit 1
+          fi
+
+      - name: Upload mutation test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-test-results
+          path: html/
+          retention-days: 30

@@ -16,8 +16,9 @@ When all CI checks pass with zero warnings, zero errors, and maximum quality met
 - ✅ Linting: 0 errors, 0 warnings
 - ✅ Type checking: 0 errors
 - ✅ Security: 0 vulnerabilities
-- ✅ Mutation score: ≥80%
 - ✅ Docstring coverage: ≥95%
+- 🏁 Mutation score: ≥80% — **manual pre-v1.0.0 release gate**, not part of the
+  automated CI green check (owner directive, issue #107)
 
 This represents **MAXIMUM QUALITY ENGINEERING**—the standard to which all code must aspire.
 
@@ -67,9 +68,9 @@ For those committed to maximum quality engineering:
 
 **Policy**: Never request review with failing checks. Never merge without LGTM.
 
-The Stay Green workflow enforces iterative quality improvement through **4 sequential gates**. Each gate must pass before proceeding to the next.
+The Stay Green workflow enforces iterative quality improvement through **3 sequential automated gates**, plus a manual mutation gate reserved for the pre-v1.0.0 release. Each gate must pass before proceeding to the next.
 
-### 2.1 The Four Gates
+### 2.1 The Gates
 
 1. **Gate 1: Local Pre-Commit** (Iterate Until Green)
    - Run `./scripts/check-all.sh`
@@ -83,17 +84,23 @@ The Stay Green workflow enforces iterative quality improvement through **4 seque
    - If CI fails: fix locally, re-run Gate 1, push again
    - Only proceed when all CI jobs show ✅
 
-3. **Gate 3: Mutation Testing** (Iterate Until 80%+)
-   - Run `./scripts/mutation.sh` (or wait for CI job)
-   - If score < 80%: add tests to kill surviving mutants
-   - Re-run Gate 1, push, wait for CI
-   - Only proceed when mutation score ≥ 80%
-
-4. **Gate 4: Code Review** (Iterate Until LGTM)
+3. **Gate 3: Code Review** (Iterate Until LGTM)
    - Wait for code review (AI or human)
    - If feedback provided: address ALL concerns
-   - Re-run Gate 1, push, wait for CI and mutation
+   - Re-run Gate 1, push, wait for CI
    - Only merge when review shows LGTM with no reservations
+
+### 2.1a Manual Pre-Release Gate: Mutation Testing (≥80%)
+
+Mutation testing is **NOT** an automated check. Per the owner directive in
+issue #107, it is run **manually before shipping v1.0.0** — never on
+push/PR/pre-commit — so it can never fail a routine automated run while the
+project is far from release.
+
+   - Run `./scripts/mutation.sh` locally, or trigger the manual workflow with
+     `gh workflow run mutation-gate.yml`
+   - If score < 80%: add tests to kill surviving mutants
+   - Only ship v1.0.0 when mutation score ≥ 80%
 
 ### 2.2 Quick Checklist
 
@@ -102,9 +109,11 @@ Before creating/updating a PR:
 - [ ] Gate 1: `./scripts/check-all.sh` passes locally (exit 0)
 - [ ] Push changes: `git push origin feature-branch`
 - [ ] Gate 2: All CI jobs show ✅ (green)
-- [ ] Gate 3: Mutation score ≥ 80% (if applicable)
-- [ ] Gate 4: Code review shows LGTM
+- [ ] Gate 3: Code review shows LGTM
 - [ ] Ready to merge!
+
+Before a v1.0.0 release only:
+- [ ] Manual gate: Mutation score ≥ 80% (`./scripts/mutation.sh` / `mutation-gate.yml`)
 
 ### 2.3 Anti-Patterns (DO NOT DO)
 

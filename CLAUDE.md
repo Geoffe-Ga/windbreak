@@ -28,16 +28,19 @@
 1. **Use project scripts, not direct tools** - Invoke `./scripts/*`, never raw tools
 2. **Never duplicate content (DRY)** - Always reference the canonical source
 3. **No shortcuts - fix root causes** - Never bypass quality checks
-4. **Stay Green** - Never request review with failing checks (4-gate workflow)
-5. **Quality First** - Meet MAXIMUM QUALITY standards (90% coverage, ≤10 complexity, ≥80% mutation)
+4. **Stay Green** - Never request review with failing checks (gated workflow: 3 automated gates + manual pre-v1.0.0 mutation gate)
+5. **Quality First** - Meet MAXIMUM QUALITY standards (90% coverage, ≤10 complexity); mutation ≥80% is the manual pre-v1.0.0 release gate
 6. **Operate from project root** - Use relative paths, never `cd`
 7. **Verify before commit** - All checks must pass (`./scripts/check-all.sh` → exit 0)
 
-**The 4 Gates**:
+**The Automated Gates**:
 1. Gate 1: `./scripts/check-all.sh` passes (exit 0)
 2. Gate 2: CI pipeline green (all jobs ✅)
-3. Gate 3: Mutation score ≥80%
-4. Gate 4: Code review LGTM
+3. Gate 3: Code review LGTM
+
+**Manual pre-release gate** (run before a v1.0.0 ship — NOT an automated check):
+- Mutation score ≥80% via `./scripts/mutation.sh` or the `mutation-gate.yml`
+  workflow (`gh workflow run mutation-gate.yml`). Owner directive, issue #107.
 
 ---
 
@@ -50,7 +53,7 @@
 | **Code Coverage** | ≥90% | pytest-cov |
 | **Branch Coverage** | ≥85% | pytest-cov |
 | **Docstring Coverage** | ≥95% | pydocstyle / ruff D rules |
-| **Mutation Score** | ≥80% | mutmut |
+| **Mutation Score** | ≥80% (manual pre-v1.0.0 gate, not automated) | mutmut |
 | **Cyclomatic Complexity** | ≤10 per function | radon |
 | **Pylint Score** | ≥9.0 | pylint |
 | **Security Vulnerabilities** | 0 critical/high | bandit, pip-audit |
@@ -247,7 +250,10 @@ Uses mutmut to:
 - Verify tests catch mutations
 - Require ≥80% mutation score
 
-Long-running - typically run in CI or before major releases.
+Long-running and MANUAL only — it is the pre-v1.0.0 release gate (owner directive,
+issue #107), never an automated CI/pre-commit check. Run it locally or via the
+`mutation-gate.yml` workflow (`gh workflow run mutation-gate.yml`) before shipping
+v1.0.0.
 
 ---
 
