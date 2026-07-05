@@ -35,8 +35,11 @@ from hedgekit.ledger.events import (
     GENESIS_PREV_HASH,
     AlertEmitted,
     ConfigLoaded,
+    DemotionTriggerFired,
     Event,
     ModeHeartbeat,
+    PromotionEvaluated,
+    SignificanceOverrideApplied,
     canonical_json,
     utc_now_iso,
 )
@@ -204,6 +207,9 @@ def test_event_types_registry_maps_type_name_to_class() -> None:
         "ConfigLoaded": ConfigLoaded,
         "ModeHeartbeat": ModeHeartbeat,
         "AlertEmitted": AlertEmitted,
+        "PromotionEvaluated": PromotionEvaluated,
+        "SignificanceOverrideApplied": SignificanceOverrideApplied,
+        "DemotionTriggerFired": DemotionTriggerFired,
     } == EVENT_TYPES
 
 
