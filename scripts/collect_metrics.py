@@ -19,24 +19,24 @@ Output: metrics.json in the specified output directory
 from __future__ import annotations
 
 import argparse
-from datetime import UTC
-from datetime import datetime
-from http import HTTPStatus
 import http.client
 import json
 import os
-from pathlib import Path
 import re
 import sqlite3
 import subprocess
 import sys
-from typing import Any
-from typing import TYPE_CHECKING
+from datetime import UTC, datetime
+from http import HTTPStatus
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
-from start_green_stay_green.generators.metrics import ci_status
-from start_green_stay_green.generators.metrics import count_ci_jobs
-from start_green_stay_green.generators.metrics import count_precommit_hooks
-from start_green_stay_green.generators.metrics import precommit_status
+from start_green_stay_green.generators.metrics import (
+    ci_status,
+    count_ci_jobs,
+    count_precommit_hooks,
+    precommit_status,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -486,7 +486,7 @@ class MetricsCollector:
             return None
 
         try:
-            result = subprocess.run(  # noqa: S603 — script_path is a hardcoded internal filename, validated by exists() above
+            result = subprocess.run(
                 [str(full_path), "--metrics"],
                 capture_output=True,
                 text=True,

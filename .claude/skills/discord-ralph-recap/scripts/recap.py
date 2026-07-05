@@ -39,12 +39,10 @@ import json
 import os
 import sys
 import time
-from typing import Any
-from typing import TYPE_CHECKING
-from typing import cast
 import urllib.error
 import urllib.parse
 import urllib.request
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -110,6 +108,14 @@ DEFAULT_EXCLUDE_LABELS = (
 # HTTP helpers
 # --------------------------------------------------------------------------- #
 
+# An opener wired with only HTTP(S) handlers: unlike the module-level
+# ``urllib.request.urlopen`` it refuses ``file:``, ``ftp:`` and custom schemes
+# outright, so a malformed URL can never be coerced into reading a local file.
+_HTTP_OPENER = urllib.request.build_opener(
+    urllib.request.HTTPSHandler,
+    urllib.request.HTTPHandler,
+)
+
 
 def _request_json(
     url: str,
@@ -121,14 +127,16 @@ def _request_json(
     """Perform an HTTP request and parse a JSON response body.
 
     Returns the parsed JSON (typed as `object`; callers cast). Raises
-    urllib.error.HTTPError / URLError on transport or HTTP failures.
+    urllib.error.HTTPError / URLError on transport or HTTP failures, and
+    ValueError if `url` is not an ``https://`` URL.
     """
-    # S310: every caller passes a hardcoded https:// GitHub/Discord API URL
-    # (GITHUB_API / DISCORD_API constants below), never user input.
-    request = urllib.request.Request(  # noqa: S310
-        url, data=body, headers=headers, method=method
-    )
-    with urllib.request.urlopen(request) as response:  # noqa: S310
+    # Every caller passes a hardcoded https:// GitHub/Discord API URL
+    # (GITHUB_API / DISCORD_API constants above), never user input. The guard
+    # plus the scheme-restricted opener enforce that invariant defensively.
+    if not url.startswith("https://"):
+        raise ValueError(f"Refusing non-https URL: {url!r}")
+    request = urllib.request.Request(url, data=body, headers=headers, method=method)
+    with _HTTP_OPENER.open(request) as response:
         raw = response.read().decode("utf-8")
     return json.loads(raw) if raw else None
 
@@ -387,7 +395,7 @@ def generate_headline(title: str, body: str) -> str:
         text = "".join(
             block.text for block in response.content if block.type == "text"
         ).strip()
-    except Exception:  # noqa: BLE001
+    except Exception:
         # Any SDK/API failure degrades to the heuristic; never fails the recap.
         return _heuristic_headline(title)
     return text or _heuristic_headline(title)
@@ -574,9 +582,10 @@ def _loc_line(
     return f"{churn(loc_24h)} (24h) · {churn(loc_7d)} (7d) · {full_repo} (full repo)"
 
 
-def _render_embed(  # noqa: PLR0913 — keyword-only bag of already-computed stats;
-    # bundling them into a dataclass would just move the same 18 fields, not
-    # reduce them, and this function has exactly one call site (`_gather`).
+def _render_embed(
+    # A keyword-only bag of already-computed stats: bundling them into a
+    # dataclass would just move the same 18 fields, not reduce them, and this
+    # function has exactly one call site (`_gather`).
     *,
     repo: str,
     latest: dict[str, Any],
@@ -670,8 +679,7 @@ def _render_embed(  # noqa: PLR0913 — keyword-only bag of already-computed sta
         {
             "name": "⚡ Merge rate",
             "value": (
-                f"**{rate['per_hour']:.2f}**/hr (24h) · "
-                f"{rate['per_day']:.1f}/day (7d)"
+                f"**{rate['per_hour']:.2f}**/hr (24h) · {rate['per_day']:.1f}/day (7d)"
             ),
             "inline": True,
         },
