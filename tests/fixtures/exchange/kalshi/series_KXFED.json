@@ -1,0 +1,10 @@
+{
+  "series": {
+    "ticker": "KXFED",
+    "fee_schedule_id": "kxfed-standard-v1",
+    "fee_type": "quadratic",
+    "maker_fee_bps": 0,
+    "taker_fee_bps": 700,
+    "settlement_fee_bps": 0
+  }
+}

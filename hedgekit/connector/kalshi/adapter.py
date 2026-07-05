@@ -11,9 +11,13 @@ allowlist and ledgers one ``PRODUCT_REFUSED`` event per refused product through
 an injected :class:`~hedgekit.connector.snapshot.EventLedgerWriter`, isolating a
 broken writer so one bad record never aborts a run.
 
-The trading and account methods (order path is milestone M4; balances, fees,
-positions, fills are issue #3) raise :class:`NotImplementedError` until those
-issues wire them. This module sits on the money path guarded by
+The fee-model and balance-semantics methods are implemented here (issue #18):
+:meth:`KalshiConnector.get_fee_model` resolves a series' fee schedule and
+:meth:`KalshiConnector.get_balance_semantics` returns the recorded
+:data:`KALSHI_BALANCE_SEMANTICS` record. The remaining trading and account
+methods (order path is milestone M4; balances, positions, open orders, fills
+are issue #3) still raise :class:`NotImplementedError` until those issues wire
+them. This module sits on the money path guarded by
 ``scripts/lint_no_floats.py``: no ``/`` or ``float`` appears anywhere.
 """
 
@@ -23,6 +27,7 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Final, cast
 
+from hedgekit.connector.fees import FeeModel, UnknownFeeModelError
 from hedgekit.connector.interface import UnknownMarketError
 from hedgekit.connector.kalshi.client import KalshiApiError
 from hedgekit.connector.kalshi.normalize import (
@@ -34,6 +39,17 @@ from hedgekit.connector.kalshi.normalize import (
     normalize_order_book,
     payload_hash,
 )
+from hedgekit.connector.semantics import (
+    BalanceSemantics,
+    CancelCollateralRelease,
+    FeeDebitTiming,
+    FeeRounding,
+    HaltedMarketBehavior,
+    OrderCollateralInAvailable,
+    OrderCollateralInTotal,
+    PartialFillRepresentation,
+    UnsettledProceeds,
+)
 from hedgekit.connector.snapshot import ConnectorEvent
 
 if TYPE_CHECKING:
@@ -42,10 +58,8 @@ if TYPE_CHECKING:
 
     from hedgekit.connector.kalshi.client import KalshiClient
     from hedgekit.connector.models import (
-        BalanceSemantics,
         BalanceSnapshot,
         ExchangeStatus,
-        FeeModel,
         Fill,
         NormalizedMarket,
         OpenOrder,
@@ -72,8 +86,106 @@ _MALFORMED_MARKET_ERRORS: Final = (KeyError, ValueError, TypeError)
 #: Message naming the milestone that wires the order path (place/cancel).
 _ORDER_PATH_DEFERRAL: Final = "the order path is deferred to milestone M4"
 
-#: Message naming the issue that wires account/balance/fee access.
-_ACCOUNT_DEFERRAL: Final = "balance, fee, and account access is deferred to issue #3"
+#: Message naming the issue that wires the remaining account access.
+_ACCOUNT_DEFERRAL: Final = (
+    "account access (balances, positions, open orders, fills) is deferred "
+    "to issue #3"
+)
+
+#: One basis point is 100 ppm (1e-4 vs 1e-6), so a bps rate scales to ppm by
+#: multiplying by 100 (e.g. 700 bps -> 70_000 ppm) -- integer math only.
+_BPS_TO_PPM: Final = 100
+
+#: The only fee-formula family whose schedule the SPEC fee-bound math models; a
+#: series advertising any other ``fee_type`` fails closed as unknown.
+_QUADRATIC_FEE_TYPE: Final = "quadratic"
+
+#: A market ticker's series ticker is the segment before the first ``-`` (e.g.
+#: ``"KXFED-24DEC"`` -> ``"KXFED"``); a bare series ticker has no separator.
+_SERIES_TICKER_SEPARATOR: Final = "-"
+
+#: Kalshi's recorded balance-interpretation semantics: five fields pinned to
+#: documented behavior, three left ``UNKNOWN`` for lack of public evidence. See
+#: ``tests/fixtures/exchange/kalshi/README.md`` for the field-by-field evidence.
+KALSHI_BALANCE_SEMANTICS: Final[BalanceSemantics] = BalanceSemantics(
+    open_order_collateral_in_total=OrderCollateralInTotal.UNKNOWN,
+    open_order_collateral_in_available=(
+        OrderCollateralInAvailable.DEDUCTED_FROM_AVAILABLE
+    ),
+    fee_debit_timing=FeeDebitTiming.AT_EXECUTION,
+    fee_rounding=FeeRounding.UP_TO_NEXT_CENT,
+    partial_fill_representation=PartialFillRepresentation.PER_FILL_RECORDS,
+    cancel_collateral_release=CancelCollateralRelease.UNKNOWN,
+    unsettled_proceeds=UnsettledProceeds.EXCLUDED_UNTIL_CREDITED,
+    halted_market_behavior=HaltedMarketBehavior.UNKNOWN,
+)
+
+
+def _bps_to_ppm(value: object, field_name: str) -> int:
+    """Convert a basis-point leaf to ppm, failing closed on a non-int leaf.
+
+    A JSON fee leaf must be a true integer count of basis points; a ``bool``,
+    a ``float``, or any other type means the schedule is not the shape this
+    adapter understands, so it is refused rather than misread.
+
+    Args:
+        value: The raw ``*_fee_bps`` leaf from the series document.
+        field_name: The leaf's key, surfaced in the failure message.
+
+    Returns:
+        The rate in ppm (``value * 100``).
+
+    Raises:
+        UnknownFeeModelError: If ``value`` is a ``bool`` or not an ``int``.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise UnknownFeeModelError(
+            f"series fee leaf {field_name!r} must be an int, "
+            f"got {type(value).__name__}"
+        )
+    return value * _BPS_TO_PPM
+
+
+def _fee_model_from_series(payload: Mapping[str, Any]) -> FeeModel:
+    """Parse a Kalshi ``/series/{ticker}`` document into a :class:`FeeModel`.
+
+    Args:
+        payload: The parsed series-document JSON body.
+
+    Returns:
+        The normalized fee model.
+
+    Raises:
+        UnknownFeeModelError: If the document is missing the ``series`` block or
+            a fee field, advertises a non-quadratic ``fee_type``, or carries a
+            non-integer fee leaf.
+    """
+    try:
+        series = payload["series"]
+        fee_type = series["fee_type"]
+        schedule_id = series["fee_schedule_id"]
+        maker_bps = series["maker_fee_bps"]
+        taker_bps = series["taker_fee_bps"]
+        settlement_bps = series["settlement_fee_bps"]
+    except (KeyError, TypeError) as exc:
+        raise UnknownFeeModelError(
+            f"series document is missing a required fee field: {exc}"
+        ) from exc
+    if fee_type != _QUADRATIC_FEE_TYPE:
+        raise UnknownFeeModelError(
+            f"unsupported fee_type {fee_type!r}; only {_QUADRATIC_FEE_TYPE!r} "
+            "is modeled"
+        )
+    if not isinstance(schedule_id, str) or not schedule_id:
+        raise UnknownFeeModelError(
+            f"series fee_schedule_id must be a non-empty str, got {schedule_id!r}"
+        )
+    return FeeModel(
+        schedule_id=schedule_id,
+        maker_fee_ppm=_bps_to_ppm(maker_bps, "maker_fee_bps"),
+        taker_fee_ppm=_bps_to_ppm(taker_bps, "taker_fee_bps"),
+        settlement_fee_ppm=_bps_to_ppm(settlement_bps, "settlement_fee_bps"),
+    )
 
 
 def _utc_now() -> datetime:
@@ -333,12 +445,13 @@ class KalshiConnector:
         return self._clock()
 
     def get_balance_semantics(self) -> BalanceSemantics:
-        """Raise; account access is deferred (issue #3).
+        """Return Kalshi's recorded balance-interpretation semantics.
 
-        Raises:
-            NotImplementedError: Always; see :data:`_ACCOUNT_DEFERRAL`.
+        Returns:
+            The shared :data:`KALSHI_BALANCE_SEMANTICS` record (five documented
+            fields, three ``UNKNOWN``).
         """
-        raise NotImplementedError(_ACCOUNT_DEFERRAL)
+        return KALSHI_BALANCE_SEMANTICS
 
     def get_balances(self) -> BalanceSnapshot:
         """Raise; account access is deferred (issue #3).
@@ -376,15 +489,32 @@ class KalshiConnector:
         raise NotImplementedError(_ACCOUNT_DEFERRAL)
 
     def get_fee_model(self, market_or_series: str) -> FeeModel:
-        """Raise; fee access is deferred (issue #3).
+        """Return the fee schedule for a market or its series, failing closed.
+
+        Resolves the series ticker (the segment before the first ``-``), fetches
+        its ``/series/{ticker}`` document, and normalizes the schedule. Both a
+        market ticker (``"KXFED-24DEC"``) and its bare series (``"KXFED"``)
+        resolve to the same fee model.
 
         Args:
-            market_or_series: Unused market ticker or series key.
+            market_or_series: A market ticker or a bare series ticker.
+
+        Returns:
+            The normalized fee model for the resolved series.
 
         Raises:
-            NotImplementedError: Always; see :data:`_ACCOUNT_DEFERRAL`.
+            UnknownFeeModelError: If the series is unrecognized (a 404) or its
+                document is malformed / advertises an unsupported ``fee_type``.
         """
-        raise NotImplementedError(_ACCOUNT_DEFERRAL)
+        series_ticker = market_or_series.split(_SERIES_TICKER_SEPARATOR, 1)[0]
+        try:
+            response = self._client.get("series", series_ticker)
+        except KalshiApiError as exc:
+            raise UnknownFeeModelError(
+                f"no fee schedule for series {series_ticker!r}"
+            ) from exc
+        raw = cast("Mapping[str, Any]", response.payload)
+        return _fee_model_from_series(raw)
 
     def place_order(self, normalized_intent: object, approval_token: object) -> object:
         """Raise; the order path is deferred (milestone M4).

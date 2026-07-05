@@ -11,13 +11,14 @@ page of ``/markets`` and ``/events`` (bounded by a hard cap that raises
 :class:`KalshiPaginationError` rather than looping forever) and fails closed on
 a single unnormalizable binary by ledgering a :data:`MARKET_MALFORMED_EVENT`.
 
+``get_fee_model`` and ``get_balance_semantics`` are implemented (issue #18).
+
 Scope fence -- methods that intentionally raise :class:`NotImplementedError`
 until later work wires them:
 
     * ``place_order`` / ``cancel_order`` -- the order path (milestone M4).
-    * ``get_balances`` / ``get_balance_semantics`` / ``get_positions`` /
-      ``get_open_orders`` / ``get_fills`` / ``get_fee_model`` -- balance, fee,
-      and account access (issue #3).
+    * ``get_balances`` / ``get_positions`` / ``get_open_orders`` /
+      ``get_fills`` -- the remaining account access (issue #3).
 
 Everything on the price/money path uses :mod:`hedgekit.numeric` scaled-integer
 types -- never floats (enforced by ``scripts/lint_no_floats.py``).

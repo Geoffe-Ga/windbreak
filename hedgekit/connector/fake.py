@@ -30,6 +30,16 @@ from hedgekit.connector.models import (
     OrderBookSnapshot,
     Position,
 )
+from hedgekit.connector.semantics import (
+    CancelCollateralRelease,
+    FeeDebitTiming,
+    FeeRounding,
+    HaltedMarketBehavior,
+    OrderCollateralInAvailable,
+    OrderCollateralInTotal,
+    PartialFillRepresentation,
+    UnsettledProceeds,
+)
 from hedgekit.numeric import ContractCentis, MoneyMicros, PricePips
 
 if TYPE_CHECKING:
@@ -46,13 +56,6 @@ _STATUS_BY_NAME: Final[dict[str, Literal["open", "paused", "closed"]]] = {
     "open": "open",
     "paused": "paused",
     "closed": "closed",
-}
-
-#: Narrow a JSON balance-semantics string to its three-valued literal domain.
-_SEMANTIC_BY_NAME: Final[dict[str, Literal["yes", "no", "unknown"]]] = {
-    "yes": "yes",
-    "no": "no",
-    "unknown": "unknown",
 }
 
 #: Narrow a JSON side string to the YES/NO literal domain.
@@ -199,21 +202,31 @@ def _load_balances(directory: Path) -> BalanceSnapshot:
 
 
 def _load_balance_semantics(directory: Path) -> BalanceSemantics:
-    """Load ``balance_semantics.json`` into a :class:`BalanceSemantics`."""
+    """Load ``balance_semantics.json`` into a :class:`BalanceSemantics`.
+
+    Each field value is the *name* of an enum member (e.g. ``"UP_TO_NEXT_CENT"``)
+    looked up via ``EnumClass[name]``, so a typo'd or invented member name in a
+    hand-edited fixture raises ``KeyError`` loudly rather than silently coercing
+    to a default.
+    """
     data = _read_json(directory.joinpath("balance_semantics.json"))
     return BalanceSemantics(
-        collateral_in_total=_SEMANTIC_BY_NAME[data["collateral_in_total"]],
-        collateral_excluded_from_available=_SEMANTIC_BY_NAME[
-            data["collateral_excluded_from_available"]
+        open_order_collateral_in_total=OrderCollateralInTotal[
+            data["open_order_collateral_in_total"]
         ],
-        fee_debited_at_execution=_SEMANTIC_BY_NAME[data["fee_debited_at_execution"]],
-        partial_fills_represented=_SEMANTIC_BY_NAME[data["partial_fills_represented"]],
-        cancel_releases_collateral=_SEMANTIC_BY_NAME[
-            data["cancel_releases_collateral"]
+        open_order_collateral_in_available=OrderCollateralInAvailable[
+            data["open_order_collateral_in_available"]
         ],
-        unsettled_proceeds_visible=_SEMANTIC_BY_NAME[
-            data["unsettled_proceeds_visible"]
+        fee_debit_timing=FeeDebitTiming[data["fee_debit_timing"]],
+        fee_rounding=FeeRounding[data["fee_rounding"]],
+        partial_fill_representation=PartialFillRepresentation[
+            data["partial_fill_representation"]
         ],
+        cancel_collateral_release=CancelCollateralRelease[
+            data["cancel_collateral_release"]
+        ],
+        unsettled_proceeds=UnsettledProceeds[data["unsettled_proceeds"]],
+        halted_market_behavior=HaltedMarketBehavior[data["halted_market_behavior"]],
     )
 
 
