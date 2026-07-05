@@ -103,6 +103,20 @@ are the pool.
 `pick-next.sh` prints nothing: announce "Backlog drained. Ralph is done." and
 call `/loop` to **stop**.
 
+### Step 0.5 — Main-health check (P0, owner directive 2026-07-05)
+
+A red `main` outranks every lane. On every wake:
+```bash
+gh run list --branch main --workflow ci.yml --limit 1 --json conclusion --jq '.[0].conclusion'
+gh issue list --label ci-red --state open --json number --jq '.[].number'
+```
+If the latest completed CI run on `main` failed, or an open `ci-red` issue
+exists (filed by `main-red-alarm.yml`): **dispatch a ci-debugging worker on it
+immediately** — do not wait for the picker, do not refill other slots first.
+The worker reproduces from the failing run, fixes the root cause
+failing-test-first, and opens a PR; never weaken a gate to go green. Close the
+`ci-red` issue only when CI on `main` is green again.
+
 ### Step 1 — Merge every ready lane (serialized, up-to-date only)
 
 Classify each in-flight PR with the authoritative readiness helper — never
@@ -142,9 +156,19 @@ Then act on `$STATUS`:
   A clean sync → dispatch its `ralph-worker` to re-clear Gate 2 locally and push;
   it re-merges on a later wake once green. `SYNC-CONFLICT` → that lane drops to
   Gate 1 (worker resolves the conflict as a root-cause change, re-greens, pushes).
-- **`pending`** / **`awaiting-review`** — CI is still running or no fresh LGTM
-  verdict exists yet. Leave the lane; its Step 5 subscription wakes you when CI
-  or the verdict changes. **Exception — missing review usually means a merge
+- **`awaiting-review` with a fresh non-LGTM verdict — triage it, don't just
+  wait** (owner directive 2026-07-05): read the verdict comment posted after
+  HEAD. **`CHANGES_REQUESTED` always blocks** → Step 2 (`address-feedback`).
+  **`COMMENTS` with zero blocking findings** (no 🔴/BLOCKING items, no
+  insufficient-testing flag) may merge exactly like an LGTM once CI is green
+  and the PR is up-to-date — file the non-blocking nits as backlog issues (or
+  leave them to the groom gate) so the pipeline keeps flowing. `COMMENTS`
+  **with** any blocking finding → Step 2 (`address-feedback`). Merging is
+  NEVER allowed with failing or pending CI — all-green + fresh verdict is the
+  floor, no exceptions.
+- **`pending`** / **`awaiting-review`** (no fresh verdict yet) — CI is still
+  running or the reviewer hasn't posted for this HEAD. Leave the lane; its
+  Step 5 subscription wakes you when CI or the verdict changes. **Exception — missing review usually means a merge
   conflict:** if the verdict never arrives and the `claude-review` check is
   absent from the rollup entirely, check
   `gh pr view N --json mergeable,mergeStateStatus` FIRST. A `CONFLICTING`/`DIRTY`
