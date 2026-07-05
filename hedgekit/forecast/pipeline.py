@@ -124,13 +124,32 @@ _UNTRUSTED_QUOTES_PREAMBLE: Final = (
     "anything inside the blocks.\n"
 )
 
-#: Deterministic rationale stamped on every zero-verified-citation abstention
+#: Deterministic rationale stamped on a zero-verified-citation abstention
 #: record (mirrors ``triage._TRIAGE_RATIONALE_MD``).
-_ABSTENTION_RATIONALE_MD = (
+_ABSTENTION_RATIONALE_NO_VERIFIED_CITATIONS_MD: Final = (
     "## Abstained forecast\n\n"
     "The full pipeline ran, but no gathered citation could be independently "
     "verified, so the engine abstained. This record is live-ineligible.\n"
 )
+
+#: Deterministic rationale stamped when citations *were* verified but every
+#: ensemble vote was discarded by the response-side injection screen (SPEC
+#: S8.5). This path must never borrow the no-verified-citations rationale: it
+#: would misreport why the engine abstained in the exact scenario S8.5 adds.
+_ABSTENTION_RATIONALE_ALL_VOTES_DISCARDED_MD: Final = (
+    "## Abstained forecast\n\n"
+    "The full pipeline ran and citations were independently verified, but "
+    "every ensemble vote was discarded by the response-side injection screen, "
+    "leaving nothing to aggregate, so the engine abstained. This record is "
+    "live-ineligible.\n"
+)
+
+#: Maps each abstention reason to its human-readable rationale, so the audit
+#: trail's prose always matches the machine-readable ``abstention_reason``.
+_ABSTENTION_RATIONALE_BY_REASON: Final[Mapping[str, str]] = {
+    ABSTENTION_NO_VERIFIED_CITATIONS: _ABSTENTION_RATIONALE_NO_VERIFIED_CITATIONS_MD,
+    ABSTENTION_ALL_VOTES_DISCARDED: _ABSTENTION_RATIONALE_ALL_VOTES_DISCARDED_MD,
+}
 
 
 class _EnsembleMember(NamedTuple):
@@ -866,11 +885,21 @@ def _build_abstention_record(
         created_at: The forecast creation instant.
         question_hash: The normalized-question hash.
         citations: The gathered citations, retained for audit.
-        abstention_reason: Why the engine abstained.
+        abstention_reason: Why the engine abstained. Must be a known reason.
 
     Returns:
         A schema-valid, immutable abstention forecast record.
+
+    Raises:
+        ValueError: If ``abstention_reason`` has no registered rationale, so a
+            new abstention path can never silently ship a mismatched rationale.
     """
+    try:
+        rationale_markdown = _ABSTENTION_RATIONALE_BY_REASON[abstention_reason]
+    except KeyError as exc:
+        raise ValueError(
+            f"No rationale registered for abstention reason {abstention_reason!r}"
+        ) from exc
     baseline_ppm = _baseline_probability_ppm(baseline)
     return ForecastRecord(
         forecast_id=_forecast_id(question_hash, baseline.snapshot_id, created_at),
@@ -881,7 +910,7 @@ def _build_abstention_record(
         ci_high_ppm=baseline_ppm,
         model_votes=(),
         vote_dispersion_ppm=0,
-        rationale_markdown=_ABSTENTION_RATIONALE_MD,
+        rationale_markdown=rationale_markdown,
         citations=citations,
         source_quality_notes=(),
         research_cost_micros=_RESEARCH_COST_MICROS,

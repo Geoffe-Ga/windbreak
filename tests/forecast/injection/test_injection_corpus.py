@@ -738,6 +738,65 @@ def test_run_pipeline_all_malicious_votes_abstains_with_all_votes_discarded(
     assert len(ledger.events_by_type(FORECAST_OUTPUT_DISCARDED_EVENT)) == 3
 
 
+def test_run_pipeline_all_votes_discarded_rationale_reports_the_discard_cause(
+    market: NormalizedMarket,
+    baseline: BaselineQuoteSnapshot,
+    created_at: datetime,
+    research_tools: ResearchTools,
+    make_malicious_vote_transport: MaliciousVoteTransportFactory,
+) -> None:
+    """The human-readable rationale for an all-votes-discarded abstention must
+    report that votes were discarded by the injection screen -- never the
+    citation-verification rationale, which is factually wrong on this path
+    (citations *were* verified here; it was the votes that failed).
+    """
+    ledger = InMemoryForecastLedger()
+    transport = PromptRecordingTransport(
+        make_malicious_vote_transport(frozenset({0, 1, 2}))
+    )
+
+    record = run_pipeline(
+        market,
+        baseline,
+        transport=transport,
+        created_at=created_at,
+        research_tools=research_tools,
+        ledger=ledger,
+    )
+
+    rationale = record.rationale_markdown
+    assert "discard" in rationale.lower()
+    assert "no gathered citation could be independently verified" not in rationale
+
+
+def test_run_pipeline_no_verified_citations_rationale_reports_that_cause(
+    market: NormalizedMarket,
+    baseline: BaselineQuoteSnapshot,
+    created_at: datetime,
+    tmp_path: Path,
+    corpus_page: CorpusPageLoader,
+    make_fake_vote_transport: FakeVoteTransportFactory,
+) -> None:
+    """The citation-driven abstention path keeps its distinct rationale: it
+    reports that no citation could be independently verified, so the two
+    abstention causes are never conflated in the audit trail.
+    """
+    case = next(c for c in _ABSTAIN_CASES)
+    run = _run_corpus_case(
+        case,
+        market=market,
+        baseline=baseline,
+        created_at=created_at,
+        cache_dir=tmp_path,
+        corpus_page=corpus_page,
+        make_fake_vote_transport=make_fake_vote_transport,
+    )
+
+    assert run.record.abstention_reason == ABSTENTION_NO_VERIFIED_CITATIONS
+    rationale = run.record.rationale_markdown
+    assert "no gathered citation could be independently verified" in rationale
+
+
 def test_collect_model_votes_all_clean_produces_three_votes_and_zero_events(
     market: NormalizedMarket,
     baseline: BaselineQuoteSnapshot,
