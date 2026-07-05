@@ -135,6 +135,55 @@ if command -v jq >/dev/null 2>&1; then
     "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H \
        COMMENTS_JSON="$(cj '{"createdAt":"'"$STALE"'","body":"## Verdict: LGTM\n"}')" \
        run 100)"
+
+  # The real reviewer format: a heading with the token on the NEXT line,
+  # emoji-prefixed. The separator class `[:*\s]+` cannot cross the emoji, so
+  # this currently misclassifies as awaiting-review — the exact observed bug.
+  check "real ## Verdict\\n✅ LGTM (fresh) → ready" "ready" \
+    "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H \
+       COMMENTS_JSON="$(cj '{"createdAt":"'"$FRESH"'","body":"## Summary\ngood\n\n## Verdict\n✅ LGTM\n"}')" \
+       run 100)"
+
+  # Same-line emoji variant: `## Verdict: ✅ LGTM` — the emoji sits between the
+  # colon/space separator and the token itself.
+  check "real ## Verdict: ✅ LGTM (fresh, same line) → ready" "ready" \
+    "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H \
+       COMMENTS_JSON="$(cj '{"createdAt":"'"$FRESH"'","body":"## Verdict: ✅ LGTM\n"}')" \
+       run 100)"
+
+  # Latest-verdict-wins across the emoji-prefixed format: a stale
+  # CHANGES_REQUESTED followed by a fresh LGTM must still resolve to ready.
+  check "real latest-verdict-wins across emoji format (LGTM after CR) → ready" "ready" \
+    "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H \
+       COMMENTS_JSON="$(cj '{"createdAt":"'"$STALE"'","body":"## Verdict\n🔴 CHANGES_REQUESTED\n"},{"createdAt":"'"$FRESH"'","body":"## Verdict\n✅ LGTM\n"}')" \
+       run 100)"
+
+  # Guard: emoji-prefixed CHANGES_REQUESTED must never read as LGTM.
+  check "real ## Verdict\\n🔴 CHANGES_REQUESTED (fresh) → awaiting-review" "awaiting-review" \
+    "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H \
+       COMMENTS_JSON="$(cj '{"createdAt":"'"$FRESH"'","body":"## Verdict\n🔴 CHANGES_REQUESTED\n"}')" \
+       run 100)"
+
+  # Guard: emoji-prefixed COMMENTS must never read as LGTM.
+  check "real ## Verdict\\n💬 COMMENTS (fresh) → awaiting-review" "awaiting-review" \
+    "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H \
+       COMMENTS_JSON="$(cj '{"createdAt":"'"$FRESH"'","body":"## Verdict\n💬 COMMENTS\n"}')" \
+       run 100)"
+
+  # Prose guard: the widened separator class must still stop at the first
+  # alphanumeric character after the emoji, so a stray "LGTM" later in the
+  # body's prose never reactivates the match.
+  check "real prose 'LGTM' after emoji CHANGES_REQUESTED → awaiting-review" "awaiting-review" \
+    "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H \
+       COMMENTS_JSON="$(cj '{"createdAt":"'"$FRESH"'","body":"## Verdict\n🔴 CHANGES_REQUESTED\n\nAn LGTM will come after fixes.\n"}')" \
+       run 100)"
+
+  # Freshness guard intact under the new emoji-prefixed format: a stale LGTM
+  # must still be rejected even once the separator class is widened.
+  check "real ## Verdict\\n✅ LGTM but stale → awaiting-review" "awaiting-review" \
+    "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H \
+       COMMENTS_JSON="$(cj '{"createdAt":"'"$STALE"'","body":"## Verdict\n✅ LGTM\n"}')" \
+       run 100)"
 else
   echo "  skip - real-jq verdict-regex cases (jq not installed)"
 fi

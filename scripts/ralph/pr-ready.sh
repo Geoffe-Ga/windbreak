@@ -48,12 +48,25 @@ done
 # the match must be case-insensitive AND multiline (`m`, so `^` anchors to the
 # verdict line — which sits at the END of a multi-line `## Summary …` body, not
 # at string start), prefix-tolerant, and keyed to the verdict LINE (a stray
-# "LGTM" in prose must not count). This mirrors the canonical parser in
-# `.claude/skills/await-claude-review/SKILL.md`. Backslashes are doubled because
-# this text is spliced into a jq string literal, where `\s` is an invalid escape
-# and must reach the regex engine as `\\s`.
-readonly VERDICT_RE='(?im)^\\s*(?:#{1,6}\\s+|\\*\\*)?verdict[:*\\s]'
-readonly VERDICT_LGTM_RE="${VERDICT_RE}+lgtm"
+# "LGTM" in prose must not count). Reviewers are also seen posting `## Verdict`
+# as a bare heading with an emoji-prefixed token on the NEXT line (e.g.
+# `## Verdict\n✅ LGTM`), so the LGTM separator tolerates any non-alphanumeric
+# decoration (emoji/whitespace/newline) between `verdict` and `lgtm`. That stays
+# safe: a stray "LGTM" in prose never matches (it is keyed to the verdict line),
+# and a non-LGTM token like COMMENTS/CHANGES_REQUESTED puts a letter right after
+# the emoji, breaking the non-alphanumeric run before any later "LGTM". Only the
+# LGTM matcher widens; `VERDICT_RE` (comment selection) keeps its strict
+# `[:*\s]` class unchanged. Backslashes are doubled because this text is spliced
+# into a jq string literal, where `\s` is an invalid escape and must reach the
+# regex engine as `\\s` (the negated class `[^a-zA-Z0-9]` has no backslash, so
+# it is spelled literally — the explicit form self-documents and sidesteps the
+# Oniguruma subtlety of case-folding a negated class). The per-branch fragments
+# are SINGLE-quoted (not folded into the surrounding double quotes) so their
+# `\\s` survives verbatim: inside double quotes bash would collapse `\\s` → `\s`,
+# which jq then rejects as an invalid escape — the class must stay `[:*\\s]`.
+readonly VERDICT_PREFIX_RE='(?im)^\\s*(?:#{1,6}\\s+|\\*\\*)?verdict'
+readonly VERDICT_RE="${VERDICT_PREFIX_RE}"'[:*\\s]'
+readonly VERDICT_LGTM_RE="${VERDICT_PREFIX_RE}"'[^a-zA-Z0-9]+lgtm'
 
 # `${arr[@]+"${arr[@]}"}` expands to nothing when the array is empty instead of
 # tripping `set -u` on bash 3.2 (stock /bin/bash on macOS).
