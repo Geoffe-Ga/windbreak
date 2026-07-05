@@ -129,7 +129,7 @@ Then act on `$STATUS`:
   gh issue close "$ISSUE_N" --reason completed 2>/dev/null || true
   git checkout main && git pull --ff-only
   scripts/ralph/fleet.sh release "$ISSUE_N"        # frees the slot
-  python3 -c "import json;p='scripts/ralph/state.json';s=json.load(open(p));s['completed_since_groom']+=1;s['completed_since_deslop']=s.get('completed_since_deslop',0)+1;s['total_completed']+=1;s['last_completed_issue']=$ISSUE_N;json.dump(s,open(p,'w'),indent=2)"
+  python3 -c "import json;p='scripts/ralph/state.json';s=json.load(open(p));s['completed_since_groom']+=1;s['completed_since_deslop']=s.get('completed_since_deslop',0)+1;s['total_completed']+=1;s['last_completed_issue']=$ISSUE_N;open(p,'w').write(json.dumps(s,indent=2)+'\n')"
   ```
   (Idempotent if `iteration-trigger.yml` or a prior wake already merged it — the
   PR shows MERGED; do the same close + `release` + state bump.)
@@ -195,7 +195,7 @@ When `completed_since_groom >= groom_interval`:
 1. Invoke **`/backlog-grooming`** as a Skill (label/close ops are safe while lanes build).
 2. Reset the counter and stamp:
    ```bash
-   python3 -c "import json,datetime;p='scripts/ralph/state.json';s=json.load(open(p));s['completed_since_groom']=0;s['last_groom_at']=datetime.datetime.now().isoformat();json.dump(s,open(p,'w'),indent=2)"
+   python3 -c "import json,datetime;p='scripts/ralph/state.json';s=json.load(open(p));s['completed_since_groom']=0;s['last_groom_at']=datetime.datetime.now().isoformat();open(p,'w').write(json.dumps(s,indent=2)+'\n')"
    ```
 3. Commit the state change (state-only changes may go directly on `main`).
 
@@ -210,7 +210,7 @@ Step 1's bump):
    ```
 2. Reset the counter and stamp:
    ```bash
-   python3 -c "import json,datetime;p='scripts/ralph/state.json';s=json.load(open(p));s['completed_since_deslop']=0;s['last_deslop_at']=datetime.datetime.now().isoformat();json.dump(s,open(p,'w'),indent=2)"
+   python3 -c "import json,datetime;p='scripts/ralph/state.json';s=json.load(open(p));s['completed_since_deslop']=0;s['last_deslop_at']=datetime.datetime.now().isoformat();open(p,'w').write(json.dumps(s,indent=2)+'\n')"
    ```
 3. Commit the state change (state-only changes may go directly on `main`).
 
@@ -257,19 +257,44 @@ for all of them. Arrange, in this order of preference:
 
 1. **Background workers** already wake you on their own completion — nothing to
    arm for a lane that's still building.
-2. **Per-PR webhook subscriptions** for every in-flight PR, so any one PR's CI
-   failure or new review verdict wakes you independently:
-   ```
-   mcp__github__subscribe_pr_activity  (owner, repo, pullNumber)   # once per open PR
-   ```
-   Comment and CI-failure events arrive as `<github-webhook-activity>` and wake
-   this session; a verdict comment wakes you directly. `subscribe_pr_activity` is
-   **idempotent** — re-subscribing an already-watched PR every wake is safe and
-   does not stack subscriptions, so just (re)subscribe every open PR each wake.
-   Unsubscribe a PR once it merges/closes.
-3. **`ScheduleWakeup` fallback** (~1200–1800s): webhooks do **not** deliver CI
-   *success*, `BEHIND→green` transitions, or merges, so keep one modest fallback
-   armed to re-poll Step 0–4 for any lane that quietly went green or up-to-date.
+2. **The fleet Monitor is the PRIMARY wake source for Gates 3–4** (owner
+   directive, 2026-07-05). Keep exactly ONE **persistent** `Monitor` running
+   for the whole session that polls every in-flight Ralph PR (via
+   `gh pr list --author "@me"` + `scripts/ralph/pr-ready.sh`) every ~90s and
+   emits one event line per **state transition** — `PR#N:<old→new status>`
+   (`ready`/`behind`/`pending`/`ci-failed`/`awaiting-review`) — and one line
+   when a PR **disappears** (merged or closed, incl. `iteration-trigger.yml`
+   auto-merges: "slot may be free, run a tick to release+refill"). Design
+   rules learned the hard way (2026-07-05 incident — monitor went silent for
+   30+ min while 4 PRs transitioned):
+   - **Errors are isolated PER PR, never per cycle.** One PR's failed query
+     must not suppress other PRs' events. Retry the failed PR once, then
+     record `PR#N:query-error` — the transition to `query-error` emits
+     loudly. An `ok`-flag that skips the whole cycle turns one bad PR into
+     permanent, invisible silence.
+   - **The Monitor shell is zsh: unquoted `$var` does NOT word-split.**
+     Iterate lists with `for x in $(printf '%s\n' "$list")` (command
+     substitutions DO split), never `for x in $list` — the latter passes the
+     whole newline-joined list as one argument and every downstream call
+     fails.
+   - Seed state silently on the first pass (no spurious event); diff the
+     full status map so failures emit just like successes.
+   - If no fleet Monitor is running at the end of a wake (session restart,
+     TaskStop, crash), arm a fresh one. If the Monitor has emitted nothing
+     across a whole heartbeat interval while PRs are in flight, treat it as
+     suspect: verify liveness (compare its last events against live
+     `pr-ready.sh` output) and restart it if they disagree.
+3. **Per-PR webhook subscriptions** (`mcp__github__subscribe_pr_activity`),
+   when the GitHub MCP server is available in the session, add push-grade
+   latency for comment/CI-failure events. Idempotent — (re)subscribe each
+   open PR every wake; unsubscribe on merge/close. They do NOT deliver CI
+   success or merges, which is why the Monitor above stays primary.
+4. **`ScheduleWakeup` is belt-and-suspenders, not the mechanism.** Arm a
+   modest fallback (~1200–1800s) to survive the Monitor dying silently or an
+   event being missed. Only if the fleet Monitor could NOT be armed (tool
+   unavailable) drop the fallback to ~240–270s so refills don't degrade into
+   waves gated on the slowest lane's wake. Pool empty + backlog empty →
+   Mode A — announce done and stop.
 
 Then **end the turn.** Do not run a Monitor that waits for all lanes to be
 terminal — that is the barrier this design removes. Each independent wake re-runs

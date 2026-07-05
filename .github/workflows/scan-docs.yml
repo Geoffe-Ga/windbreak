@@ -17,6 +17,12 @@ on:
         required: false
         default: "4"
 
+# A called reusable workflow can never receive MORE GITHUB_TOKEN scope than its caller grants; _claude-scan.yml needs id-token:write for the Claude action's OIDC auth exchange, and id-token is never in the default token — omitting this block makes GitHub fail the run at startup with no logs (the observed startup_failure).
+permissions:
+  contents: read
+  issues: write
+  id-token: write
+
 jobs:
   run:
     uses: ./.github/workflows/_claude-scan.yml
