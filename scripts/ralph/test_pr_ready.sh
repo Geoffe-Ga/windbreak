@@ -188,6 +188,23 @@ else
   echo "  skip - real-jq verdict-regex cases (jq not installed)"
 fi
 
+# --- cwd-independence guard ------------------------------------------------
+# pr-ready.sh takes the PR number explicitly and never resolves a repo root,
+# so its classification must be identical no matter the caller's cwd. This
+# passes TODAY — it's a regression guard (not a RED case) protecting the
+# "no cwd-derived state" design so a future refactor doesn't quietly
+# introduce one, unlike fleet.sh / pick-next.sh which infer the root from
+# `git rev-parse --show-toplevel` and are being fixed for #83.
+mkdir -p "$WORK/sub"
+run_sub() { (cd "$WORK/sub" && PATH="$BIN:$PATH" "$READY" "$@" 2>/dev/null); }
+
+check "pending verdict identical from \$WORK vs a subdirectory (cwd guard)" \
+  "$(CHECKS_EC=8 run 100)" "$(CHECKS_EC=8 run_sub 100)"
+
+check "ready verdict identical from \$WORK vs a subdirectory (cwd guard)" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" run 100)" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" run_sub 100)"
+
 # --- summary ---------------------------------------------------------------
 echo
 echo "pr-ready tests: $PASS passed, $FAIL failed"

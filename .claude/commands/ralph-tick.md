@@ -224,11 +224,19 @@ like any other backlog item.
 Fill the pool back to full immediately — do not wait for other lanes to reach any
 particular gate:
 ```bash
-while [ "$(scripts/ralph/fleet.sh free)" -gt 0 ]; do
+# Bounded refill: never loop more than the number of currently-free slots
+# (≤ max_workers), and stop the instant an assign fails — otherwise a repeated
+# "branch already used by worktree" error spins the loop (see issue #83).
+slots=$(scripts/ralph/fleet.sh free)
+for (( i = 0; i < slots; i++ )); do
+  [ "$(scripts/ralph/fleet.sh free)" -gt 0 ] || break
   ISSUE_N=$(scripts/ralph/pick-next.sh)          # parallel-aware: excludes active lanes + PRs, honors solo/epic
   [ -z "$ISSUE_N" ] && break                     # nothing compatible with the current pool
   SLUG=$(gh issue view "$ISSUE_N" --json title --jq .title)
-  WT=$(scripts/ralph/fleet.sh assign "$ISSUE_N" "$SLUG")   # worktree off origin/main
+  if ! WT=$(scripts/ralph/fleet.sh assign "$ISSUE_N" "$SLUG"); then   # worktree off origin/main
+    echo "assign failed for issue $ISSUE_N — stopping refill this tick" >&2
+    break
+  fi
   echo "assigned issue $ISSUE_N → $WT"
 done
 ```

@@ -142,6 +142,54 @@ chmod +x "$BIN/gh"
 check "reconcile released only the merged worker" "1" "$(run count)"
 check "the open worker survived reconcile"        "105" "$(run active)"
 
+# --- decouple from the above: clear the reconcile survivor so the
+# worktree-cwd section below starts from a clean, known fleet state. ---------
+run release 105 >/dev/null 2>&1
+check "fleet empty before worktree-cwd section" "" "$(run active)"
+
+# --- worktree-cwd parity: read commands must resolve the same root whether
+# invoked from the main repo checkout or from inside a linked worktree.
+# `git rev-parse --show-toplevel` returns the WORKTREE's own root (not the
+# main repo's) when cwd is inside one — the bug #83 fixes. These RED today. --
+run assign 301 'first parallel lane'  >/dev/null 2>&1
+run assign 302 'second parallel lane' >/dev/null 2>&1
+WT301="$(run path 301)"
+runwt() { (cd "$WT301" && "$FLEET" "$@"); }   # cwd INSIDE a linked worktree
+
+check "list identical from worktree cwd"     "$(run list)"     "$(runwt list)"
+check "active identical from worktree cwd"   "$(run active)"   "$(runwt active)"
+check "count identical from worktree cwd"    "$(run count)"    "$(runwt count)"
+check "free identical from worktree cwd"     "$(run free)"     "$(runwt free)"
+check "path 302 identical from worktree cwd" "$(run path 302)" "$(runwt path 302)"
+
+# --- release from inside a worktree must edit the REAL registry, not a
+# phantom root scoped to the worktree itself ("release edited the wrong
+# registry" symptom). RED today: 302 survives because release resolves the
+# wrong root and silently does nothing. ------------------------------------
+(cd "$WT301" && "$FLEET" release 302 >/dev/null 2>&1) || true
+check "release from worktree removed real lane 302" "301" "$(run active)"
+
+# cleanup: release the remaining lane so nothing lingers for later sections.
+run release 301 >/dev/null 2>&1
+check "cleanup: fleet empty after releasing lane 301" "" "$(run active)"
+
+# --- contract-pin: assign refuses (and prints no path) when the computed
+# branch is already checked out in another, external worktree. This pins the
+# existing `git worktree add` failure propagating under `set -euo pipefail`
+# and may already pass — it's a guard, not a new behavior, so a future
+# refactor of the assign path can't silently swallow the error. -------------
+git -C "$REPO" worktree add "$WORK/external-401" -b issue/401-collide >/dev/null 2>&1
+rc=0
+out="$(run assign 401 'collide' 2>/dev/null)" || rc=$?
+if [[ "$rc" -ne 0 ]]; then
+  ok "assign exits non-zero when branch is checked out elsewhere"
+else
+  bad "assign exits non-zero when branch is checked out elsewhere"
+fi
+check "assign prints no path on branch-reuse" "" "$out"
+git -C "$REPO" worktree remove --force "$WORK/external-401" >/dev/null 2>&1 || true
+git -C "$REPO" branch -D issue/401-collide >/dev/null 2>&1 || true
+
 # --- summary ----------------------------------------------------------------
 echo
 echo "fleet tests: $PASS passed, $FAIL failed"
