@@ -137,10 +137,53 @@ def test_bad_triage_stage_raises_value_error() -> None:
 
 @pytest.mark.parametrize("triage_stage", ["triage_only", "full"])
 def test_valid_triage_stage_values_are_accepted(triage_stage: str) -> None:
-    """Both sanctioned `triage_stage` values construct without error."""
-    record = _record(triage_stage=triage_stage)
+    """Both sanctioned `triage_stage` values construct without error.
+
+    `eligible_for_live` is pinned per stage (rather than left at the
+    fixture's `full`-record default) so this test stays valid alongside the
+    `triage_stage`/`eligible_for_live` invariant pinned below (issue #23):
+    a `triage_only` record is never `eligible_for_live`.
+    """
+    record = _record(
+        triage_stage=triage_stage, eligible_for_live=(triage_stage == "full")
+    )
 
     assert record.triage_stage == triage_stage
+
+
+def test_triage_only_eligible_for_live_combination_raises_value_error() -> None:
+    """A `triage_stage="triage_only"` record can never be `eligible_for_live` (#23).
+
+    A triage-only record was never backed by the full pipeline's research, so
+    it must never be eligible to back a live order; the error message must
+    name both offending fields so a caller can see the conflicting pair at a
+    glance.
+    """
+    with pytest.raises(ValueError) as exc_info:
+        _record(triage_stage="triage_only", eligible_for_live=True)
+
+    message = str(exc_info.value)
+    assert "triage_stage" in message
+    assert "eligible_for_live" in message
+
+
+@pytest.mark.parametrize(
+    ("triage_stage", "eligible_for_live"),
+    [("triage_only", False), ("full", True)],
+)
+def test_sanctioned_triage_stage_eligible_for_live_combinations_construct(
+    triage_stage: str, eligible_for_live: bool
+) -> None:
+    """Both sanctioned `(triage_stage, eligible_for_live)` pairings construct fine.
+
+    Regression coverage for #23: a `triage_only` record that correctly
+    declares itself ineligible, and a `full` record that correctly declares
+    itself eligible, must both continue to construct without error.
+    """
+    record = _record(triage_stage=triage_stage, eligible_for_live=eligible_for_live)
+
+    assert record.triage_stage == triage_stage
+    assert record.eligible_for_live is eligible_for_live
 
 
 def test_forecast_record_is_frozen() -> None:
