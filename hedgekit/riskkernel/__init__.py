@@ -21,6 +21,14 @@ from hedgekit.riskkernel.checks import (
     OrderIntent,
     evaluate_intent,
 )
+from hedgekit.riskkernel.context import (
+    AccountState,
+    EvaluationContext,
+    FeeBounds,
+    MarketView,
+    RiskLimits,
+)
+from hedgekit.riskkernel.floor import worst_case_cost, worst_case_equity
 from hedgekit.riskkernel.modes import (
     REARM_CONFIRMATION_PHRASE,
     IllegalModeTransitionError,
@@ -39,18 +47,25 @@ from hedgekit.riskkernel.process import (
 __all__ = [
     "DEFAULT_CHECKS",
     "REARM_CONFIRMATION_PHRASE",
+    "AccountState",
     "Check",
     "CheckResult",
     "Decision",
+    "EvaluationContext",
+    "FeeBounds",
     "IllegalModeTransitionError",
     "InMemoryKernelLedgerWriter",
     "KernelLedgerWriter",
     "KillReArmError",
     "LoggingKernelLedgerWriter",
+    "MarketView",
     "Mode",
     "ModeCeilingExceededError",
     "ModeStateMachine",
     "OrderIntent",
     "RiskKernel",
+    "RiskLimits",
     "evaluate_intent",
+    "worst_case_cost",
+    "worst_case_equity",
 ]

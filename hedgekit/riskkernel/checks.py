@@ -1,22 +1,31 @@
 """Pre-trade veto checks for the Risk Kernel (SPEC S10.3).
 
-This module ships the 24 SPEC S10.3 pre-trade checks as a deliberate *stub*:
-every check exists, is individually callable with an :class:`OrderIntent`, and
-is wired into :func:`evaluate_intent`'s fail-closed loop, but each one vetoes
-unconditionally with reason ``"not implemented"`` -- no real risk logic lands
-in this issue. The checks are table-driven from a single name sequence and a
-shared stub callable, so adding real logic later means replacing one factory,
-not editing 24 near-identical bodies.
+This module ships the 24 SPEC S10.3 pre-trade checks. Issue #30 gives 15 of
+them real logic -- instrument whitelist, mode/ceiling, the floor invariant,
+fee-bound presence, concentration, daily loss, trailing drawdown, velocity,
+quote/forecast freshness, price band, participation cap, clock skew, and
+reduce-only provability -- each reading a full :class:`EvaluationContext`. The
+remaining 9 are deliberate stubs that still veto, each naming the GitHub issue
+that will replace it (:data:`_STUB_REASONS`), so an operator sees *why* a check
+is not yet live rather than a bare "not implemented".
 
-:func:`evaluate_intent` runs every check fail-closed: a check that *raises* is
-converted into a veto reason (``"{name}: error: {exc}"``) rather than
-propagating, and the checks after it still run.
+Every check is a small, pure callable taking ``(intent, context)`` and
+returning a :class:`CheckResult`; :func:`evaluate_intent` runs the whole
+sequence fail-closed: a check that *raises* is converted into a veto reason
+(``"{name}: error: {exc}"``) rather than propagating, and the checks after it
+still run. The 24-check order is pinned by :data:`_SPEC_10_3_CHECK_NAMES`, and
+:data:`DEFAULT_CHECKS` is assembled from a name-to-check table so that order can
+never drift.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
+
+from hedgekit.numeric import RoundingDirection, divide
+from hedgekit.riskkernel.floor import worst_case_cost, worst_case_equity
+from hedgekit.riskkernel.modes import Mode
 
 if TYPE_CHECKING:
     from hedgekit.numeric.types import (
@@ -25,9 +34,39 @@ if TYPE_CHECKING:
         PricePips,
         ProbabilityPpm,
     )
+    from hedgekit.riskkernel.context import AccountState, EvaluationContext
 
-#: The reason every stub check vetoes with until real logic ships.
-NOT_IMPLEMENTED_REASON = "not implemented"
+
+#: Denominator taking a parts-per-million (ppm) share back to a whole fraction.
+_PPM_DENOMINATOR = 1_000_000
+
+#: The trade actions treated as *opening* a new position (notional at risk).
+_OPENING_ACTIONS: frozenset[str] = frozenset({"buy"})
+
+#: The trade actions treated as *closing* an existing position (proceeds, not
+#: notional, so the floor invariant charges only fees + buffer).
+_CLOSING_ACTIONS: frozenset[str] = frozenset({"sell_to_close"})
+
+#: The reason an intent whose action is neither an open nor a provable close is
+#: vetoed by every action-branching check -- the kernel cannot prove its risk.
+_UNPROVABLE_REASON = "unprovable"
+
+
+class _UnprovableCostError(Exception):
+    """Raised when an order's worst-case cost cannot be proven (fail-closed).
+
+    :func:`_order_cost` raises this when either fee upper bound is absent, so a
+    cost that cannot be established fails *closed* rather than being silently
+    assumed. Every cost-consuming check catches it and vetoes as
+    :data:`_UNPROVABLE_REASON`; as defense in depth, :func:`evaluate_intent`'s
+    fail-closed wrapper would also convert an uncaught instance into a veto.
+
+    This deliberately replaces a former ``assert`` narrowing the two optional
+    fee bounds: an ``assert`` is stripped under ``python -O``, which on the
+    money-critical cost path would let a missing bound flow into the arithmetic
+    as though present -- an unacceptable silent-failure risk. A raised
+    exception cannot be optimized away.
+    """
 
 
 @dataclass(frozen=True)
@@ -103,7 +142,7 @@ class Check(Protocol):
     """A pre-trade check: a named callable returning a :class:`CheckResult`.
 
     ``name`` is a read-only property so both a frozen-dataclass field (like
-    :class:`_NotImplementedCheck`) and a plain class attribute satisfy the
+    :class:`_ExplicitVetoStub`) and a plain class attribute satisfy the
     protocol; a bare ``name: str`` would demand a *settable* attribute that a
     frozen check cannot provide.
     """
@@ -112,11 +151,12 @@ class Check(Protocol):
     def name(self) -> str:
         """The SPEC S10.3 check name."""
 
-    def __call__(self, intent: OrderIntent) -> CheckResult:
-        """Evaluate ``intent`` and return this check's verdict.
+    def __call__(self, intent: OrderIntent, context: EvaluationContext) -> CheckResult:
+        """Evaluate ``intent`` against ``context`` and return this verdict.
 
         Args:
             intent: The order intent to evaluate.
+            context: The full evaluation context.
 
         Returns:
             The check's :class:`CheckResult`.
@@ -124,27 +164,634 @@ class Check(Protocol):
         ...
 
 
+# --- Shared helpers ---------------------------------------------------------------
+
+
+def _approve(reason: str = "ok") -> CheckResult:
+    """Return a non-vetoing :class:`CheckResult`.
+
+    Args:
+        reason: An optional human-readable note; unused by callers that pass.
+
+    Returns:
+        A :class:`CheckResult` that does not veto.
+    """
+    return CheckResult(vetoed=False, reason=reason)
+
+
+def _veto(reason: str) -> CheckResult:
+    """Return a vetoing :class:`CheckResult` carrying ``reason``.
+
+    Args:
+        reason: The human-readable reason for the veto.
+
+    Returns:
+        A vetoing :class:`CheckResult`.
+    """
+    return CheckResult(vetoed=True, reason=reason)
+
+
+def _ppm_of(base: int, ppm: int) -> int:
+    """Return ``base * ppm / 1_000_000``, rounded down (floor).
+
+    The share is floored via :func:`~hedgekit.numeric.divide` with
+    :data:`RoundingDirection.UNDERSTATE_EQUITY`, so a dropped remainder can only
+    ever *shrink* a permissive threshold -- never inflate one -- keeping every
+    ppm-scaled limit conservative.
+
+    Args:
+        base: The scaled-integer base value (e.g. equity or depth ``.value``).
+        ppm: The share, in parts per million.
+
+    Returns:
+        The floored ppm share of ``base``.
+    """
+    return divide(
+        base * ppm, _PPM_DENOMINATOR, rounding=RoundingDirection.UNDERSTATE_EQUITY
+    )
+
+
+def _equity_of(account: AccountState) -> MoneyMicros:
+    """Compute the worst-case equity from an :class:`AccountState`.
+
+    Args:
+        account: The account-state snapshot to read the five equity terms from.
+
+    Returns:
+        The worst-case equity, in micros.
+    """
+    return worst_case_equity(
+        exchange_verified_available_cash=account.exchange_verified_available_cash,
+        guaranteed_terminal_value_of_positions=(
+            account.guaranteed_terminal_value_of_positions
+        ),
+        pending_kernel_reservations=account.pending_kernel_reservations,
+        unresolved_fee_upper_bounds=account.unresolved_fee_upper_bounds,
+        reconciliation_uncertainty_buffer=account.reconciliation_uncertainty_buffer,
+    )
+
+
+def _order_cost(intent: OrderIntent, context: EvaluationContext) -> MoneyMicros:
+    """Compute an order's full worst-case cost, requiring present fee bounds.
+
+    This always charges the full worst-case notional (SPEC S10.4 opening-buy
+    formula), regardless of ``intent.action``. The aggregate-cap checks
+    (:class:`_ModePermissionCeiling` LIVE_MICRO cap, :class:`_ConcentrationLimits`,
+    :class:`_VelocityLimits`) use it deliberately: over-charging a
+    ``SELL_TO_CLOSE`` against a cap can only bias toward a veto, never toward
+    approving fresh risk, which is the conservative side for a headroom check.
+    Only :class:`_FloorInvariant` splits open vs. close, because the floor is
+    the one check where a provable close *reduces* worst-case cost to fees plus
+    buffer (S10.4), so charging it full notional there could wrongly block a
+    risk-reducing exit.
+
+    Scoping note (#100): giving the three cap checks their own per-action close
+    policy -- so a de-risking ``SELL_TO_CLOSE`` from the kill path (SPEC S9.8)
+    is not vetoed by a cap it should reduce -- is deferred until the kill /
+    de-risking emitter (#35) exists to integration-test against. Until then
+    every intent is vetoed by the 9 explicit-veto stubs regardless, so no close
+    reaches these caps in production.
+
+    Both fee upper bounds must be present for the cost to be provable. When
+    either is ``None`` the cost is indeterminate, so this raises
+    :class:`_UnprovableCostError` -- an explicit fail-closed guard rather than
+    an ``assert`` (which ``python -O`` strips, silently letting a missing bound
+    reach the arithmetic). Every cost-consuming check catches the error and
+    vetoes; :func:`evaluate_intent` would also convert an uncaught instance
+    into a veto.
+
+    Args:
+        intent: The order intent supplying price and size.
+        context: The evaluation context supplying fee bounds and the buffer.
+
+    Returns:
+        The worst-case cost, in micros.
+
+    Raises:
+        _UnprovableCostError: If either fee upper bound is ``None``, so an
+            unprovable cost fails closed instead of being silently assumed.
+    """
+    trading = context.fees.max_trading_fee
+    settlement = context.fees.max_settlement_fee
+    if trading is None or settlement is None:
+        raise _UnprovableCostError
+    return worst_case_cost(
+        intent.price,
+        intent.size,
+        max_trading_fee=trading,
+        max_settlement_fee=settlement,
+        rounding_buffer=context.limits.rounding_buffer,
+    )
+
+
+def _is_stale(timestamp: int | None, now: int, ttl_seconds: int) -> bool:
+    """Return whether a timestamp is missing, in the future, or past its ttl.
+
+    Args:
+        timestamp: The datum's epoch second, or ``None`` if unavailable.
+        now: The current epoch second.
+        ttl_seconds: The maximum admissible age, in seconds.
+
+    Returns:
+        ``True`` if the timestamp is ``None``, later than ``now``, or older
+        than ``ttl_seconds``.
+    """
+    if timestamp is None or timestamp > now:
+        return True
+    return now - timestamp > ttl_seconds
+
+
+# --- The 15 real checks (SPEC S10.3) ---------------------------------------------
+
+
+class _InstrumentWhitelist:
+    """Veto any intent whose market ticker is not on the whitelist."""
+
+    name = "instrument_whitelist"
+
+    def __call__(self, intent: OrderIntent, context: EvaluationContext) -> CheckResult:
+        """Approve iff the intent's ticker is in the configured whitelist.
+
+        Args:
+            intent: The order intent to evaluate.
+            context: The evaluation context supplying the whitelist.
+
+        Returns:
+            A vetoing result if the ticker is absent, else an approval.
+        """
+        if intent.market_ticker in context.limits.instrument_whitelist:
+            return _approve()
+        return _veto(f"ticker {intent.market_ticker} not on whitelist")
+
+
+class _ModePermissionCeiling:
+    """Veto trading in a non-trading mode, or above the LIVE_MICRO cap."""
+
+    name = "mode_permission_ceiling"
+
+    def __call__(self, intent: OrderIntent, context: EvaluationContext) -> CheckResult:
+        """Approve iff the mode may trade and the LIVE_MICRO cap is respected.
+
+        Args:
+            intent: The order intent to evaluate.
+            context: The evaluation context supplying mode, exposure, and cap.
+
+        Returns:
+            A vetoing result if the mode may not trade, the LIVE_MICRO cost is
+            unprovable (a missing fee bound vetoes as ``"unprovable"``), or the
+            cap is exceeded, else an approval.
+        """
+        if context.mode not in {Mode.PAPER, Mode.LIVE_MICRO, Mode.LIVE}:
+            return _veto(f"mode {context.mode.name} may not trade")
+        if context.mode is not Mode.LIVE_MICRO:
+            return _approve()
+        try:
+            cost = _order_cost(intent, context)
+        except _UnprovableCostError:
+            return _veto(_UNPROVABLE_REASON)
+        if (context.account.total_exposure + cost) > context.limits.micro_cap:
+            return _veto("live-micro exposure ceiling exceeded")
+        return _approve()
+
+
+class _FloorInvariant:
+    """Veto an intent whose worst-case equity would fall below the floor."""
+
+    name = "floor_invariant"
+
+    def __call__(self, intent: OrderIntent, context: EvaluationContext) -> CheckResult:
+        """Approve iff worst-case equity less cost still clears the floor.
+
+        A missing fee bound (either kind) or an action that is neither an open
+        nor a provable close makes the cost indeterminate and vetoes as
+        ``"unprovable"``. Opens are charged the full worst-case cost (notional +
+        fees + buffer); provable closes are charged fees + buffer only, since a
+        close realizes proceeds rather than committing notional.
+
+        Args:
+            intent: The order intent to evaluate.
+            context: The evaluation context supplying account, fees, and floor.
+
+        Returns:
+            An approval when ``equity - cost >= floor`` (equality approves), a
+            veto when it does not, or a ``"unprovable"`` veto when the cost is
+            indeterminate.
+        """
+        trading = context.fees.max_trading_fee
+        settlement = context.fees.max_settlement_fee
+        if trading is None or settlement is None:
+            return _veto(_UNPROVABLE_REASON)
+        cost = self._cost(intent, context, trading, settlement)
+        if cost is None:
+            return _veto(_UNPROVABLE_REASON)
+        equity = _equity_of(context.account)
+        if (equity - cost) >= context.limits.floor:
+            return _approve()
+        return _veto("worst-case equity below floor")
+
+    def _cost(
+        self,
+        intent: OrderIntent,
+        context: EvaluationContext,
+        trading: MoneyMicros,
+        settlement: MoneyMicros,
+    ) -> MoneyMicros | None:
+        """Return the floor-invariant cost, or ``None`` for an unknown action.
+
+        Args:
+            intent: The order intent to evaluate.
+            context: The evaluation context supplying the rounding buffer.
+            trading: The (present) worst-case trading fee, in micros.
+            settlement: The (present) worst-case settlement fee, in micros.
+
+        Returns:
+            The full worst-case cost for an open, the fees-plus-buffer cost for
+            a provable close, or ``None`` if the action is neither.
+        """
+        if intent.action in _OPENING_ACTIONS:
+            return worst_case_cost(
+                intent.price,
+                intent.size,
+                max_trading_fee=trading,
+                max_settlement_fee=settlement,
+                rounding_buffer=context.limits.rounding_buffer,
+            )
+        if intent.action in _CLOSING_ACTIONS:
+            return trading + settlement + context.limits.rounding_buffer
+        return None
+
+
+class _FeeUpperBoundPresent:
+    """Veto when no trading-fee upper bound is provable."""
+
+    name = "fee_upper_bound_present"
+
+    def __call__(self, intent: OrderIntent, context: EvaluationContext) -> CheckResult:
+        """Approve iff a trading-fee upper bound is present.
+
+        Args:
+            intent: The order intent (unused).
+            context: The evaluation context supplying the fee bounds.
+
+        Returns:
+            A vetoing result if the trading-fee bound is ``None``, else an
+            approval.
+        """
+        del intent
+        if context.fees.max_trading_fee is None:
+            return _veto("no trading-fee upper bound")
+        return _approve()
+
+
+class _SettlementFeeUpperBound:
+    """Veto when no settlement-fee upper bound is provable."""
+
+    name = "settlement_fee_upper_bound"
+
+    def __call__(self, intent: OrderIntent, context: EvaluationContext) -> CheckResult:
+        """Approve iff a settlement-fee upper bound is present.
+
+        Args:
+            intent: The order intent (unused).
+            context: The evaluation context supplying the fee bounds.
+
+        Returns:
+            A vetoing result if the settlement-fee bound is ``None``, else an
+            approval.
+        """
+        del intent
+        if context.fees.max_settlement_fee is None:
+            return _veto("no settlement-fee upper bound")
+        return _approve()
+
+
+class _ConcentrationLimits:
+    """Veto when any exposure dimension plus cost exceeds its equity share."""
+
+    name = "concentration_limits"
+
+    def __call__(self, intent: OrderIntent, context: EvaluationContext) -> CheckResult:
+        """Approve iff every exposure dimension stays within its ppm cap.
+
+        Args:
+            intent: The order intent supplying price and size.
+            context: The evaluation context supplying account and caps.
+
+        Returns:
+            A vetoing result if the cost is unprovable (a missing fee bound
+            vetoes as ``"unprovable"``) or if any of market/event/bucket/total
+            exposure plus cost exceeds its floored share of worst-case equity,
+            else approval.
+        """
+        try:
+            cost = _order_cost(intent, context)
+        except _UnprovableCostError:
+            return _veto(_UNPROVABLE_REASON)
+        equity = _equity_of(context.account).value
+        account = context.account
+        limits = context.limits
+        dimensions = (
+            (account.market_exposure, limits.max_pos_market_pct_ppm),
+            (account.event_exposure, limits.max_pos_event_pct_ppm),
+            (account.bucket_exposure, limits.max_pos_bucket_pct_ppm),
+            (account.total_exposure, limits.max_pos_total_pct_ppm),
+        )
+        for exposure, cap_ppm in dimensions:
+            if exposure.value + cost.value > _ppm_of(equity, cap_ppm):
+                return _veto("concentration limit exceeded")
+        return _approve()
+
+
+class _DailyLossLimit:
+    """Veto once today's realized loss reaches its equity-relative limit."""
+
+    name = "daily_loss_limit"
+
+    def __call__(self, intent: OrderIntent, context: EvaluationContext) -> CheckResult:
+        """Approve iff realized loss is strictly below the daily limit.
+
+        Args:
+            intent: The order intent (unused).
+            context: The evaluation context supplying loss and the limit.
+
+        Returns:
+            A vetoing result once realized loss reaches (``>=``) the floored
+            ppm share of start-of-day equity, else an approval.
+        """
+        del intent
+        account = context.account
+        threshold = _ppm_of(
+            account.equity_start_of_day.value, context.limits.daily_loss_limit_pct_ppm
+        )
+        if account.realized_loss_today.value >= threshold:
+            return _veto("daily loss limit reached")
+        return _approve()
+
+
+class _TrailingDrawdownLimit:
+    """Veto once drawdown from the high-water mark reaches its limit."""
+
+    name = "trailing_drawdown_limit"
+
+    def __call__(self, intent: OrderIntent, context: EvaluationContext) -> CheckResult:
+        """Approve iff drawdown is strictly below the trailing limit.
+
+        Args:
+            intent: The order intent (unused).
+            context: The evaluation context supplying the mark and the limit.
+
+        Returns:
+            A vetoing result once ``high_water_mark - worst_case_equity``
+            reaches (``>=``) the floored ppm share of the mark, else approval.
+        """
+        del intent
+        mark = context.account.equity_high_water_mark.value
+        drawdown = mark - _equity_of(context.account).value
+        threshold = _ppm_of(mark, context.limits.max_drawdown_pct_ppm)
+        if drawdown >= threshold:
+            return _veto("trailing drawdown limit reached")
+        return _approve()
+
+
+class _VelocityLimits:
+    """Veto when an order would breach the hourly or daily velocity caps."""
+
+    name = "velocity_limits"
+
+    def __call__(self, intent: OrderIntent, context: EvaluationContext) -> CheckResult:
+        """Approve iff both the hourly-order and daily-notional caps hold.
+
+        Args:
+            intent: The order intent supplying price and size.
+            context: The evaluation context supplying counters and caps.
+
+        Returns:
+            A vetoing result if the cost is unprovable (a missing fee bound
+            vetoes as ``"unprovable"``) or if this order would exceed the
+            hourly order cap or the daily notional cap, else an approval.
+        """
+        try:
+            cost = _order_cost(intent, context)
+        except _UnprovableCostError:
+            return _veto(_UNPROVABLE_REASON)
+        account = context.account
+        limits = context.limits
+        if account.orders_last_hour + 1 > limits.max_orders_per_hour:
+            return _veto("hourly order cap exceeded")
+        if (account.notional_today + cost) > limits.max_notional_per_day:
+            return _veto("daily notional cap exceeded")
+        return _approve()
+
+
+class _QuoteFreshness:
+    """Veto when the quote snapshot is missing, future-dated, or stale."""
+
+    name = "quote_freshness"
+
+    def __call__(self, intent: OrderIntent, context: EvaluationContext) -> CheckResult:
+        """Approve iff the quote is present and within its ttl.
+
+        Args:
+            intent: The order intent (unused).
+            context: The evaluation context supplying the quote and its ttl.
+
+        Returns:
+            A vetoing result if the quote is missing, in the future, or older
+            than its ttl, else an approval.
+        """
+        del intent
+        if _is_stale(
+            context.market.quote_snapshot_epoch_s,
+            context.now_epoch_s,
+            context.limits.quote_ttl_seconds,
+        ):
+            return _veto("quote is stale or missing")
+        return _approve()
+
+
+class _ForecastFreshness:
+    """Veto when the forecast is missing, future-dated, or stale."""
+
+    name = "forecast_freshness"
+
+    def __call__(self, intent: OrderIntent, context: EvaluationContext) -> CheckResult:
+        """Approve iff the forecast is present and within its ttl.
+
+        Args:
+            intent: The order intent (unused).
+            context: The evaluation context supplying the forecast and its ttl.
+
+        Returns:
+            A vetoing result if the forecast is missing, in the future, or
+            older than its ttl, else an approval.
+        """
+        del intent
+        if _is_stale(
+            context.market.forecast_epoch_s,
+            context.now_epoch_s,
+            context.limits.forecast_ttl_seconds,
+        ):
+            return _veto("forecast is stale or missing")
+        return _approve()
+
+
+class _PriceBandCompliance:
+    """Veto an open priced outside the configured band; closes are exempt."""
+
+    name = "price_band_compliance"
+
+    def __call__(self, intent: OrderIntent, context: EvaluationContext) -> CheckResult:
+        """Approve iff an open is within the band; provable closes pass.
+
+        Args:
+            intent: The order intent supplying action and price.
+            context: The evaluation context supplying the price band.
+
+        Returns:
+            For opens, a vetoing result outside the inclusive band; for closes,
+            an approval; for any other action, a veto.
+        """
+        if intent.action in _CLOSING_ACTIONS:
+            return _approve()
+        if intent.action not in _OPENING_ACTIONS:
+            return _veto(_UNPROVABLE_REASON)
+        limits = context.limits
+        if limits.min_open_price <= intent.price <= limits.max_open_price:
+            return _approve()
+        return _veto("price outside open band")
+
+
+class _ParticipationCapCompliance:
+    """Veto when the order takes more than the permitted share of depth."""
+
+    name = "participation_cap_compliance"
+
+    def __call__(self, intent: OrderIntent, context: EvaluationContext) -> CheckResult:
+        """Approve iff the order size is within the participation cap.
+
+        Args:
+            intent: The order intent supplying size.
+            context: The evaluation context supplying depth and the cap.
+
+        Returns:
+            A vetoing result if depth is unknown or the size exceeds the floored
+            ppm share of visible depth, else an approval.
+        """
+        depth = context.market.visible_depth
+        if depth is None:
+            return _veto("visible depth unknown")
+        if intent.size.value > _ppm_of(
+            depth.value, context.limits.max_participation_ppm
+        ):
+            return _veto("participation cap exceeded")
+        return _approve()
+
+
+class _ClockSkewLimit:
+    """Veto when the exchange clock skew exceeds the configured maximum."""
+
+    name = "clock_skew_limit"
+
+    def __call__(self, intent: OrderIntent, context: EvaluationContext) -> CheckResult:
+        """Approve iff the exchange clock is within the skew limit.
+
+        Args:
+            intent: The order intent (unused).
+            context: The evaluation context supplying the clock and the limit.
+
+        Returns:
+            A vetoing result if the exchange clock is unknown or skewed (in
+            either direction) beyond the limit, else an approval.
+        """
+        del intent
+        exchange_clock = context.market.exchange_clock_epoch_s
+        if exchange_clock is None:
+            return _veto("exchange clock unknown")
+        skew = abs(context.now_epoch_s - exchange_clock)
+        if skew > context.limits.clock_skew_max_seconds:
+            return _veto("clock skew exceeds limit")
+        return _approve()
+
+
+class _ReduceOnlyProvable:
+    """Veto a close that cannot be proven to reduce the open position."""
+
+    name = "reduce_only_provable"
+
+    def __call__(self, intent: OrderIntent, context: EvaluationContext) -> CheckResult:
+        """Approve opens; approve closes only if provably reduce-only.
+
+        Args:
+            intent: The order intent supplying action and size.
+            context: The evaluation context supplying the open position.
+
+        Returns:
+            An approval for opens; for closes, an approval only when an open
+            position is on record and the size does not exceed it; a veto for
+            any other action.
+        """
+        if intent.action in _OPENING_ACTIONS:
+            return _approve()
+        if intent.action not in _CLOSING_ACTIONS:
+            return _veto(_UNPROVABLE_REASON)
+        open_position = context.market.open_position
+        if open_position is not None and intent.size <= open_position:
+            return _approve()
+        return _veto("close is not provably reduce-only")
+
+
+# --- The 9 deliberate stubs (each blocked on a later issue) -----------------------
+
+
 @dataclass(frozen=True, slots=True)
-class _NotImplementedCheck:
-    """A stub check that vetoes every intent as ``"not implemented"``.
+class _ExplicitVetoStub:
+    """A stub check that vetoes with a fixed reason naming its blocking issue.
 
     Attributes:
         name: The SPEC S10.3 check name this stub stands in for.
+        reason: The veto reason, naming the issue that will replace the stub.
     """
 
     name: str
+    reason: str
 
-    def __call__(self, intent: OrderIntent) -> CheckResult:
-        """Veto ``intent`` unconditionally; no real logic ships yet.
+    def __call__(self, intent: OrderIntent, context: EvaluationContext) -> CheckResult:
+        """Veto unconditionally with this stub's blocking-issue reason.
 
         Args:
-            intent: The order intent, unused by the stub.
+            intent: The order intent (unused by the stub).
+            context: The evaluation context (unused by the stub).
 
         Returns:
-            A veto :class:`CheckResult` with the not-implemented reason.
+            A vetoing :class:`CheckResult` carrying :attr:`reason`.
         """
-        del intent  # No real risk logic in this issue; the veto is constant.
-        return CheckResult(vetoed=True, reason=NOT_IMPLEMENTED_REASON)
+        del intent, context  # No real logic yet; the veto is constant.
+        return _veto(self.reason)
+
+
+#: The stub checks paired with their blocking-issue veto reasons, naming the
+#: issue that will replace each one. ``jurisdiction_product_eligibility`` has no
+#: tracking issue yet and instead names the metadata it awaits. Held as a tuple
+#: of pairs (not a dict literal) so no veto-reason string sits as the value of a
+#: ``token``/``key``-named literal dict key -- a shape bandit's B105 heuristic
+#: misreads as a hardcoded credential; the runtime lookup dict is built below.
+_STUB_REASON_ITEMS: tuple[tuple[str, str], ...] = (
+    ("jurisdiction_product_eligibility", "awaiting NormalizedMarket metadata"),
+    ("balance_reconciliation", "blocked on #32 (balance reconciliation)"),
+    ("position_reconciliation", "blocked on #32 (position reconciliation)"),
+    ("open_order_reconciliation", "blocked on #32 (open-order reconciliation)"),
+    ("human_ack_satisfied", "blocked on #34 (human acknowledgement)"),
+    ("approval_token_uniqueness", "blocked on #31 (approval-token uniqueness)"),
+    ("idempotency_key_uniqueness", "blocked on #31 (idempotency-key uniqueness)"),
+    ("exchange_status_ok", "blocked on #32 (exchange status feed)"),
+    ("pipeline_heartbeat_ok", "blocked on #32 (pipeline heartbeat)"),
+)
+
+#: Each stub check's name mapped to its blocking-issue veto reason.
+_STUB_REASONS: dict[str, str] = dict(_STUB_REASON_ITEMS)
+
+
+# --- Assembly: the pinned SPEC S10.3 sequence ------------------------------------
 
 
 #: The SPEC S10.3 check names, in the exact order they must be evaluated.
@@ -175,13 +822,45 @@ _SPEC_10_3_CHECK_NAMES: tuple[str, ...] = (
     "reduce_only_provable",
 )
 
-#: The default pre-trade check sequence, one stub per SPEC S10.3 name in order.
+#: The 15 real checks, keyed by SPEC S10.3 name for order-independent assembly.
+_REAL_CHECKS: tuple[Check, ...] = (
+    _InstrumentWhitelist(),
+    _ModePermissionCeiling(),
+    _FloorInvariant(),
+    _FeeUpperBoundPresent(),
+    _SettlementFeeUpperBound(),
+    _ConcentrationLimits(),
+    _DailyLossLimit(),
+    _TrailingDrawdownLimit(),
+    _VelocityLimits(),
+    _QuoteFreshness(),
+    _ForecastFreshness(),
+    _PriceBandCompliance(),
+    _ParticipationCapCompliance(),
+    _ClockSkewLimit(),
+    _ReduceOnlyProvable(),
+)
+
+#: The 9 stub checks, keyed by SPEC S10.3 name, each vetoing with its reason.
+_STUB_CHECKS: tuple[Check, ...] = tuple(
+    _ExplicitVetoStub(name, reason) for name, reason in _STUB_REASONS.items()
+)
+
+#: Name-to-check lookup spanning all 24 checks (15 real, 9 stub); the pinned
+#: :data:`_SPEC_10_3_CHECK_NAMES` sequence selects and orders them.
+_CHECK_BY_NAME: dict[str, Check] = {
+    check.name: check for check in (*_REAL_CHECKS, *_STUB_CHECKS)
+}
+
+#: The default pre-trade check sequence, in exact SPEC S10.3 order.
 DEFAULT_CHECKS: tuple[Check, ...] = tuple(
-    _NotImplementedCheck(name) for name in _SPEC_10_3_CHECK_NAMES
+    _CHECK_BY_NAME[name] for name in _SPEC_10_3_CHECK_NAMES
 )
 
 
-def _run_check(check: Check, intent: OrderIntent) -> str | None:
+def _run_check(
+    check: Check, intent: OrderIntent, context: EvaluationContext
+) -> str | None:
     """Run one check fail-closed, returning its veto reason or ``None``.
 
     A check that raises is converted into a veto reason rather than
@@ -191,24 +870,28 @@ def _run_check(check: Check, intent: OrderIntent) -> str | None:
     Args:
         check: The check to run.
         intent: The order intent to evaluate.
+        context: The full evaluation context.
 
     Returns:
         The veto reason string if the check vetoes or raises, else ``None``.
     """
     try:
-        result = check(intent)
+        result = check(intent, context)
     except Exception as exc:  # Fail-closed: a raising check becomes a veto.
         return f"{check.name}: error: {exc}"
     return result.reason if result.vetoed else None
 
 
 def evaluate_intent(
-    intent: OrderIntent, checks: tuple[Check, ...] = DEFAULT_CHECKS
+    intent: OrderIntent,
+    context: EvaluationContext,
+    checks: tuple[Check, ...] = DEFAULT_CHECKS,
 ) -> Decision:
     """Evaluate an intent against every check, fail-closed.
 
     Args:
         intent: The order intent to evaluate.
+        context: The full evaluation context every check reads.
         checks: The checks to run, in order. Defaults to :data:`DEFAULT_CHECKS`.
 
     Returns:
@@ -217,7 +900,7 @@ def evaluate_intent(
     """
     reasons: list[str] = []
     for check in checks:
-        reason = _run_check(check, intent)
+        reason = _run_check(check, intent, context)
         if reason is not None:
             reasons.append(reason)
     return Decision(vetoed=bool(reasons), reasons=tuple(reasons))

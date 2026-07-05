@@ -46,7 +46,7 @@ from hedgekit.numeric.types import (
     ProbabilityPpm,
 )
 from hedgekit.riskkernel.checks import OrderIntent
-from hedgekit.riskkernel.modes import Mode
+from hedgekit.riskkernel.modes import Mode, ModeStateMachine
 from hedgekit.riskkernel.process import (
     InMemoryKernelLedgerWriter,
     LoggingKernelLedgerWriter,
@@ -54,8 +54,10 @@ from hedgekit.riskkernel.process import (
 )
 from hedgekit.riskkernel.process import main as riskkernel_main
 from hedgekit.riskkernel.signing import SigningKeyHandle
+from tests.riskkernel.conftest import make_context
 
 if TYPE_CHECKING:
+    from hedgekit.riskkernel.context import EvaluationContext
     from hedgekit.riskkernel.process import KernelLedgerWriter
 
 #: Repo root, derived from this test file's own location
@@ -355,11 +357,16 @@ def test_risk_kernel_evaluate_intent_records_one_intent_vetoed_event() -> None:
     """`RiskKernel.evaluate_intent` records exactly one `IntentVetoed` event
     (component "riskkernel", schema version 1, payload carrying the intent id
     and reasons) and returns a `Decision` marked both vetoed and ledgered.
+
+    A fully-permissive context (see `tests/riskkernel/conftest.py`) still
+    vetoes overall: 9 of the 24 SPEC S10.3 checks remain deliberate stubs
+    (issue #30 only promotes 15 of them to real logic).
     """
     kernel = RiskKernel.for_testing()
     intent = _make_intent()
+    context = make_context()
 
-    decision = kernel.evaluate_intent(intent)
+    decision = kernel.evaluate_intent(intent, context)
 
     assert decision.vetoed is True
     assert decision.ledgered is True
@@ -384,20 +391,24 @@ def test_risk_kernel_evaluate_intent_records_intent_approved_when_not_vetoed(
     """When the check pipeline approves an intent (no veto), the kernel ledgers
     exactly one `IntentApproved` event and never a mislabeled `IntentVetoed`.
 
-    Today's `DEFAULT_CHECKS` veto unconditionally, so this branch is only
-    reachable once real check logic (issues #30-#35) lets an intent pass; the
-    approving pipeline is stubbed here so the audit trail's correctness is
-    pinned before that logic lands, not rediscovered as a ledger bug after.
+    9 of the 24 SPEC S10.3 checks remain deliberate stubs after issue #30
+    (the rest are tracked in issues #31-#34), so no real context ever
+    produces a fully-approving decision yet; the approving pipeline is
+    stubbed here so the audit trail's correctness is pinned before that
+    remaining logic lands, not rediscovered as a ledger bug after.
     """
     from hedgekit.riskkernel import checks as checks_module
 
     approved = checks_module.Decision(vetoed=False, reasons=())
-    monkeypatch.setattr(checks_module, "evaluate_intent", lambda intent: approved)
+    monkeypatch.setattr(
+        checks_module, "evaluate_intent", lambda intent, context: approved
+    )
 
     kernel = RiskKernel.for_testing()
     intent = _make_intent()
+    context = make_context()
 
-    decision = kernel.evaluate_intent(intent)
+    decision = kernel.evaluate_intent(intent, context)
 
     assert decision.vetoed is False
     assert decision.ledgered is True
@@ -415,6 +426,37 @@ def test_risk_kernel_evaluate_intent_records_intent_approved_when_not_vetoed(
     assert event.payload_schema_version == 1
     assert event.payload["intent_id"] == intent.intent_id
     assert list(event.payload["reasons"]) == []
+
+
+@pytest.mark.timeout(30)
+def test_risk_kernel_evaluate_intent_stamps_its_own_mode_onto_the_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`RiskKernel.evaluate_intent` overrides `context.mode` with its own
+    `ModeStateMachine.mode` (via `dataclasses.replace`) before evaluating --
+    a caller-supplied `context.mode` is never trusted over the kernel's own
+    tracked mode, and the caller's original context object is left untouched.
+    """
+    from hedgekit.riskkernel import checks as checks_module
+
+    captured_contexts: list[EvaluationContext] = []
+
+    def _spy(intent: OrderIntent, context: EvaluationContext) -> checks_module.Decision:
+        captured_contexts.append(context)
+        return checks_module.Decision(vetoed=False, reasons=())
+
+    monkeypatch.setattr(checks_module, "evaluate_intent", _spy)
+
+    mode_machine = ModeStateMachine(mode_ceiling=Mode.LIVE, mode=Mode.LIVE)
+    kernel = RiskKernel(InMemoryKernelLedgerWriter(), mode_machine=mode_machine)
+    intent = _make_intent()
+    caller_context = make_context(mode=Mode.RESEARCH)
+
+    kernel.evaluate_intent(intent, caller_context)
+
+    assert len(captured_contexts) == 1
+    assert captured_contexts[0].mode == Mode.LIVE
+    assert caller_context.mode == Mode.RESEARCH
 
 
 # --- Process B survives Process A ------------------------------------------------

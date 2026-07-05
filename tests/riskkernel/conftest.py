@@ -1,0 +1,256 @@
+"""Shared `OrderIntent`/`EvaluationContext` builders for `tests/riskkernel/*`
+(issue #30, RED).
+
+`hedgekit/riskkernel/context.py` does not exist yet, so importing
+`EvaluationContext` and its four constituent dataclasses below fails
+collection with `ModuleNotFoundError: No module named
+'hedgekit.riskkernel.context'` -- the expected Gate 1 RED state for issue #30.
+
+Builder-placement choice: unlike the rest of this test suite (where each file
+duplicates its own small `make_intent`, e.g.
+`tests/riskkernel/test_process_isolation.py`'s `_make_intent`),
+`make_context` assembles five nested dataclasses spanning ~40 total fields.
+Duplicating that across `test_checks.py`, `test_floor_metamorphic.py`, and
+`test_process_isolation.py` would violate the "never duplicate content"
+principle for no offsetting clarity gain, so it is centralized here instead
+and imported explicitly (`from tests.riskkernel.conftest import
+make_context, ...`) by every file that needs it -- an ordinary intra-package
+import, not pytest fixture injection, so it works unchanged inside
+`@given`-decorated Hypothesis tests too.
+
+`make_context`'s defaults are deliberately tuned so that, paired with
+`make_intent()`'s defaults (action "buy", price 5000 pips, size 1000
+centis), **every one of the 15 real SPEC S10.3 checks passes**: each
+per-check test in `test_checks.py` therefore only needs to override the one
+or two fields that check actually reads, proving the override -- not a
+coincidence of some other field -- is what flips the verdict.
+
+Implementation note: overrides are applied via `dataclasses.replace` against
+one pre-built default instance per nested dataclass, rather than merging
+plain `dict[str, object]`s and splatting them into each constructor. The
+constructors themselves expect concrete per-field types (`MoneyMicros`,
+`frozenset[str]`, `int`, ...), which a homogeneous `dict[str, object]` splat
+cannot satisfy under `mypy --strict`; `dataclasses.replace`'s stub accepts
+`**changes: Any`, so it is the one spot in this module allowed to be loosely
+typed. The per-dataclass field-name sets used to route each override are
+themselves derived from `dataclasses.fields(...)` -- reflected off the real
+production classes, not retyped by hand -- so they can never drift from
+whatever fields `context.py` actually declares.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+
+from hedgekit.numeric.types import (
+    ContractCentis,
+    MoneyMicros,
+    PricePips,
+    ProbabilityPpm,
+)
+from hedgekit.riskkernel.checks import OrderIntent
+from hedgekit.riskkernel.context import (
+    AccountState,
+    EvaluationContext,
+    FeeBounds,
+    MarketView,
+    RiskLimits,
+)
+from hedgekit.riskkernel.modes import Mode
+
+#: The exchange ticker every default `OrderIntent`/`RiskLimits.instrument_whitelist`
+#: agree on, so the default context passes `instrument_whitelist` out of the box.
+DEFAULT_MARKET_TICKER = "PRES-2028-DEM"
+
+#: Immutable scaled-int defaults for :func:`make_intent`, held as module-level
+#: singletons so they are not reconstructed in the function's argument defaults
+#: (ruff B008); the wrapper types are frozen, so sharing one instance is safe.
+_DEFAULT_PRICE = PricePips(5000)
+_DEFAULT_SIZE = ContractCentis(1000)
+_DEFAULT_MAX_NOTIONAL = MoneyMicros(50_000_000)
+_DEFAULT_IMPLIED_PROBABILITY = ProbabilityPpm(520_000)
+
+
+def make_intent(
+    *,
+    intent_id: str = "intent-0001",
+    market_ticker: str = DEFAULT_MARKET_TICKER,
+    outcome: str = "yes",
+    action: str = "buy",
+    price: PricePips = _DEFAULT_PRICE,
+    size: ContractCentis = _DEFAULT_SIZE,
+    max_notional: MoneyMicros = _DEFAULT_MAX_NOTIONAL,
+    implied_probability: ProbabilityPpm = _DEFAULT_IMPLIED_PROBABILITY,
+) -> OrderIntent:
+    """Build a valid `OrderIntent`, with any field overridable by keyword.
+
+    Args:
+        intent_id: The intent's unique identifier.
+        market_ticker: The exchange ticker the intent targets.
+        outcome: The market outcome the intent trades (e.g. "yes"/"no").
+        action: The trade action (e.g. "buy"/"sell_to_close").
+        price: The limit price, in pips.
+        size: The contract count, in centis.
+        max_notional: The notional cap, in money-micros.
+        implied_probability: The forecast-implied probability, in ppm.
+
+    Returns:
+        A fully populated, valid `OrderIntent`.
+    """
+    return OrderIntent(
+        intent_id=intent_id,
+        market_ticker=market_ticker,
+        outcome=outcome,
+        action=action,
+        price=price,
+        size=size,
+        max_notional=max_notional,
+        implied_probability=implied_probability,
+    )
+
+
+#: The fixed "current instant" every default `MarketView` timestamp and
+#: `EvaluationContext.now_epoch_s` agree on, so freshness/skew checks pass by
+#: default (zero age, zero skew).
+DEFAULT_NOW_EPOCH_S = 1_700_000_000
+
+#: `AccountState.exchange_verified_available_cash` /
+#: `.equity_start_of_day` / `.equity_high_water_mark` default: $1,000, in
+#: micros. Large relative to the default intent's ~$0.50 notional
+#: (5000 pips * 1000 centis == 5_000_000 micros) so every equity-relative
+#: check (floor, concentration, drawdown, loss) passes by default.
+_DEFAULT_EQUITY_MICROS = 1_000_000_000
+
+#: The permissive default `RiskLimits`: 100% caps, a wide price band, and
+#: generous ttls, so only the field a given test overrides can flip a real
+#: check's verdict.
+_DEFAULT_LIMITS = RiskLimits(
+    floor=MoneyMicros(0),
+    instrument_whitelist=frozenset({DEFAULT_MARKET_TICKER}),
+    micro_cap=MoneyMicros(1_000_000_000_000),
+    min_open_price=PricePips(0),
+    max_open_price=PricePips(10_000),
+    max_participation_ppm=1_000_000,
+    max_pos_market_pct_ppm=1_000_000,
+    max_pos_event_pct_ppm=1_000_000,
+    max_pos_bucket_pct_ppm=1_000_000,
+    max_pos_total_pct_ppm=1_000_000,
+    daily_loss_limit_pct_ppm=1_000_000,
+    max_drawdown_pct_ppm=1_000_000,
+    max_orders_per_hour=1_000,
+    max_notional_per_day=MoneyMicros(1_000_000_000_000),
+    quote_ttl_seconds=3_600,
+    forecast_ttl_seconds=3_600,
+    clock_skew_max_seconds=3_600,
+    rounding_buffer=MoneyMicros(0),
+)
+
+#: The permissive default `AccountState`: flat $1,000 equity, zero
+#: exposure/reservations/fees/loss/orders, so every equity- and
+#: velocity-relative check passes by default.
+_DEFAULT_ACCOUNT = AccountState(
+    exchange_verified_available_cash=MoneyMicros(_DEFAULT_EQUITY_MICROS),
+    guaranteed_terminal_value_of_positions=MoneyMicros(0),
+    pending_kernel_reservations=MoneyMicros(0),
+    unresolved_fee_upper_bounds=MoneyMicros(0),
+    reconciliation_uncertainty_buffer=MoneyMicros(0),
+    equity_start_of_day=MoneyMicros(_DEFAULT_EQUITY_MICROS),
+    equity_high_water_mark=MoneyMicros(_DEFAULT_EQUITY_MICROS),
+    realized_loss_today=MoneyMicros(0),
+    market_exposure=MoneyMicros(0),
+    event_exposure=MoneyMicros(0),
+    bucket_exposure=MoneyMicros(0),
+    total_exposure=MoneyMicros(0),
+    orders_last_hour=0,
+    notional_today=MoneyMicros(0),
+)
+
+#: The permissive default `MarketView`: quote/forecast/clock all stamped at
+#: `DEFAULT_NOW_EPOCH_S` (zero age, zero skew) and ample visible depth, so
+#: freshness/skew/participation checks pass by default.
+_DEFAULT_MARKET = MarketView(
+    quote_snapshot_epoch_s=DEFAULT_NOW_EPOCH_S,
+    forecast_epoch_s=DEFAULT_NOW_EPOCH_S,
+    visible_depth=ContractCentis(10_000_000),
+    exchange_clock_epoch_s=DEFAULT_NOW_EPOCH_S,
+    open_position=None,
+)
+
+#: The permissive default `FeeBounds`: both bounds present (zero), so
+#: `fee_upper_bound_present`/`settlement_fee_upper_bound` pass by default.
+_DEFAULT_FEES = FeeBounds(
+    max_trading_fee=MoneyMicros(0),
+    max_settlement_fee=MoneyMicros(0),
+)
+
+#: Each nested dataclass's field names, reflected off the real classes (never
+#: retyped by hand) so override-routing can never drift from `context.py`.
+_LIMITS_FIELDS = frozenset(f.name for f in dataclasses.fields(RiskLimits))
+_ACCOUNT_FIELDS = frozenset(f.name for f in dataclasses.fields(AccountState))
+_MARKET_FIELDS = frozenset(f.name for f in dataclasses.fields(MarketView))
+_FEES_FIELDS = frozenset(f.name for f in dataclasses.fields(FeeBounds))
+_CONTEXT_FIELDS = frozenset({"mode", "now_epoch_s"})
+
+
+def make_context(**overrides: object) -> EvaluationContext:
+    """Build a fully-permissive `EvaluationContext`, any field overridable.
+
+    Every keyword is routed to whichever of the five nested dataclasses
+    (`RiskLimits`, `AccountState`, `MarketView`, `FeeBounds`) declares a field
+    of that name, or to `EvaluationContext` itself for `mode`/`now_epoch_s`;
+    the five field-name sets are disjoint, so routing by name alone is
+    unambiguous. Every field not overridden keeps its permissive default (see
+    the module docstring), so a test can flip exactly one input and know only
+    that input caused the verdict it observes.
+
+    Args:
+        **overrides: Field name to value, for any field of `RiskLimits`,
+            `AccountState`, `MarketView`, `FeeBounds`, or `EvaluationContext`
+            itself (`mode`, `now_epoch_s`).
+
+    Returns:
+        A fully populated `EvaluationContext`.
+
+    Raises:
+        ValueError: If a keyword does not name a field of any of the five
+            dataclasses -- catches a typo'd override silently doing nothing.
+    """
+    known_fields = (
+        _LIMITS_FIELDS
+        | _ACCOUNT_FIELDS
+        | _MARKET_FIELDS
+        | _FEES_FIELDS
+        | _CONTEXT_FIELDS
+    )
+    unknown = set(overrides) - known_fields
+    if unknown:
+        raise ValueError(f"make_context() got unknown override(s): {sorted(unknown)}")
+
+    limits = dataclasses.replace(
+        _DEFAULT_LIMITS,
+        **{k: v for k, v in overrides.items() if k in _LIMITS_FIELDS},
+    )
+    account = dataclasses.replace(
+        _DEFAULT_ACCOUNT,
+        **{k: v for k, v in overrides.items() if k in _ACCOUNT_FIELDS},
+    )
+    market = dataclasses.replace(
+        _DEFAULT_MARKET,
+        **{k: v for k, v in overrides.items() if k in _MARKET_FIELDS},
+    )
+    fees = dataclasses.replace(
+        _DEFAULT_FEES,
+        **{k: v for k, v in overrides.items() if k in _FEES_FIELDS},
+    )
+    mode = overrides.get("mode", Mode.LIVE)
+    now_epoch_s = overrides.get("now_epoch_s", DEFAULT_NOW_EPOCH_S)
+    assert isinstance(mode, Mode)
+    assert isinstance(now_epoch_s, int)
+    return EvaluationContext(
+        mode=mode,
+        limits=limits,
+        account=account,
+        market=market,
+        fees=fees,
+        now_epoch_s=now_epoch_s,
+    )
