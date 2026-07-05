@@ -12,6 +12,16 @@ market snapshot and screening decision per market through an
 
 from hedgekit.connector.fake import FakeExchange
 from hedgekit.connector.fees import FeeModel, UnknownFeeModelError
+from hedgekit.connector.fills import (
+    DEFAULT_FEE_HAIRCUT_PPM,
+    DEFAULT_MAX_PARTICIPATION_PPM,
+    PAPER_FILL_MODEL_VERSION,
+    TakerFillResult,
+    TradePrint,
+    participation_cap,
+    resting_fill_quantity,
+    walk_taker_fill,
+)
 from hedgekit.connector.interface import MarketConnector, UnknownMarketError
 from hedgekit.connector.models import (
     BalanceSnapshot,
@@ -24,6 +34,7 @@ from hedgekit.connector.models import (
     Position,
     market_to_payload,
 )
+from hedgekit.connector.paper import PaperExchange, PaperOrderIntent
 from hedgekit.connector.semantics import (
     BalanceSemantics,
     CancelCollateralRelease,
@@ -46,7 +57,10 @@ from hedgekit.connector.snapshot import (
 )
 
 __all__ = [
+    "DEFAULT_FEE_HAIRCUT_PPM",
+    "DEFAULT_MAX_PARTICIPATION_PPM",
     "MARKET_SNAPSHOT_EVENT",
+    "PAPER_FILL_MODEL_VERSION",
     "SCREEN_DECISION_EVENT",
     "BalanceSemantics",
     "BalanceSnapshot",
@@ -70,10 +84,17 @@ __all__ = [
     "OrderBookSnapshot",
     "OrderCollateralInAvailable",
     "OrderCollateralInTotal",
+    "PaperExchange",
+    "PaperOrderIntent",
     "PartialFillRepresentation",
     "Position",
+    "TakerFillResult",
+    "TradePrint",
     "UnknownFeeModelError",
     "UnknownMarketError",
     "UnsettledProceeds",
     "market_to_payload",
+    "participation_cap",
+    "resting_fill_quantity",
+    "walk_taker_fill",
 ]

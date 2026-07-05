@@ -1,0 +1,23 @@
+{
+  "MKT-DEEP": [
+    {
+      "book": {
+        "fetched_at": "2025-01-01T00:00:00.000000Z",
+        "yes_bids": [{"price": 4500, "quantity": 300}],
+        "yes_asks": [
+          {"price": 4600, "quantity": 200},
+          {"price": 4700, "quantity": 1000}
+        ]
+      },
+      "trades": []
+    },
+    {
+      "book": {
+        "fetched_at": "2025-01-01T00:05:00.000000Z",
+        "yes_bids": [{"price": 4500, "quantity": 300}],
+        "yes_asks": [{"price": 4750, "quantity": 500}]
+      },
+      "trades": []
+    }
+  ]
+}
