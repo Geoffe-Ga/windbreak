@@ -283,3 +283,35 @@ def resting_fill_quantity(
         depth_at_or_better, max_participation_ppm=max_participation_ppm
     )
     return ContractCentis(min(remaining.value, cap.value, through_volume))
+
+
+def trade_through_fill_ts(limit: PricePips, prints: Sequence[TradePrint]) -> datetime:
+    """Return the timestamp a resting buy's trade-through fill occurred at.
+
+    A resting fill is realized by the prints that trade strictly *through* the
+    limit (price ``<`` limit; a touch never fills, per
+    :func:`resting_fill_quantity`). The fill *occurred* at the last such print --
+    the moment the market event that produced it completed -- so it is stamped at
+    the maximum ``ts`` among the trade-through prints. This keeps ``Fill.ts``
+    faithful to its "when the fill occurred" contract, so a consumer polling
+    ``get_fills(since=...)`` on a cursor between the (earlier) book snapshot and
+    its (later) triggering prints still surfaces the fill.
+
+    This must only be called when a fill actually occurred (``resting_fill_quantity``
+    returned a positive quantity), which guarantees at least one trade-through
+    print exists.
+
+    Args:
+        limit: The resting order's limit price.
+        prints: The recorded trade prints tested against the limit.
+
+    Returns:
+        The maximum ``ts`` among the prints that trade through ``limit``.
+
+    Raises:
+        ValueError: If no print trades through ``limit`` (no fill occurred).
+    """
+    through = [print_.ts for print_ in prints if print_.price < limit]
+    if not through:
+        raise ValueError("no trade-through print: a resting fill did not occur")
+    return max(through)

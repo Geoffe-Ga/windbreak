@@ -510,6 +510,37 @@ class TestRestingFillQuantity:
         assert isinstance(fill, ContractCentis)
 
 
+class TestTradeThroughFillTs:
+    """Pins `trade_through_fill_ts`: a resting fill occurs at the *last* print
+    that trades through the limit, and a touch print never counts."""
+
+    def test_returns_the_latest_trade_through_prints_timestamp(self) -> None:
+        early = datetime(2025, 1, 1, 0, 1, tzinfo=UTC)
+        late = datetime(2025, 1, 1, 0, 2, tzinfo=UTC)
+        prints = (
+            fills.TradePrint(PricePips(4150), ContractCentis(30), early),
+            fills.TradePrint(PricePips(4100), ContractCentis(50), late),
+        )
+
+        assert fills.trade_through_fill_ts(PricePips(4200), prints) == late
+
+    def test_a_touch_print_is_ignored_when_choosing_the_timestamp(self) -> None:
+        through = datetime(2025, 1, 1, 0, 1, tzinfo=UTC)
+        touch_later = datetime(2025, 1, 1, 0, 5, tzinfo=UTC)
+        prints = (
+            fills.TradePrint(PricePips(4150), ContractCentis(30), through),  # through
+            fills.TradePrint(PricePips(4200), ContractCentis(99), touch_later),  # touch
+        )
+
+        assert fills.trade_through_fill_ts(PricePips(4200), prints) == through
+
+    def test_no_trade_through_print_raises_value_error(self) -> None:
+        prints = (fills.TradePrint(PricePips(4200), ContractCentis(99), _TS),)  # touch
+
+        with pytest.raises(ValueError, match="no trade-through print"):
+            fills.trade_through_fill_ts(PricePips(4200), prints)
+
+
 # =============================================================================
 # hedgekit.connector.paper.PaperExchange: the replay-driven MarketConnector
 # =============================================================================
@@ -633,6 +664,26 @@ class TestPaperExchangeCrossingOrders:
         assert all(
             fill.side == "yes" and fill.ticker == "MKT-DEEP" for fill in recorded
         )
+
+    def test_crossing_buy_fills_are_stamped_at_the_book_snapshot_time(
+        self, books_fixture_dir: Path
+    ) -> None:
+        """A taker order executes *now*, against *now's* book, so its fills are
+        stamped at the current book snapshot time (unlike resting fills, which
+        are stamped at the later trade print that triggers them)."""
+        exchange = paper.PaperExchange.from_fixture_dir(books_fixture_dir / "deep_walk")
+
+        exchange.place_order(
+            paper.PaperOrderIntent(
+                "MKT-DEEP", "yes", PricePips(4700), ContractCentis(1000)
+            ),
+            approval_token=object(),
+        )
+
+        book_time = exchange.get_order_book("MKT-DEEP").fetched_at
+        recorded = exchange.get_fills(_SINCE)
+        assert recorded
+        assert all(fill.ts == book_time for fill in recorded)
 
     def test_crossing_buy_rests_the_unfilled_remainder_at_its_own_limit(
         self, books_fixture_dir: Path
@@ -809,6 +860,52 @@ class TestPaperExchangeRestingOrderTradeThrough:
         resting = [o for o in exchange.get_open_orders() if o.ticker == "MKT-THROUGH"]
         assert len(resting) == 1
         assert resting[0].quantity == ContractCentis(875)  # 1000 - 125 filled
+
+    def test_trade_through_fill_is_stamped_at_the_triggering_prints_time(
+        self, books_fixture_dir: Path
+    ) -> None:
+        """A resting fill's ``ts`` is the trade print that caused it, not the
+        book snapshot time. The ``trade_through`` fixture's step-0 book is
+        stamped ``00:00:00`` but its trade-through print prints at ``00:01:00``;
+        the fill only became possible because of that later print, so ``Fill.ts``
+        (documented as *when the fill occurred*) must reflect the print time."""
+        exchange = paper.PaperExchange.from_fixture_dir(
+            books_fixture_dir / "trade_through"
+        )
+        exchange.place_order(
+            paper.PaperOrderIntent(
+                "MKT-THROUGH", "yes", PricePips(4200), ContractCentis(1000)
+            ),
+            approval_token=object(),
+        )
+
+        exchange.advance()
+
+        recorded = exchange.get_fills(_SINCE)
+        assert len(recorded) == 1
+        assert recorded[0].ts == datetime(2025, 1, 1, 0, 1, 0, tzinfo=UTC)
+
+    def test_trade_through_fill_is_visible_to_a_cursor_after_the_book(
+        self, books_fixture_dir: Path
+    ) -> None:
+        """A consumer polling ``get_fills(since=cursor)`` with a cursor between
+        the book snapshot (``00:00:00``) and the triggering print (``00:01:00``)
+        still sees the fill, because it is stamped at the print time. Stamping it
+        at the earlier book time would silently drop it from this poll."""
+        exchange = paper.PaperExchange.from_fixture_dir(
+            books_fixture_dir / "trade_through"
+        )
+        exchange.place_order(
+            paper.PaperOrderIntent(
+                "MKT-THROUGH", "yes", PricePips(4200), ContractCentis(1000)
+            ),
+            approval_token=object(),
+        )
+
+        exchange.advance()
+
+        cursor = datetime(2025, 1, 1, 0, 0, 30, tzinfo=UTC)
+        assert len(exchange.get_fills(cursor)) == 1
 
 
 class TestPaperExchangeReadOnlySurface:

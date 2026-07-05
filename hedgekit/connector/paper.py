@@ -44,6 +44,7 @@ from hedgekit.connector.fills import (
     PAPER_FILL_MODEL_VERSION,
     TradePrint,
     resting_fill_quantity,
+    trade_through_fill_ts,
     walk_taker_fill,
 )
 from hedgekit.connector.interface import UnknownMarketError
@@ -390,7 +391,11 @@ class PaperExchange:
         )
         if filled.value <= 0:
             return order
-        self._emit_fill(order.ticker, order.side, order.price, filled, step.book)
+        # A resting fill occurs when the market trades *through* the limit, so it
+        # is stamped at the triggering print's time -- not the (earlier) book
+        # snapshot -- keeping Fill.ts honest for get_fills() since-filtering.
+        fill_ts = trade_through_fill_ts(limit, prints)
+        self._emit_fill(order.ticker, order.side, order.price, filled, fill_ts)
         remaining = order.quantity.value - filled.value
         if remaining <= 0:
             return None
@@ -515,12 +520,20 @@ class PaperExchange:
         consumed: Sequence[OrderBookLevel],
         book: OrderBookSnapshot,
     ) -> tuple[Fill, ...]:
-        """Emit one :class:`Fill` per consumed level of a taker walk."""
+        """Emit one :class:`Fill` per consumed level of a taker walk.
+
+        A taker order executes immediately, so each fill is stamped at the
+        current book snapshot time.
+        """
         fills: list[Fill] = []
         for level in consumed:
             fills.append(
                 self._emit_fill(
-                    intent.ticker, intent.side, level.price, level.quantity, book
+                    intent.ticker,
+                    intent.side,
+                    level.price,
+                    level.quantity,
+                    book.fetched_at,
                 )
             )
         return tuple(fills)
@@ -548,9 +561,22 @@ class PaperExchange:
         side: Literal["yes", "no"],
         price: PricePips,
         quantity: ContractCentis,
-        book: OrderBookSnapshot,
+        ts: datetime,
     ) -> Fill:
-        """Record and return one simulated fill timestamped at the book time."""
+        """Record and return one simulated fill stamped at ``ts``.
+
+        Args:
+            ticker: The market the fill is on.
+            side: The filled side (``yes`` or ``no``).
+            price: The fill price, in pips.
+            quantity: The filled size, in contract-centis.
+            ts: When the fill occurred -- the current book time for a taker fill
+                (it executes now, against now's book), or the triggering trade
+                print's time for a resting trade-through fill.
+
+        Returns:
+            The recorded :class:`Fill`.
+        """
         self._fill_seq += 1
         fill = Fill(
             id=f"paper-fill-{self._fill_seq}",
@@ -558,7 +584,7 @@ class PaperExchange:
             side=side,
             price=price,
             quantity=quantity,
-            ts=book.fetched_at,
+            ts=ts,
         )
         self._fills.append(fill)
         return fill
