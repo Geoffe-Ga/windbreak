@@ -8,8 +8,8 @@ All SPEC §13.5 metrics — Brier, log score, Brier skill score, expected calibr
 
 ## Context
 
-- **Parent epic:** #EPIC_07_NUMBER
-- **Predecessor issue(s):** #EPIC_07_ISSUE_02_NUMBER (must be merged first — metrics consume resolutions and baselines).
+- **Parent epic:** #8
+- **Predecessor issue(s):** #50 (must be merged first — metrics consume resolutions and baselines).
 - **SPEC section:** `plans/SPEC_v3.md` §13.5 (statistical machinery), §9.4 (price buckets), §13.2 (skill is measured against the executable-price baseline), §10.9 (gate thresholds these metrics feed), §21 glossary (clustered bootstrap).
 - **Files involved:**
   - `hedgekit/evaluation/metrics.py` — new: scoring rules + calibration statistics
@@ -18,7 +18,7 @@ All SPEC §13.5 metrics — Brier, log score, Brier skill score, expected calibr
   - `hedgekit/evaluation/registry.py` — register the real metrics, replacing `NOT_IMPLEMENTED` sentinels
   - `tests/evaluation/test_metrics.py`, `tests/evaluation/test_bootstrap.py` — known-answer + property tests
   - `tests/evaluation/fixtures/clustered_fixture.json` — new fixture with *known correlation structure* (e.g., 3 event groups of perfectly correlated markets) whose correct clustered CI is derivable by hand
-- **Prior decisions:** cluster by `mutually_exclusive_group_id`/correlation bucket so related markets don't masquerade as independent (§13.5); all randomness seeded and logged (§3.5); mixing observation windows in one metric is a test failure (§13.4 — enforcement lands in #EPIC_07_ISSUE_05_NUMBER, but design the metric API to take a window parameter now).
+- **Prior decisions:** cluster by `mutually_exclusive_group_id`/correlation bucket so related markets don't masquerade as independent (§13.5); all randomness seeded and logged (§3.5); mixing observation windows in one metric is a test failure (§13.4 — enforcement lands in #53, but design the metric API to take a window parameter now).
 - **State of the world:** registry, report, resolutions, and baselines are real; every metric slot still returns `NOT_IMPLEMENTED`.
 
 ## Output Format
@@ -46,7 +46,7 @@ def test_clustered_ci_respects_correlation_groups() -> None:
 
 ## Constraints
 
-**Scope fence:** Do not implement temporal-integrity filtering (#EPIC_07_ISSUE_04_NUMBER), observation-window enforcement (#EPIC_07_ISSUE_05_NUMBER), or the SQL dual path (#EPIC_07_ISSUE_07_NUMBER). If you find yourself touching files outside the list above, stop and check with the user.
+**Scope fence:** Do not implement temporal-integrity filtering (#52), observation-window enforcement (#53), or the SQL dual path (#55). If you find yourself touching files outside the list above, stop and check with the user.
 
 **Anti-bypass (verbatim, non-negotiable):**
 
@@ -68,7 +68,7 @@ def test_clustered_ci_respects_correlation_groups() -> None:
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] Coverage on changed lines ≥ 90%.
 - [ ] Public API changes are reflected in docstrings.
-- [ ] PR body includes `Refs #EPIC_07_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #8` and `Closes #51`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer GitHub Action is `LGTM`.
 
 ## Labels

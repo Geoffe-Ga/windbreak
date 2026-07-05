@@ -40,16 +40,14 @@ The epic is done when:
 
 ## Child Issues
 
-_Filled in after child issues are filed (Step 8/9 of spec-decomposition)._
-
-- [ ] #NNN — Skeleton: Kernel process, mode state machine, veto-everything check pipeline
-- [ ] #NNN — Core: floor invariant computation and fail-closed per-order checks
-- [ ] #NNN — Core: serialized reservation ledger and signed single-use approval tokens
-- [ ] #NNN — Core: read-only exchange verification loop with HALT on mismatch
-- [ ] #NNN — Edges: promotion/demotion engine with pre-registered gates and mode ceiling
-- [ ] #NNN — Edges: floor governance, ratchet, profit-sweep advisory, human-ack thresholds
-- [ ] #NNN — Edges: kill switch with all trigger paths and manual re-arm
-- [ ] #NNN — Polish: crash-injection property suite and ≥90% mutation score
+- [ ] #29 — feat(riskkernel): Kernel process skeleton with mode machine and veto-everything pipeline
+- [ ] #30 — feat(riskkernel): Floor invariant and fail-closed per-order checks
+- [ ] #31 — feat(riskkernel): Serialized reservations and signed single-use approval tokens
+- [ ] #32 — feat(riskkernel): Read-only exchange verification with HALT on mismatch
+- [ ] #33 — feat(riskkernel): Promotion gates, demotion triggers, and mode-ceiling enforcement
+- [ ] #34 — feat(riskkernel): Floor governance — cool-off lowering, ratchet, profit-sweep, human-ack
+- [ ] #35 — feat(riskkernel): Kill switch with hold-positions and manual re-arm
+- [ ] #36 — test(riskkernel): Concurrent crash-injection properties and >=90% mutation score
 
 ## Sequencing Notes
 

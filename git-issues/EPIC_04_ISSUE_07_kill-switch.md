@@ -8,16 +8,16 @@ Every SPEC §10.11 kill trigger — dashboard button (double-confirm), CLI `hedg
 
 ## Context
 
-- **Parent epic:** #EPIC_04_NUMBER
-- **Predecessor issue(s):** #EPIC_04_ISSUE_06_NUMBER (must be merged first)
+- **Parent epic:** #5
+- **Predecessor issue(s):** #34 (must be merged first)
 - **SPEC section:** `plans/SPEC_v3.md` §10.11 (kill switch), §10.2 (`KILLED` requires manual re-arm with typed confirmation), §3.2 ("when in doubt, halt and alert"), config `ops.state_dir` (§16)
 - **Files involved:**
   - `hedgekit/riskkernel/kill.py` — new: trigger sources, kill execution, re-arm flow
   - `hedgekit/riskkernel/process.py` — poll the KILL file and the auto-trigger condition
   - `hedgekit/cli.py` — `hedgekit kill`, `hedgekit rearm` (typed confirmation phrase)
   - `tests/riskkernel/test_kill.py` — all four trigger paths + re-arm
-- **Prior decisions:** Effect of kill: cancel all open orders, disable approvals, alert. **Positions are held, not dumped** — bounded loss means holding is safe and panic-selling into thin books is not (§10.11). Order cancellation is issued as reduce-only/cancel directives through the same intent path the Gateway will consume (EPIC_05); until the Gateway exists, the kill path emits ledgered `CANCEL_ALL` directives consumed by a test double. The KILL file must work with the HTTP dashboard down — file polling, no network dependency. Automatic trigger: repeated reconciliation mismatch (threshold config-driven), wired to #EPIC_04_ISSUE_04_NUMBER's verification results.
-- **State of the world:** Mode machine has `KILLED` with a typed-confirmation re-arm stub at the API level (#EPIC_04_ISSUE_05_NUMBER); governance and ack flows exist; no trigger plumbing, no KILL-file watcher, no cancel-all emission.
+- **Prior decisions:** Effect of kill: cancel all open orders, disable approvals, alert. **Positions are held, not dumped** — bounded loss means holding is safe and panic-selling into thin books is not (§10.11). Order cancellation is issued as reduce-only/cancel directives through the same intent path the Gateway will consume (EPIC_05); until the Gateway exists, the kill path emits ledgered `CANCEL_ALL` directives consumed by a test double. The KILL file must work with the HTTP dashboard down — file polling, no network dependency. Automatic trigger: repeated reconciliation mismatch (threshold config-driven), wired to #32's verification results.
+- **State of the world:** Mode machine has `KILLED` with a typed-confirmation re-arm stub at the API level (#33); governance and ack flows exist; no trigger plumbing, no KILL-file watcher, no cancel-all emission.
 
 ## Output Format
 
@@ -69,7 +69,7 @@ def test_rearm_requires_exact_typed_confirmation():
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] 100% branch coverage on `riskkernel` (§17.6); ≥90% on other changed lines.
 - [ ] `mypy --strict` clean; RUNBOOK stub notes for kill/re-arm updated if `docs/` runbook exists.
-- [ ] PR body includes `Refs #EPIC_04_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #5` and `Closes #35`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer Action is `LGTM`.
 
 ## Labels

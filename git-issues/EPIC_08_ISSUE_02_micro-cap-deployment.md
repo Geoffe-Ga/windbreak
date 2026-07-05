@@ -8,8 +8,8 @@ LIVE_MICRO mode deploys real capital against production APIs while total deploye
 
 ## Context
 
-- **Parent epic:** #EPIC_08_NUMBER
-- **Predecessor issue(s):** #EPIC_08_ISSUE_01_NUMBER (must be merged first — LIVE_MICRO must be unreachable unless preflight passes).
+- **Parent epic:** #9
+- **Predecessor issue(s):** #56 (must be merged first — LIVE_MICRO must be unreachable unless preflight passes).
 - **SPEC section:** `plans/SPEC_v3.md` §10.2 ("LIVE_MICRO caps deployed capital at `micro_cap_micros` regardless of all other settings"), §10.8 (human-ack thresholds), §10.9 (PAPER→LIVE_MICRO gate — including the ledgered-override path that caps the system at LIVE_MICRO permanently), §15 (Network: outbound allowlist only), §16 (`capital.micro_cap_micros`, `risk.require_human_ack_above_micros`).
 - **Files involved:**
   - `hedgekit/riskkernel/` — micro-cap check in the per-order check list (§10.3); human-ack hold state; mode-transition wiring.
@@ -53,7 +53,7 @@ VETO  intent 01J...  micro_cap: worst_case deployment 101_250_000 µ$ >
 
 ## Constraints
 
-**Scope fence:** Do not implement slippage/Brier monitoring — that belongs to issue #EPIC_08_ISSUE_03_NUMBER. Do not build new promotion-gate metrics (EPIC_07 owns gate math; you only consume mode state). The dashboard may gain the ack surface only — no other dashboard mutations (§14 allow/forbid lists are fixed).
+**Scope fence:** Do not implement slippage/Brier monitoring — that belongs to issue #58. Do not build new promotion-gate metrics (EPIC_07 owns gate math; you only consume mode state). The dashboard may gain the ack surface only — no other dashboard mutations (§14 allow/forbid lists are fixed).
 
 **Anti-bypass (verbatim, non-negotiable):**
 
@@ -75,7 +75,7 @@ VETO  intent 01J...  micro_cap: worst_case deployment 101_250_000 µ$ >
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] Coverage on changed lines ≥90%; `mypy --strict` clean; mutation score on touched `riskkernel` modules ≥90% (§17.6).
 - [ ] Public API changes are reflected in docstrings and any user-facing docs.
-- [ ] PR body includes `Refs #EPIC_08_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #9` and `Closes #57`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer GitHub Action is `LGTM`.
 
 ## Labels

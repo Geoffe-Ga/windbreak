@@ -8,7 +8,7 @@ An end-to-end evaluation pipeline skeleton runs over a synthetic known-answer fi
 
 ## Context
 
-- **Parent epic:** #EPIC_07_NUMBER
+- **Parent epic:** #8
 - **Predecessor issue(s):** none — this is the skeleton issue for this epic (requires EPIC_06's paper loop to be merged; evaluation reads its ledger events).
 - **SPEC section:** `plans/SPEC_v3.md` §13.1 (three tracks), §13.2 ("the dashboard says so bluntly"), §18 M6.
 - **Files involved:**
@@ -45,7 +45,7 @@ def test_three_track_report_renders_no_edge_bluntly() -> None:
 
 ## Constraints
 
-**Scope fence:** Do not implement any real metric math (issue #EPIC_07_ISSUE_03_NUMBER), real resolution tracking (#EPIC_07_ISSUE_02_NUMBER), or temporal-integrity checks (#EPIC_07_ISSUE_04_NUMBER). Stubs return typed sentinels. If you find yourself touching files outside the list above, stop and check with the user.
+**Scope fence:** Do not implement any real metric math (issue #51), real resolution tracking (#50), or temporal-integrity checks (#52). Stubs return typed sentinels. If you find yourself touching files outside the list above, stop and check with the user.
 
 **Anti-bypass (verbatim, non-negotiable):**
 
@@ -67,7 +67,7 @@ def test_three_track_report_renders_no_edge_bluntly() -> None:
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] Coverage on changed lines ≥ 90%.
 - [ ] Public API changes are reflected in docstrings.
-- [ ] PR body includes `Refs #EPIC_07_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #8` and `Closes #49`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer GitHub Action is `LGTM`.
 
 ## Labels

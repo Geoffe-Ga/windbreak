@@ -8,8 +8,8 @@ docker-compose and systemd skeletons run processes A–D as separate services sh
 
 ## Context
 
-- **Parent epic:** #EPIC_01_NUMBER
-- **Predecessor issue(s):** #EPIC_01_ISSUE_01_NUMBER (four-process packages + run loop). Issues 02–05 are not hard blockers but merge order should follow sequence numbers to keep diffs small.
+- **Parent epic:** #2
+- **Predecessor issue(s):** #10 (four-process packages + run loop). Issues 02–05 are not hard blockers but merge order should follow sequence numbers to keep diffs small.
 - **SPEC section:** plans/SPEC_v3.md §5.1 ("Process isolation is mandatory: killing Process A must not kill B or C… docker-compose/systemd deployment runs A, B, C, D as separate services sharing only the ledger volume and localhost sockets"); §14 (dashboard binds `127.0.0.1`, authenticated, no public inbound); §18 M0 (compose + systemd skeletons; stub dashboard).
 - **Files involved:**
   - `deploy/docker-compose.yml` — services `pipeline`, `riskkernel`, `order-gateway`, `dashboard`; shared ledger volume; no inter-service network beyond localhost-published ports (new).
@@ -73,7 +73,7 @@ def test_dashboard_requires_token(dashboard_server):
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] Coverage on changed lines meets the repo threshold (90%).
 - [ ] Public API changes are reflected in docstrings and any user-facing docs (README deployment note).
-- [ ] PR body includes `Refs #EPIC_01_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #2` and `Closes #15`.
 - [ ] Latest `Verdict:` from the Claude reviewer Action on HEAD is `LGTM`.
 
 ## Labels

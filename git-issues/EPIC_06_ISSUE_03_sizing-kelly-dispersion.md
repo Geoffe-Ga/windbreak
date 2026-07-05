@@ -8,8 +8,8 @@ Intents are sized by fractional Kelly on above-floor capital using the calibrate
 
 ## Context
 
-- **Parent epic:** #EPIC_06_NUMBER
-- **Predecessor issue(s):** #EPIC_06_ISSUE_02_NUMBER (must be merged first — provides edge computation and the 1-contract placeholder this issue replaces)
+- **Parent epic:** #7
+- **Predecessor issue(s):** #44 (must be merged first — provides edge computation and the 1-contract placeholder this issue replaces)
 - **SPEC section:** `plans/SPEC_v3.md` §9.5 (sizing), §9.6 (disagreement-scaled sizing, T2), §4 row T2, §16 `risk:` keys `kelly_fraction_ppm`, `dispersion_zero_ceiling_ppm`, `max_participation_ppm`, `max_pos_market_pct_ppm`, `max_pos_event_pct_ppm`, `max_pos_bucket_pct_ppm`, `max_notional_per_day_micros`, `micro_cap_micros`
 - **Files involved:**
   - `hedgekit/selector/sizing.py` — Kelly, dispersion scaling `g()`, cap clipping pipeline (new)
@@ -17,7 +17,7 @@ Intents are sized by fractional Kelly on above-floor capital using the calibrate
   - `tests/selector/test_sizing_properties.py` — hypothesis property suite
   - `tests/selector/test_sizing_examples.py` — hand-computed example cases
 - **Prior decisions:** `g()` is monotone non-increasing, `g(0)=1`, and reaches 0 at `dispersion_zero_ceiling_ppm`; the exact functional form is config-selected but those three properties are invariants (§9.6). Sizing operates only on above-floor capital as reported in the risk-config snapshot — the selector never computes the floor itself (that is the Kernel's job; the selector just respects the snapshot). All arithmetic fixed-point; rounding on size always rounds *down*.
-- **State of the world:** edge computation and entry conditions work; every passing intent is sized at the 1-contract placeholder from #EPIC_06_ISSUE_02_NUMBER.
+- **State of the world:** edge computation and entry conditions work; every passing intent is sized at the 1-contract placeholder from #44.
 
 ## Output Format
 
@@ -48,7 +48,7 @@ def test_dispersion_scaling_monotone(dispersion):
 
 ## Constraints
 
-**Scope fence:** Do not implement price-band or execution-style logic (#EPIC_06_ISSUE_04_NUMBER) or correlation-bucket *tagging* (#EPIC_06_ISSUE_05_NUMBER — this issue consumes bucket tags from `SelectorInputs` and enforces the per-bucket cap arithmetic only). Do not modify Kernel-side caps.
+**Scope fence:** Do not implement price-band or execution-style logic (#46) or correlation-bucket *tagging* (#47 — this issue consumes bucket tags from `SelectorInputs` and enforces the per-bucket cap arithmetic only). Do not modify Kernel-side caps.
 
 **Anti-bypass (verbatim, non-negotiable):**
 
@@ -68,7 +68,7 @@ def test_dispersion_scaling_monotone(dispersion):
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] Coverage on changed lines ≥ 90%; `mypy --strict` passes.
 - [ ] Sizing pipeline stages documented with SPEC § citations.
-- [ ] PR body includes `Refs #EPIC_06_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #7` and `Closes #45`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer action is `LGTM`.
 
 ## Labels

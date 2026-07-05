@@ -30,13 +30,11 @@ The epic is done when:
 
 ## Child Issues
 
-_Filled in after child issues are filed (Step 8/9 of spec-decomposition)._
-
-- [ ] #NNN — Skeleton: `hedgekit preflight` production-readiness harness
-- [ ] #NNN — Core: LIVE_MICRO micro-cap deployment path
-- [ ] #NNN — Core: live-vs-paper slippage + Brier degradation monitoring
-- [ ] #NNN — Edges: scripted operational drills on production APIs
-- [ ] #NNN — Polish: §19 documentation set
+- [ ] #56 — feat(livemicro): `hedgekit preflight` production-readiness checklist
+- [ ] #57 — feat(livemicro): LIVE_MICRO micro-cap deployment with human-ack and network allowlist
+- [ ] #58 — feat(livemicro): Live-vs-paper slippage and Brier degradation monitoring
+- [ ] #59 — feat(livemicro): Scripted operational drills
+- [ ] #60 — docs(livemicro): Full SPEC section-19 documentation set
 
 ## Sequencing Notes
 

@@ -33,15 +33,13 @@ The epic is done when:
 
 ## Child Issues
 
-_Filled in after child issues are filed (Step 8/9 of spec-decomposition)._
-
-- [ ] #NNN — Skeleton: evaluation pipeline over synthetic fixtures with three-track report shell
-- [ ] #NNN — Core: resolution tracker with settlement reversals + baseline suite
-- [ ] #NNN — Core: statistical machinery with clustered bootstrap and per-bucket reports
-- [ ] #NNN — Core: temporal-integrity enforcement
-- [ ] #NNN — Edges: selection-bias controls, abstention scoring, observation windows
-- [ ] #NNN — Edges: pre-registration flow for gate definitions
-- [ ] #NNN — Polish: dual-path gate computation, weekly reports, cost-adjusted expectancy
+- [ ] #49 — feat(evaluation): Three-track report skeleton over synthetic fixtures
+- [ ] #50 — feat(evaluation): Resolution tracker with reversals and baselines
+- [ ] #51 — feat(evaluation): Statistical machinery with clustered bootstrap
+- [ ] #52 — feat(evaluation): Temporal-integrity enforcement
+- [ ] #53 — feat(evaluation): Selection-bias cohorts and abstention scoring
+- [ ] #54 — feat(evaluation): Pre-registered gate plans with PAPER-clock reset
+- [ ] #55 — feat(evaluation): Dual-path gate computation and weekly reports
 
 ## Sequencing Notes
 

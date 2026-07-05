@@ -34,14 +34,12 @@ The epic is done when:
 
 ## Child Issues
 
-_Filled in after child issues are filed (Step 8/9 of spec-decomposition)._
-
-- [ ] #NNN — Skeleton: Gateway process, token verification, typed state machine, stubbed submission
-- [ ] #NNN — Core: Submission path with idempotent client order IDs and ledger-first transitions
-- [ ] #NNN — Core: Reduce-only enforcement for closes
-- [ ] #NNN — Core: Crash recovery and continuous Reconciler
-- [ ] #NNN — Edges: Adverse-selection sweeper (TTL + cancel-on-move)
-- [ ] #NNN — Polish: Chaos suite hardening
+- [ ] #37 — feat(gateway): Gateway process skeleton with token verification and typed state machine
+- [ ] #38 — feat(gateway): Limit-only submission path with idempotent client order IDs
+- [ ] #39 — feat(gateway): Reduce-only enforcement for closes
+- [ ] #40 — feat(gateway): Crash recovery and continuous reconciler
+- [ ] #41 — feat(gateway): Adverse-selection sweeper and volatility freeze
+- [ ] #42 — test(gateway): Chaos suite over every order-state edge
 
 ## Sequencing Notes
 

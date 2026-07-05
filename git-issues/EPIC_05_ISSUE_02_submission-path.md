@@ -8,8 +8,8 @@ Replace the stubbed submitter with the real submission path: limit orders only, 
 
 ## Context
 
-- **Parent epic:** #EPIC_05_NUMBER
-- **Predecessor issue(s):** #EPIC_05_ISSUE_01_NUMBER (must be merged first — skeleton, token verification, state machine)
+- **Parent epic:** #6
+- **Predecessor issue(s):** #37 (must be merged first — skeleton, token verification, state machine)
 - **SPEC section:** `plans/SPEC_v3.md` §11.2 (requirements: limit orders only, deterministic client order IDs, ledger every transition before the next action, refuse when paused/unknown), §11.3 (state machine), §5.3 (order flow), §4 row T3 (runaway order loop)
 - **Files involved:**
   - `hedgekit/order_gateway/gateway.py` — replace stub submitter with real path through the connector's `place_order(normalized_intent, approval_token)` / `cancel_order(id)` interface (§7.2)
@@ -17,7 +17,7 @@ Replace the stubbed submitter with the real submission path: limit orders only, 
   - `hedgekit/order_gateway/ledger_writer.py` — transition ledgering helper enforcing write-before-next-action ordering
   - `tests/order_gateway/test_submission.py` — happy path, duplicate submission, paused exchange, unknown status
   - `tests/order_gateway/test_idempotency.py` — same intent resubmitted N times → exactly one exchange order
-- **Prior decisions:** Client order ID derivation must be pure and reproducible across process restarts (crash recovery in #EPIC_05_ISSUE_04_NUMBER depends on it to match in-flight orders to intents). Exchange status comes from `get_exchange_status()` (§7.2); maintenance windows suspend submission (§7.4).
+- **Prior decisions:** Client order ID derivation must be pure and reproducible across process restarts (crash recovery in #40 depends on it to match in-flight orders to intents). Exchange status comes from `get_exchange_status()` (§7.2); maintenance windows suspend submission (§7.4).
 - **State of the world:** After the skeleton issue, `gateway.py` verifies tokens and walks the state machine but submits to a typed stub; no ledger writes happen on transitions yet.
 
 ## Output Format
@@ -50,7 +50,7 @@ def test_paused_exchange_refuses(gateway, paper_exchange, approved_intent):
 
 ## Constraints
 
-**Scope fence:** Do not implement reduce-only validation (issue #EPIC_05_ISSUE_03_NUMBER), crash recovery / startup reconciliation (issue #EPIC_05_ISSUE_04_NUMBER), or the sweeper (issue #EPIC_05_ISSUE_05_NUMBER). Market orders must be structurally unrepresentable, not merely rejected at runtime. If you find yourself touching files outside the list above, stop and check with the user.
+**Scope fence:** Do not implement reduce-only validation (issue #39), crash recovery / startup reconciliation (issue #40), or the sweeper (issue #41). Market orders must be structurally unrepresentable, not merely rejected at runtime. If you find yourself touching files outside the list above, stop and check with the user.
 
 **Anti-bypass (verbatim, non-negotiable):**
 
@@ -71,7 +71,7 @@ def test_paused_exchange_refuses(gateway, paper_exchange, approved_intent):
 - [ ] Coverage on changed lines ≥90%.
 - [ ] `mypy --strict` clean.
 - [ ] Public API changes are reflected in docstrings.
-- [ ] PR body includes `Refs #EPIC_05_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #6` and `Closes #38`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer action is `LGTM`.
 
 ## Labels

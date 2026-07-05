@@ -8,7 +8,7 @@ You are a senior Python engineer specializing in credential hygiene and fail-clo
 
 ## Context
 
-- **Parent epic:** #EPIC_08_NUMBER
+- **Parent epic:** #9
 - **Predecessor issue(s):** none — this is the skeleton issue for this epic (it does assume EPIC_07/M6 has merged; see epic Sequencing Notes).
 - **SPEC section:** `plans/SPEC_v3.md` §18 M7 ("Production read-only validation; trade-key scope validation; jurisdiction preflight"), §15 (Security: startup-failure conditions), §1.1-3 (withdrawal-capable credentials forbidden system-wide; startup fails if detected), §5.2 (credential boundaries table), §6.2 (`jurisdiction_status`).
 - **Files involved:**
@@ -54,7 +54,7 @@ SKIP  jurisdiction.markets_eligible   No screener-eligible markets cached
 
 ## Constraints
 
-**Scope fence:** Do not implement LIVE_MICRO deployment wiring, the micro-cap enforcement, or the allowlist proxy — that belongs to issue #EPIC_08_ISSUE_02_NUMBER. Do not write RUNBOOK/SECURITY docs — that is #EPIC_08_ISSUE_05_NUMBER. If you find yourself touching Risk Kernel internals or Gateway submission code, stop and check with the user.
+**Scope fence:** Do not implement LIVE_MICRO deployment wiring, the micro-cap enforcement, or the allowlist proxy — that belongs to issue #57. Do not write RUNBOOK/SECURITY docs — that is #60. If you find yourself touching Risk Kernel internals or Gateway submission code, stop and check with the user.
 
 **Anti-bypass (verbatim, non-negotiable):**
 
@@ -76,7 +76,7 @@ SKIP  jurisdiction.markets_eligible   No screener-eligible markets cached
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] Coverage on changed lines ≥90%; `mypy --strict` clean.
 - [ ] Public API changes are reflected in docstrings and any user-facing docs.
-- [ ] PR body includes `Refs #EPIC_08_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #9` and `Closes #56`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer GitHub Action is `LGTM`.
 
 ## Labels

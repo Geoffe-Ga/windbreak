@@ -8,8 +8,8 @@ Promotion through `RESEARCH → PAPER → LIVE_MICRO → LIVE` happens only via 
 
 ## Context
 
-- **Parent epic:** #EPIC_04_NUMBER
-- **Predecessor issue(s):** #EPIC_04_ISSUE_04_NUMBER (must be merged first)
+- **Parent epic:** #5
+- **Predecessor issue(s):** #32 (must be merged first)
 - **SPEC section:** `plans/SPEC_v3.md` §10.9 (promotion gates), §10.10 (demotion/halt triggers), §10.2 (mode machine), §1.1-4 (evidence-gated autonomy), §0 ("the promotion-gate loophole is closed — significance is mandatory for live promotion, overrides are ledgered and mode-capped"), threats T7, T15
 - **Files involved:**
   - `hedgekit/riskkernel/promotion.py` — new: gate definitions as typed data, gate evaluation, promotion decisions
@@ -26,7 +26,7 @@ Deliverable is a single PR containing:
 - [ ] `promotion.py`: gates as serializable data structures (thresholds from config), evaluation returning pass/fail per criterion, promotion applied only when all pass AND `mode_ceiling` permits; every evaluation ledgered with full evidence
 - [ ] The significance override path: explicit operator acknowledgement, ledgered, and permanently capping that deployment at LIVE_MICRO (§10.9) — with a test proving the cap survives restart
 - [ ] `demotion.py`: every §10.10 trigger wired to its action; triggers are individually testable and ledger their firing
-- [ ] `KILLED` requires manual re-arm with typed confirmation (§10.2) — enforce at the transition API (full kill-switch trigger plumbing is #EPIC_04_ISSUE_07_NUMBER)
+- [ ] `KILLED` requires manual re-arm with typed confirmation (§10.2) — enforce at the transition API (full kill-switch trigger plumbing is #35)
 - [ ] Full mode-transition matrix test: every (mode, event) pair asserts the spec-mandated destination or rejection (§10.12)
 - [ ] No drive-by changes unrelated to the goal
 
@@ -49,7 +49,7 @@ def test_override_caps_at_live_micro_forever():
 
 ## Constraints
 
-**Scope fence:** Do not compute statistics (Brier, bootstrap, calibration) — EPIC_07 (M6) owns metric computation and pre-registration hashing (§13.6); consume `GateEvidence` as input. Floor-lowering governance is #EPIC_04_ISSUE_06_NUMBER. If you find yourself touching files outside the list above, stop and check with the user.
+**Scope fence:** Do not compute statistics (Brier, bootstrap, calibration) — EPIC_07 (M6) owns metric computation and pre-registration hashing (§13.6); consume `GateEvidence` as input. Floor-lowering governance is #34. If you find yourself touching files outside the list above, stop and check with the user.
 
 **Anti-bypass (verbatim, non-negotiable):**
 
@@ -69,7 +69,7 @@ def test_override_caps_at_live_micro_forever():
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] 100% branch coverage on `riskkernel` (§17.6); ≥90% on other changed lines.
 - [ ] `mypy --strict` clean; gate data structures documented against §10.9.
-- [ ] PR body includes `Refs #EPIC_04_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #5` and `Closes #33`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer Action is `LGTM`.
 
 ## Labels

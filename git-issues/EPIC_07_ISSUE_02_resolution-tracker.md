@@ -8,8 +8,8 @@ The resolution tracker ingests market resolutions from ledger events — includi
 
 ## Context
 
-- **Parent epic:** #EPIC_07_NUMBER
-- **Predecessor issue(s):** #EPIC_07_ISSUE_01_NUMBER (must be merged first — replaces its resolution stub).
+- **Parent epic:** #8
+- **Predecessor issue(s):** #49 (must be merged first — replaces its resolution stub).
 - **SPEC section:** `plans/SPEC_v3.md` §13.2 (baselines), §4 T16 (resolution reversal), §11.3 (`SETTLEMENT_REVERSED` order state), §6.3 (`ForecastRecord.market_price_baseline_pips`, `baseline_quote_snapshot_id`).
 - **Files involved:**
   - `hedgekit/evaluation/resolution.py` — replace stub with real tracker over ledger read models
@@ -43,7 +43,7 @@ def test_settlement_reversal_recomputes_outcome() -> None:
 
 ## Constraints
 
-**Scope fence:** Do not compute any scores from these baselines (issue #EPIC_07_ISSUE_03_NUMBER) and do not implement temporal-integrity filtering (#EPIC_07_ISSUE_04_NUMBER). If you find yourself touching files outside the list above, stop and check with the user.
+**Scope fence:** Do not compute any scores from these baselines (issue #51) and do not implement temporal-integrity filtering (#52). If you find yourself touching files outside the list above, stop and check with the user.
 
 **Anti-bypass (verbatim, non-negotiable):**
 
@@ -63,7 +63,7 @@ def test_settlement_reversal_recomputes_outcome() -> None:
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] Coverage on changed lines ≥ 90%.
 - [ ] Public API changes are reflected in docstrings.
-- [ ] PR body includes `Refs #EPIC_07_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #8` and `Closes #50`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer GitHub Action is `LGTM`.
 
 ## Labels

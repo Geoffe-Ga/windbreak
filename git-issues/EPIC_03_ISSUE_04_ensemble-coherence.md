@@ -8,8 +8,8 @@ Independent structured model votes are aggregated by median into `probability_pp
 
 ## Context
 
-- **Parent epic:** #EPIC_03_NUMBER
-- **Predecessor issue(s):** #EPIC_03_ISSUE_01_NUMBER (must be merged first). Parallel-safe with #EPIC_03_ISSUE_02_NUMBER and #EPIC_03_ISSUE_03_NUMBER.
+- **Parent epic:** #4
+- **Predecessor issue(s):** #22 (must be merged first). Parallel-safe with #23 and #24.
 - **SPEC section:** `plans/SPEC_v3.md` §8.6 (model pinning, fingerprints, temporal integrity), §8.7 (coherence across mutually exclusive outcomes), §6.3 (`ModelVote`, `vote_dispersion_ppm`, `coherence_group_sum_ppm`, `coherence_flag`), §4 T2/T14/T17, §16 `forecast.ensemble` config.
 - **Files involved:**
   - `hedgekit/forecast/ensemble.py` — vote collection, median aggregation, dispersion (new)
@@ -53,7 +53,7 @@ def test_median_and_dispersion_are_integer_ppm():
 
 ## Constraints
 
-**Scope fence:** Do not implement calibration-map fitting or shrinkage-λ tuning (EPIC_07 / M6 — this issue applies the versioned map and configured λ as given), canary drift (#EPIC_03_ISSUE_07_NUMBER), or dutch-book arbitrage detection (post-v1, §19). If you find yourself touching files outside the list above, stop and check with the user.
+**Scope fence:** Do not implement calibration-map fitting or shrinkage-λ tuning (EPIC_07 / M6 — this issue applies the versioned map and configured λ as given), canary drift (#28), or dutch-book arbitrage detection (post-v1, §19). If you find yourself touching files outside the list above, stop and check with the user.
 
 **Anti-bypass (verbatim, non-negotiable):**
 
@@ -73,7 +73,7 @@ def test_median_and_dispersion_are_integer_ppm():
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] Coverage on changed lines ≥ 90%; `mypy --strict` passes.
 - [ ] Public API changes are reflected in docstrings.
-- [ ] PR body includes `Refs #EPIC_03_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #4` and `Closes #25`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer action is `LGTM`.
 
 ## Labels

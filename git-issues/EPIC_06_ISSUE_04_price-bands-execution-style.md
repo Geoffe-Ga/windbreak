@@ -8,12 +8,12 @@ The selector enforces price bands (no opens below `min_open_price_pips` or above
 
 ## Context
 
-- **Parent epic:** #EPIC_06_NUMBER
-- **Predecessor issue(s):** #EPIC_06_ISSUE_03_NUMBER (must be merged first — sizing determines whether a resting order still clears the hurdle at the improved price)
+- **Parent epic:** #7
+- **Predecessor issue(s):** #45 (must be merged first — sizing determines whether a resting order still clears the hurdle at the improved price)
 - **SPEC section:** `plans/SPEC_v3.md` §9.4 (price bands, favorite-longshot rationale), §9.7 (execution style & adverse-selection controls, T13), §9.8 (exits), §4 row T13, §16 keys `min_open_price_pips`, `max_open_price_pips`, `resting_order_ttl_seconds`, `cancel_on_move_ticks`
 - **Files involved:**
   - `hedgekit/selector/execution_style.py` — cross vs. rest decision, TTL/cancel-on-move stamping (new)
-  - `hedgekit/selector/entry.py` — replace the price-band stub from #EPIC_06_ISSUE_02_NUMBER with real enforcement
+  - `hedgekit/selector/entry.py` — replace the price-band stub from #44 with real enforcement
   - `hedgekit/selector/exits.py` — close-intent construction gated to the three legitimate trigger sources, reduce-only always (new)
   - `tests/selector/test_price_bands.py`, `tests/selector/test_execution_style.py`, `tests/selector/test_exits.py`
 - **Prior decisions:** a fundamentals bot resting passively is a free option for faster traders (§2, T13) — `cross` is the default and resting is the exception. Close intents are reduce-only *always* (§6.4); the volatility-freeze path (market moved > threshold since intent creation → cancel and return market to screener) is Gateway/sweeper behavior, but the selector must stamp every resting intent with the fields the sweeper needs.
@@ -54,7 +54,7 @@ def test_strategy_logic_cannot_close():
 
 ## Constraints
 
-**Scope fence:** Do not implement the Gateway-side sweeper (cancel on TTL/move — that is EPIC_05's scope), strategy-driven early exits (post-v1, §19), or correlation buckets (#EPIC_06_ISSUE_05_NUMBER). If you find yourself touching `hedgekit/order_gateway/`, stop.
+**Scope fence:** Do not implement the Gateway-side sweeper (cancel on TTL/move — that is EPIC_05's scope), strategy-driven early exits (post-v1, §19), or correlation buckets (#47). If you find yourself touching `hedgekit/order_gateway/`, stop.
 
 **Anti-bypass (verbatim, non-negotiable):**
 
@@ -74,7 +74,7 @@ def test_strategy_logic_cannot_close():
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] Coverage on changed lines ≥ 90%; `mypy --strict` passes.
 - [ ] Docstrings cite §9.4/§9.7/§9.8 including the free-option rationale.
-- [ ] PR body includes `Refs #EPIC_06_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #7` and `Closes #46`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer action is `LGTM`.
 
 ## Labels

@@ -8,8 +8,8 @@ Every §19 RUNBOOK-critical procedure — restore-from-backup, kill/re-arm, reco
 
 ## Context
 
-- **Parent epic:** #EPIC_08_NUMBER
-- **Predecessor issue(s):** #EPIC_08_ISSUE_03_NUMBER (must be merged first — drills assert against the full live monitoring surface).
+- **Parent epic:** #9
+- **Predecessor issue(s):** #58 (must be merged first — drills assert against the full live monitoring surface).
 - **SPEC section:** `plans/SPEC_v3.md` §18 M7 ("restore/kill/reconciliation drills on production APIs; profit-sweep + ratchet in anger"), §10.7 (floor governance: ratchet raises freely, profit-sweep advisory alert), §10.11 (kill switch triggers and effects; re-arm is manual), §11.4 (crash recovery/reconciliation), §12 (encrypted backups; restore drills tested; audit-bundle export).
 - **Files involved:**
   - `hedgekit/drills/` — drill runner + individual drill implementations (create).
@@ -52,7 +52,7 @@ $ hedgekit drill restore-from-backup
 
 ## Constraints
 
-**Scope fence:** Do not write the RUNBOOK prose — #EPIC_08_ISSUE_05_NUMBER documents these drills; this issue makes them executable. Do not add new kill/restore/ratchet *logic* — drills exercise existing mechanisms; if a drill reveals a defect, file a separate bug, don't fix it inside the drill PR.
+**Scope fence:** Do not write the RUNBOOK prose — #60 documents these drills; this issue makes them executable. Do not add new kill/restore/ratchet *logic* — drills exercise existing mechanisms; if a drill reveals a defect, file a separate bug, don't fix it inside the drill PR.
 
 **Anti-bypass (verbatim, non-negotiable):**
 
@@ -74,7 +74,7 @@ $ hedgekit drill restore-from-backup
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] Coverage on changed lines ≥90%; `mypy --strict` clean.
 - [ ] Public API changes are reflected in docstrings and any user-facing docs.
-- [ ] PR body includes `Refs #EPIC_08_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #9` and `Closes #59`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer GitHub Action is `LGTM`.
 
 ## Labels

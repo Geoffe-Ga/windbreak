@@ -8,8 +8,8 @@ Every `SELL_TO_CLOSE` order is provably reduce-only: the Gateway sets the exchan
 
 ## Context
 
-- **Parent epic:** #EPIC_05_NUMBER
-- **Predecessor issue(s):** #EPIC_05_ISSUE_02_NUMBER (must be merged first — real submission path)
+- **Parent epic:** #6
+- **Predecessor issue(s):** #38 (must be merged first — real submission path)
 - **SPEC section:** `plans/SPEC_v3.md` §6.4 ("SELL_TO_CLOSE is reduce-only, always"; "If the exchange lacks a reduce-only flag, the Gateway enforces reduce-only locally immediately before submission and re-verifies position size after fills"), §11.2 (reduce-only enforcement requirement), §1.1-2 (bounded-loss invariant), §11.5 (zero net-short acceptance criterion)
 - **Files involved:**
   - `hedgekit/order_gateway/reduce_only.py` — new: pre-submission position check + post-fill re-verification
@@ -68,7 +68,7 @@ def test_partial_fill_shrinks_closeable(gateway, positions, close_intent_factory
 - [ ] Coverage on changed lines ≥90%.
 - [ ] `mypy --strict` clean.
 - [ ] Public API changes are reflected in docstrings.
-- [ ] PR body includes `Refs #EPIC_05_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #6` and `Closes #39`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer action is `LGTM`.
 
 ## Labels

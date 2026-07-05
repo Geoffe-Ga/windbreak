@@ -8,8 +8,8 @@ All hedgekit processes log structured lines with secrets redacted by constructio
 
 ## Context
 
-- **Parent epic:** #EPIC_01_NUMBER
-- **Predecessor issue(s):** #EPIC_01_ISSUE_02_NUMBER (config supplies `alerts.sinks`), #EPIC_01_ISSUE_04_NUMBER (ledger records `AlertEmitted`).
+- **Parent epic:** #2
+- **Predecessor issue(s):** #11 (config supplies `alerts.sinks`), #13 (ledger records `AlertEmitted`).
 - **SPEC section:** plans/SPEC_v3.md §14 (sink list + mandatory alerts: mode change, halt/kill, veto, reconciliation mismatch, schema anomaly, floor-change request, daily-loss pause, drawdown demotion, fee model unavailable, jurisdiction unknown, canary drift, profit-sweep advisory, backup failure, disk halt); §15 (secrets never in logs); §18 M0 ("structured logging with secret redaction; alert-sink abstraction").
 - **Files involved:**
   - `hedgekit/logging_setup.py` — structured (JSON-lines) logging config + redaction filter (new).
@@ -65,7 +65,7 @@ def test_mandatory_alert_registry_matches_spec():
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] Coverage on changed lines meets the repo threshold (90%).
 - [ ] Public API changes are reflected in docstrings and any user-facing docs.
-- [ ] PR body includes `Refs #EPIC_01_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #2` and `Closes #14`.
 - [ ] Latest `Verdict:` from the Claude reviewer Action on HEAD is `LGTM`.
 
 ## Labels

@@ -8,8 +8,8 @@ Property tests over random concurrent intent streams with crashes injected at ev
 
 ## Context
 
-- **Parent epic:** #EPIC_04_NUMBER
-- **Predecessor issue(s):** #EPIC_04_ISSUE_07_NUMBER (must be merged first — this issue hardens the completed Kernel surface)
+- **Parent epic:** #5
+- **Predecessor issue(s):** #35 (must be merged first — this issue hardens the completed Kernel surface)
 - **SPEC section:** `plans/SPEC_v3.md` §10.12 (acceptance criteria), §17.2 (Risk Kernel matrix), §17.6 (coverage & mutation floors: "branch coverage alone demonstrably passes buggy comparators"), §3.5 (all randomness seeded and logged)
 - **Files involved:**
   - `tests/riskkernel/test_property_concurrent.py` — new: hypothesis stateful/concurrent intent-stream tests
@@ -72,7 +72,7 @@ class KernelInvariants(RuleBasedStateMachine):
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] 100% branch coverage on `riskkernel`, accounting, and token packages; **mutmut score ≥90%** on the same three (§17.6), enforced by `./scripts/mutation.sh`.
 - [ ] Hypothesis seeds logged and reproducible (`--hypothesis-seed` documented in `scripts/README.md`).
-- [ ] PR body includes `Refs #EPIC_04_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #5` and `Closes #36`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer Action is `LGTM`.
 
 ## Labels

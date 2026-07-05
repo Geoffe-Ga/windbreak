@@ -33,14 +33,12 @@ The epic is done when:
 
 ## Child Issues
 
-_Filled in after child issues are filed (Step 8/9 of spec-decomposition)._
-
-- [ ] #NNN — Skeleton: MarketConnector interface + FakeExchange + snapshot-and-ledger loop
-- [ ] #NNN — Core: Kalshi adapter with fixed-point parsing and normalization
-- [ ] #NNN — Core: fee-model lookup + BalanceSemantics contract
-- [ ] #NNN — Core: PaperExchange with pessimistic fill model
-- [ ] #NNN — Edges: data quality, freshness TTLs, rate limiting, circuit breaker
-- [ ] #NNN — Polish: full recorded-fixture contract suite + screener filters
+- [ ] #16 — feat(connector): Wire MarketConnector interface with FakeExchange and snapshot-ledger loop
+- [ ] #17 — feat(connector): Kalshi adapter with fixed-point parsing and product refusal
+- [ ] #18 — feat(connector): Fee-model lookup and BalanceSemantics contract
+- [ ] #19 — feat(connector): PaperExchange with pessimistic fill model
+- [ ] #20 — feat(connector): Data-quality halts, freshness TTLs, rate limiting, circuit breaker
+- [ ] #21 — test(connector): Recorded-fixture contract suite and screener filters
 
 ## Sequencing Notes
 

@@ -8,8 +8,8 @@ Fetched web content is handled as untrusted data end-to-end — wrapped in delim
 
 ## Context
 
-- **Parent epic:** #EPIC_03_NUMBER
-- **Predecessor issue(s):** #EPIC_03_ISSUE_03_NUMBER and #EPIC_03_ISSUE_05_NUMBER (must be merged first — sandbox boundary and citation path are the surfaces under attack).
+- **Parent epic:** #4
+- **Predecessor issue(s):** #24 and #26 (must be merged first — sandbox boundary and citation path are the surfaces under attack).
 - **SPEC section:** `plans/SPEC_v3.md` §8.5 (prompt-injection defense), §4 T1 (threat + mitigation row), §1.1-5 (firewall invariant), §17.1 (prompt-injection suite is CI-gating), §8.9 ("injection corpus green" acceptance).
 - **Files involved:**
   - `hedgekit/forecast/sanitize.py` — data-block wrapping, script/hidden-text stripping, quote extraction ≤ 25 words (new)
@@ -51,7 +51,7 @@ def test_invalid_model_output_is_discarded_not_repaired(pipeline_env):
 
 ## Constraints
 
-**Scope fence:** Do not modify the sandbox tool registry (#EPIC_03_ISSUE_03_NUMBER owns it) or citation verification logic (#EPIC_03_ISSUE_05_NUMBER). Corpus pages are fixtures — no live URLs. If you find yourself touching files outside the list above, stop and check with the user.
+**Scope fence:** Do not modify the sandbox tool registry (#24 owns it) or citation verification logic (#26). Corpus pages are fixtures — no live URLs. If you find yourself touching files outside the list above, stop and check with the user.
 
 **Anti-bypass (verbatim, non-negotiable):**
 
@@ -71,7 +71,7 @@ def test_invalid_model_output_is_discarded_not_repaired(pipeline_env):
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] Coverage on changed lines ≥ 90%; `mypy --strict` passes.
 - [ ] Public API changes are reflected in docstrings.
-- [ ] PR body includes `Refs #EPIC_03_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #4` and `Closes #27`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer action is `LGTM`.
 
 ## Labels

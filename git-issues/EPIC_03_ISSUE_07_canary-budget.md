@@ -8,8 +8,8 @@ A weekly canary set (~20 stable questions with reference answers/distributions) 
 
 ## Context
 
-- **Parent epic:** #EPIC_03_NUMBER
-- **Predecessor issue(s):** #EPIC_03_ISSUE_02_NUMBER and #EPIC_03_ISSUE_04_NUMBER (must be merged first — cost ledgering and pinned ensemble exist).
+- **Parent epic:** #4
+- **Predecessor issue(s):** #23 and #25 (must be merged first — cost ledgering and pinned ensemble exist).
 - **SPEC section:** `plans/SPEC_v3.md` §8.6 (canary set, drift alerting), §4 T14 (silent drift) and T11 (cost blowout), §16 `forecast.canary` + `forecast.budget` config, §8.9 ("canary-drift alerting tested with synthetic drift"), §14 (canary status + cost meter are dashboard surfaces; mandatory canary-drift alert).
 - **Files involved:**
   - `hedgekit/forecast/canary.py` — canary set runner, drift scoring vs. reference, ack state (new)
@@ -70,7 +70,7 @@ def test_ack_restores_eligibility_for_new_forecasts_only(canary_env):
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] Coverage on changed lines ≥ 90%; `mypy --strict` passes.
 - [ ] Public API changes are reflected in docstrings.
-- [ ] PR body includes `Refs #EPIC_03_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #4` and `Closes #28`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer action is `LGTM`.
 
 ## Labels

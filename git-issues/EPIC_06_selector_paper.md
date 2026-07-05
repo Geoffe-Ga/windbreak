@@ -32,14 +32,12 @@ The epic is done when:
 
 ## Child Issues
 
-_Filled in after child issues are filed (Step 8/9 of spec-decomposition)._
-
-- [ ] #NNN — Skeleton: pure selector function signature, zero-intent stub, golden-test determinism harness
-- [ ] #NNN — Core: fee-aware executable edge and entry conditions
-- [ ] #NNN — Core: fractional-Kelly sizing with dispersion scaling and cap clipping
-- [ ] #NNN — Edges: price bands, execution style, adverse-selection controls, exit policy
-- [ ] #NNN — Edges: correlation buckets and per-bucket caps
-- [ ] #NNN — Polish: always-on PAPER loop, dashboard views, weekly report stub
+- [ ] #43 — feat(selector): Pure selector skeleton with golden determinism harness
+- [ ] #44 — feat(selector): Fee-aware executable edge and entry conditions
+- [ ] #45 — feat(selector): Dispersion-scaled fractional Kelly sizing with cap clipping
+- [ ] #46 — feat(selector): Price bands, execution style, and adverse-selection controls
+- [ ] #47 — feat(selector): Correlation buckets with per-bucket caps
+- [ ] #48 — feat(selector): Always-on PAPER loop with dashboard views
 
 ## Sequencing Notes
 

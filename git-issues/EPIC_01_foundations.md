@@ -33,14 +33,12 @@ The epic is done when:
 
 ## Child Issues
 
-_Filled in after child issues are filed (Step 8/9 of spec-decomposition)._
-
-- [ ] #NNN — Skeleton: four-process package layout + `hedgekit run` heartbeat idle loop
-- [ ] #NNN — Core: typed config loader with unknown-keys-fatal and ledgered versions
-- [ ] #NNN — Core: fixed-point numeric types + AST float-lint
-- [ ] #NNN — Core: hash-chained append-only ledger + `hedgekit rebuild`
-- [ ] #NNN — Edges: structured logging with secret redaction + alert-sink abstraction
-- [ ] #NNN — Polish: docker-compose/systemd skeletons + stub localhost dashboard
+- [ ] #10 — feat(foundations): Wire four-process package skeleton and `hedgekit run` heartbeat loop
+- [ ] #11 — feat(foundations): Typed config loader with unknown-keys-fatal and ledgered versions
+- [ ] #12 — feat(foundations): Fixed-point numeric types with AST float-lint
+- [ ] #13 — feat(foundations): Hash-chained append-only ledger with `hedgekit rebuild`
+- [ ] #14 — feat(foundations): Structured logging with secret redaction and alert-sink abstraction
+- [ ] #15 — chore(foundations): docker-compose/systemd skeletons and stub localhost dashboard
 
 ## Sequencing Notes
 

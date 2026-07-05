@@ -8,8 +8,8 @@ The Kernel computes `worst_case_equity` exactly per SPEC §10.4 with conservativ
 
 ## Context
 
-- **Parent epic:** #EPIC_04_NUMBER
-- **Predecessor issue(s):** #EPIC_04_ISSUE_01_NUMBER (must be merged first)
+- **Parent epic:** #5
+- **Predecessor issue(s):** #29 (must be merged first)
 - **SPEC section:** `plans/SPEC_v3.md` §10.3 (per-order checks), §10.4 (floor formula), §1.1-1 (Floor Invariant), §6.1 (numeric units), §17.3 (accounting proofs), threat T4
 - **Files involved:**
   - `hedgekit/riskkernel/floor.py` — new: `worst_case_equity`, `worst_case_cost` in `MoneyMicros`/`PricePips` integer units
@@ -17,7 +17,7 @@ The Kernel computes `worst_case_equity` exactly per SPEC §10.4 with conservativ
   - `hedgekit/accounting/` — fixed-point helpers from EPIC_01 (`MoneyMicros`, `PricePips`, `ContractCentis`); extend only with conservative-rounding utilities
   - `tests/riskkernel/test_floor.py`, `tests/riskkernel/test_checks.py`, `tests/riskkernel/test_floor_metamorphic.py`
 - **Prior decisions:** Formula is fixed by spec: `worst_case_equity = exchange_verified_available_cash + guaranteed_terminal_value_of_positions − pending_kernel_reservations − unresolved_fee_upper_bounds − reconciliation_uncertainty_buffer`; opening-buy `worst_case_cost = limit_price·count + max_trading_fee + max_settlement_fee + conservative_rounding_buffer`. Rounding always overstates cost/risk, understates equity (§6.1). Any check *error* (not just failure) → VETO (§10.3). For closes, worst-case cost must be provably non-increasing or veto (§10.4).
-- **State of the world:** Kernel process, mode machine, and a veto-everything check pipeline exist from the skeleton issue. Balance inputs are injected via typed interfaces (real exchange verification arrives in #EPIC_04_ISSUE_04_NUMBER — use in-memory fakes here).
+- **State of the world:** Kernel process, mode machine, and a veto-everything check pipeline exist from the skeleton issue. Balance inputs are injected via typed interfaces (real exchange verification arrives in #32 — use in-memory fakes here).
 
 ## Output Format
 
@@ -48,7 +48,7 @@ def test_open_buy_that_would_breach_floor_is_vetoed():
 
 ## Constraints
 
-**Scope fence:** Reservation creation/serialization is #EPIC_04_ISSUE_03_NUMBER — here, `pending_kernel_reservations` is a read-only input. Live exchange balance fetching is #EPIC_04_ISSUE_04_NUMBER. Promotion-gate checks are #EPIC_04_ISSUE_05_NUMBER; human-ack is #EPIC_04_ISSUE_06_NUMBER — leave those pipeline slots as explicit VETO stubs. If you find yourself touching files outside the list above, stop and check with the user.
+**Scope fence:** Reservation creation/serialization is #31 — here, `pending_kernel_reservations` is a read-only input. Live exchange balance fetching is #32. Promotion-gate checks are #33; human-ack is #34 — leave those pipeline slots as explicit VETO stubs. If you find yourself touching files outside the list above, stop and check with the user.
 
 **Anti-bypass (verbatim, non-negotiable):**
 
@@ -68,7 +68,7 @@ def test_open_buy_that_would_breach_floor_is_vetoed():
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] 100% branch coverage on `riskkernel` and fixed-point accounting paths (§17.6); ≥90% on other changed lines.
 - [ ] `mypy --strict` clean; public APIs documented.
-- [ ] PR body includes `Refs #EPIC_04_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #5` and `Closes #30`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer Action is `LGTM`.
 
 ## Labels

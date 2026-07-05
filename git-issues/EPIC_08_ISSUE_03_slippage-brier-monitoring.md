@@ -8,8 +8,8 @@ Live LIVE_MICRO fills are continuously compared against the §17.4 paper-fill mo
 
 ## Context
 
-- **Parent epic:** #EPIC_08_NUMBER
-- **Predecessor issue(s):** #EPIC_08_ISSUE_02_NUMBER (must be merged first — there are no live fills to measure without the micro-cap deployment path).
+- **Parent epic:** #9
+- **Predecessor issue(s):** #57 (must be merged first — there are no live fills to measure without the micro-cap deployment path).
 - **SPEC section:** `plans/SPEC_v3.md` §10.9 ("live slippage ≤ configured multiple of paper model; live Brier within degradation band"), §10.10 ("rolling Brier degradation; live-vs-paper slippage divergence" as automatic demotion triggers), §13.1 (execution-quality track), §13.5 (slippage by market/category), §17.4 (the normative paper-fill model being compared against).
 - **Files involved:**
   - `hedgekit/evaluation/execution_quality.py` — per-fill modeled-vs-actual comparison (create or extend from EPIC_07).
@@ -55,7 +55,7 @@ fixtures/execution_quality/known_answer_01.json
 
 ## Constraints
 
-**Scope fence:** Do not modify the §17.4 paper-fill model itself — any change to it re-registers the gate plan and belongs to a deliberate EPIC_07 follow-up. Do not implement operator drills (#EPIC_08_ISSUE_04_NUMBER) or docs (#EPIC_08_ISSUE_05_NUMBER). No new baseline metrics beyond the two §10.9 inputs.
+**Scope fence:** Do not modify the §17.4 paper-fill model itself — any change to it re-registers the gate plan and belongs to a deliberate EPIC_07 follow-up. Do not implement operator drills (#59) or docs (#60). No new baseline metrics beyond the two §10.9 inputs.
 
 **Anti-bypass (verbatim, non-negotiable):**
 
@@ -77,7 +77,7 @@ fixtures/execution_quality/known_answer_01.json
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] Coverage on changed lines ≥90%; `mypy --strict` clean.
 - [ ] Public API changes are reflected in docstrings and any user-facing docs.
-- [ ] PR body includes `Refs #EPIC_08_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #9` and `Closes #58`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer GitHub Action is `LGTM`.
 
 ## Labels

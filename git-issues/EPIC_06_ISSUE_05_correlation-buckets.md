@@ -8,8 +8,8 @@ Every market carries structured correlation-driver tags from the seed taxonomy, 
 
 ## Context
 
-- **Parent epic:** #EPIC_06_NUMBER
-- **Predecessor issue(s):** #EPIC_06_ISSUE_03_NUMBER (must be merged first — the cap-clipping pipeline this issue's bucket arithmetic plugs into). Independent of #EPIC_06_ISSUE_04_NUMBER; may land before or after it.
+- **Parent epic:** #7
+- **Predecessor issue(s):** #45 (must be merged first — the cap-clipping pipeline this issue's bucket arithmetic plugs into). Independent of #46; may land before or after it.
 - **SPEC section:** `plans/SPEC_v3.md` §9.9 (correlation buckets, seed taxonomy), §4 row T10, §16 key `max_pos_bucket_pct_ppm`; §20 Open Question 5 (taxonomy governance — do not resolve it here; implement seed list + override mechanics and leave governance to the operator docs)
 - **Files involved:**
   - `hedgekit/selector/correlation.py` — tag data model, seed taxonomy constants (`us-election`, `fed-policy`, `inflation`, `weather`, `geopolitics-<region>`, `ai-regulation`, `company-specific`, `legal-case`), bucket-exposure aggregation (new)
@@ -69,7 +69,7 @@ def test_human_tag_overrides_llm_tag():
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] Coverage on changed lines ≥ 90%; `mypy --strict` passes.
 - [ ] Seed taxonomy and override semantics documented with §9.9 citation.
-- [ ] PR body includes `Refs #EPIC_06_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #7` and `Closes #47`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer action is `LGTM`.
 
 ## Labels

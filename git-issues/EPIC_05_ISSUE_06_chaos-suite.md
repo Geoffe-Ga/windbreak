@@ -8,8 +8,8 @@ A CI-gating chaos suite proves the §11.5 acceptance criteria: with the Gateway 
 
 ## Context
 
-- **Parent epic:** #EPIC_05_NUMBER
-- **Predecessor issue(s):** #EPIC_05_ISSUE_05_NUMBER (must be merged first — the full Gateway surface, including the sweeper, is under test)
+- **Parent epic:** #6
+- **Predecessor issue(s):** #41 (must be merged first — the full Gateway surface, including the sweeper, is under test)
 - **SPEC section:** `plans/SPEC_v3.md` §11.5 (acceptance criteria — this issue implements them verbatim), §17.1 (chaos as a required CI suite), §11.4 (recovery paths under test), §10.5 (reservation release correctness), §4 rows T3, T9
 - **Files involved:**
   - `tests/chaos/conftest.py` — new: fault-injection harness wrapping PaperExchange (kill points, network faults, ACK/fill mutation)
@@ -71,7 +71,7 @@ def test_random_fault_storm_preserves_invariants(seed, chaos_harness):
 - [ ] Coverage on changed lines ≥90%.
 - [ ] `mypy --strict` clean (test code included).
 - [ ] Chaos suite is a required CI job; a red chaos run blocks merge.
-- [ ] PR body includes `Refs #EPIC_05_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #6` and `Closes #42`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer action is `LGTM`.
 
 ## Labels

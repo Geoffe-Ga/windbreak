@@ -8,7 +8,7 @@ You are a senior Python engineer working in the `hedgekit` repo, experienced in 
 
 ## Context
 
-- **Parent epic:** #EPIC_01_NUMBER
+- **Parent epic:** #2
 - **Predecessor issue(s):** none — this is the skeleton issue.
 - **SPEC section:** plans/SPEC_v3.md §18 M0 ("`hedgekit run` idles in RESEARCH with visible heartbeats"); §5.1 component & trust topology; §10.2 mode names (`RESEARCH → PAPER → LIVE_MICRO → LIVE`).
 - **Files involved:**
@@ -52,7 +52,7 @@ def test_heartbeat_emits_monotonic_sequence(capsys):
 
 ## Constraints
 
-**Scope fence:** Do not implement config loading (issue #EPIC_01_ISSUE_02_NUMBER), ledger writes (#EPIC_01_ISSUE_04_NUMBER), or any exchange/LLM code. Heartbeat interval comes from a CLI flag, not the §16 config file. If you find yourself touching files outside the list above, stop and check with the user.
+**Scope fence:** Do not implement config loading (issue #11), ledger writes (#13), or any exchange/LLM code. Heartbeat interval comes from a CLI flag, not the §16 config file. If you find yourself touching files outside the list above, stop and check with the user.
 
 **Anti-bypass (verbatim, non-negotiable):**
 
@@ -72,7 +72,7 @@ def test_heartbeat_emits_monotonic_sequence(capsys):
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] Coverage on changed lines meets the repo threshold (90%).
 - [ ] Public API changes are reflected in docstrings and any user-facing docs.
-- [ ] PR body includes `Refs #EPIC_01_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #2` and `Closes #10`.
 - [ ] Latest `Verdict:` from the Claude reviewer Action on HEAD is `LGTM`.
 
 ## Labels

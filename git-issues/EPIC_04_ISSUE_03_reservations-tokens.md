@@ -8,8 +8,8 @@ All approvals serialize through a single-writer reservation ledger, and every ap
 
 ## Context
 
-- **Parent epic:** #EPIC_04_NUMBER
-- **Predecessor issue(s):** #EPIC_04_ISSUE_02_NUMBER (must be merged first)
+- **Parent epic:** #5
+- **Predecessor issue(s):** #30 (must be merged first)
 - **SPEC section:** `plans/SPEC_v3.md` §10.5 (reservations), §10.6 (approval tokens), §5.2 (Kernel holds signing key; Gateway holds verification key), threats T3, T4
 - **Files involved:**
   - `hedgekit/riskkernel/reservations.py` — new: single-writer reservation ledger
@@ -18,7 +18,7 @@ All approvals serialize through a single-writer reservation ledger, and every ap
   - `hedgekit/tokens/verify.py` — new shared verification logic (imported later by the Gateway in EPIC_05; no Gateway code here)
   - `tests/riskkernel/test_reservations.py`, `tests/riskkernel/test_tokens.py`, `tests/riskkernel/test_token_forgery_matrix.py`
 - **Prior decisions:** Reservations are created *before* the token is returned; single-use, intent-bound, amount-bound, time-bound, ledgered; released on expiry/cancel/reject/reconciliation; adjusted on partial fill (§10.5). Token = HMAC/signature over canonical serialization of `{intent_id, market_ticker, outcome, action, limit_price_pips, count_centis, max_fee_micros, expires_at, idempotency_key, config_hash, kernel_sequence_number}`; TTL 60s default; single-use (§10.6). Capital is reserved at approval (T4 row, §4).
-- **State of the world:** Floor math and real checks exist (#EPIC_04_ISSUE_02_NUMBER); approvals are still impossible because reservation/token slots in the pipeline are VETO stubs. Signing-key handle is a stub module from the skeleton issue.
+- **State of the world:** Floor math and real checks exist (#30); approvals are still impossible because reservation/token slots in the pipeline are VETO stubs. Signing-key handle is a stub module from the skeleton issue.
 
 ## Output Format
 
@@ -69,7 +69,7 @@ def test_concurrent_intents_cannot_jointly_breach_floor():
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] 100% branch coverage on `riskkernel` and token packages (§17.6); ≥90% elsewhere.
 - [ ] `mypy --strict` clean; standard crypto primitives only (§3.4) — no hand-rolled MACs.
-- [ ] PR body includes `Refs #EPIC_04_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #5` and `Closes #31`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer Action is `LGTM`.
 
 ## Labels

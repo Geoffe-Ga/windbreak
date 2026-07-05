@@ -8,7 +8,7 @@ All eleven pipeline stages of SPEC §8.2 are wired end-to-end as pass-through st
 
 ## Context
 
-- **Parent epic:** #EPIC_03_NUMBER
+- **Parent epic:** #4
 - **Predecessor issue(s):** none — this is the skeleton issue (EPIC_01 and EPIC_02 must be complete: fixed-point types, ledger, config loader, `NormalizedMarket` all exist).
 - **SPEC section:** `plans/SPEC_v3.md` §8.1–§8.2 (pipeline stages), §6.3 (`ForecastRecord`), §17.1 (cassette requirement), §6.1 (no floats in probability paths — `ProbabilityPpm` int units).
 - **Files involved:**
@@ -53,7 +53,7 @@ def test_pipeline_is_deterministic(fixture_market, fixture_baseline):
 
 ## Constraints
 
-**Scope fence:** Do not implement real LLM calls, real web research, triage logic (#EPIC_03_ISSUE_02_NUMBER), sandbox enforcement (#EPIC_03_ISSUE_03_NUMBER), or real aggregation/coherence math (#EPIC_03_ISSUE_04_NUMBER). Stubs return fixture-derived typed data. If you find yourself touching files outside the list above, stop and check with the user.
+**Scope fence:** Do not implement real LLM calls, real web research, triage logic (#23), sandbox enforcement (#24), or real aggregation/coherence math (#25). Stubs return fixture-derived typed data. If you find yourself touching files outside the list above, stop and check with the user.
 
 **Anti-bypass (verbatim, non-negotiable):**
 
@@ -73,7 +73,7 @@ def test_pipeline_is_deterministic(fixture_market, fixture_baseline):
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] Coverage on changed lines ≥ 90%; `mypy --strict` passes.
 - [ ] Public API changes are reflected in docstrings.
-- [ ] PR body includes `Refs #EPIC_03_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #4` and `Closes #22`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer action is `LGTM`.
 
 ## Labels

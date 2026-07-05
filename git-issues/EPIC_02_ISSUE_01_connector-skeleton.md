@@ -8,7 +8,7 @@ A `MarketConnector` interface exists with a fixture-backed `FakeExchange` implem
 
 ## Context
 
-- **Parent epic:** #EPIC_02_NUMBER
+- **Parent epic:** #3
 - **Predecessor issue(s):** none — this is the skeleton issue for this epic (requires EPIC_01/M0 foundations merged: ledger, fixed-point types, config loader, scheduler)
 - **SPEC section:** `plans/SPEC_v3.md` §7.2 (interface), §6.2 (NormalizedMarket), §5.3 (order flow starts at "market snapshot → screen decision"), §18 M1
 - **Files involved:**
@@ -78,7 +78,7 @@ assert isinstance(market.price_tick_pips, int)
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] Coverage on changed lines ≥ 90%; `mypy --strict` clean.
 - [ ] Public API changes are reflected in docstrings.
-- [ ] PR body includes `Refs #EPIC_02_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #3` and `Closes #16`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer action is `LGTM`.
 
 ## Labels

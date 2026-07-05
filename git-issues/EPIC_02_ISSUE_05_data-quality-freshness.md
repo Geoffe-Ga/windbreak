@@ -8,8 +8,8 @@ Every connector response is schema-validated with unknown money/risk-relevant fi
 
 ## Context
 
-- **Parent epic:** #EPIC_02_NUMBER
-- **Predecessor issue(s):** #EPIC_02_ISSUE_04_NUMBER (must be merged first — full adapter surface exists to harden)
+- **Parent epic:** #3
+- **Predecessor issue(s):** #19 (must be merged first — full adapter surface exists to harden)
 - **SPEC section:** `plans/SPEC_v3.md` §7.4 (data quality & freshness — TTL defaults: 30s selection, 10s approval/submission), §4 T5 (stale data trading) and T8 (exchange API semantic change), §3 principle 3 (every safety mechanism fails closed — API down → no trading, never blind trading), §7.6 (fault cases in acceptance criteria)
 - **Files involved:**
   - `hedgekit/connector/validation.py` — versioned response schemas; unknown-field policy (unknown money/risk field → ledgered `SCHEMA_ANOMALY` + halt signal; unknown cosmetic field → warn)
@@ -76,7 +76,7 @@ def test_circuit_breaker_opens_and_halts(fault_connector, ledger):
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] Coverage on changed lines ≥ 90%; `mypy --strict` clean.
 - [ ] Public API changes are reflected in docstrings.
-- [ ] PR body includes `Refs #EPIC_02_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #3` and `Closes #20`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer action is `LGTM`.
 
 ## Labels

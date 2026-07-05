@@ -8,8 +8,8 @@ Every promotion-gate metric is computed twice — once in SQL against the ledger
 
 ## Context
 
-- **Parent epic:** #EPIC_07_NUMBER
-- **Predecessor issue(s):** #EPIC_07_ISSUE_06_NUMBER (must be merged first — gate computations read the registered plan).
+- **Parent epic:** #8
+- **Predecessor issue(s):** #54 (must be merged first — gate computations read the registered plan).
 - **SPEC section:** `plans/SPEC_v3.md` §13.6 ("Gate computations are dual-pathed (SQL + Python) and validated against synthetic known-answer datasets"), §4 T12 (silent gate-metric failure), §13.5 (cost metrics), §13.7 (acceptance criteria), §2 ("Why the LLM cost model is part of the strategy").
 - **Files involved:**
   - `hedgekit/evaluation/sql_gates.py` — new: SQL implementations of each gate metric over ledger read models
@@ -17,7 +17,7 @@ Every promotion-gate metric is computed twice — once in SQL against the ledger
   - `hedgekit/evaluation/costs.py` — new: research-cost aggregation from `ForecastRecord.research_cost_micros` (both triage and full stages)
   - `hedgekit/evaluation/report.py` — weekly report assembly; cost meter section
   - `tests/evaluation/test_dual_path.py`, `tests/evaluation/test_costs.py`, `tests/evaluation/test_weekly_report.py`
-- **Prior decisions:** the Python path is the reference implementation from #EPIC_07_ISSUE_03_NUMBER; SQL must reproduce it, not vice versa. A mismatch is a halt-worthy anomaly for the Kernel (§10.10 "silent gate-metric failure" class), surfaced via the alert-sink abstraction from M0.
+- **Prior decisions:** the Python path is the reference implementation from #51; SQL must reproduce it, not vice versa. A mismatch is a halt-worthy anomaly for the Kernel (§10.10 "silent gate-metric failure" class), surfaced via the alert-sink abstraction from M0.
 - **State of the world:** all metrics, windows, cohorts, temporal gate, and pre-registration are real; only the Python path exists; report has no cost section.
 
 ## Output Format
@@ -66,7 +66,7 @@ def test_dual_path_mismatch_is_loud() -> None:
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] Coverage on changed lines ≥ 90%.
 - [ ] Public API changes are reflected in docstrings.
-- [ ] PR body includes `Refs #EPIC_07_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #8` and `Closes #55`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer GitHub Action is `LGTM`.
 
 ## Labels

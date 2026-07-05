@@ -8,8 +8,8 @@ A `KalshiConnector` implements the `MarketConnector` interface against the curre
 
 ## Context
 
-- **Parent epic:** #EPIC_02_NUMBER
-- **Predecessor issue(s):** #EPIC_02_ISSUE_01_NUMBER (must be merged first — interface and NormalizedMarket exist)
+- **Parent epic:** #3
+- **Predecessor issue(s):** #16 (must be merged first — interface and NormalizedMarket exist)
 - **SPEC section:** `plans/SPEC_v3.md` §7.1 (responsibility; "no deprecated endpoints"; "must explicitly reject any margin/perp/derivative product surfaces"), §6.1 (numeric units), §6.2, §1.1 invariant 2 (bounded-loss only — "the connector must refuse to normalize such products … even if the exchange API exposes them"), §20 Q1 (fee fields pulled from live schedule at M1, never hardcoded from blog posts)
 - **Files involved:**
   - `hedgekit/connector/kalshi/client.py` — thin HTTP client, read/public endpoints only
@@ -72,7 +72,7 @@ def test_margin_product_is_refused(kalshi_fixture_connector, ledger):
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] Coverage on changed lines ≥ 90%; `mypy --strict` clean.
 - [ ] Public API changes are reflected in docstrings.
-- [ ] PR body includes `Refs #EPIC_02_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #3` and `Closes #17`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer action is `LGTM`.
 
 ## Labels

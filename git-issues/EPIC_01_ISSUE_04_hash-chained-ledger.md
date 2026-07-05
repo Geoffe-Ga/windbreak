@@ -8,8 +8,8 @@ An append-only, hash-chained event ledger on SQLite/WAL accepts typed events beh
 
 ## Context
 
-- **Parent epic:** #EPIC_01_NUMBER
-- **Predecessor issue(s):** #EPIC_01_ISSUE_01_NUMBER (package layout), #EPIC_01_ISSUE_02_NUMBER (config supplies `ops.state_dir`).
+- **Parent epic:** #2
+- **Predecessor issue(s):** #10 (package layout), #11 (config supplies `ops.state_dir`).
 - **SPEC section:** plans/SPEC_v3.md §12 (event row: `sequence_number, event_type, created_at, component, payload_json, payload_schema_version, prev_hash, event_hash` with `event_hash = hash(sequence_number || event_type || created_at || payload_json || prev_hash)`; read models rebuildable; Postgres behind the same repository interface later); §1.1-7 (append-only auditability).
 - **Files involved:**
   - `hedgekit/ledger/events.py` — base event type + the M0 event set (`ConfigLoaded`, `ModeHeartbeat`, `AlertEmitted` placeholder) with `payload_schema_version` (new).
@@ -18,7 +18,7 @@ An append-only, hash-chained event ledger on SQLite/WAL accepts typed events beh
   - `hedgekit/config/loader.py` — swap the in-memory `ConfigEventRecorder` for the real ledger.
   - `tests/ledger/` — chain integrity, tamper detection, rebuild equivalence (new).
 - **Prior decisions:** append is the only write; no UPDATE/DELETE statements anywhere in the module (assert via test that scans the SQL). Hash is SHA-256 over the exact §12 concatenation with canonical JSON (sorted keys, no whitespace). Timestamps are UTC ISO-8601 with microseconds. The genesis row's `prev_hash` is 64 zero hex chars.
-- **State of the world:** `hedgekit/ledger/__init__.py` is an empty stub; config loader records to an in-memory protocol from issue #EPIC_01_ISSUE_02_NUMBER; no `rebuild` subcommand exists.
+- **State of the world:** `hedgekit/ledger/__init__.py` is an empty stub; config loader records to an in-memory protocol from issue #11; no `rebuild` subcommand exists.
 
 ## Output Format
 
@@ -70,7 +70,7 @@ def test_tampered_payload_breaks_chain(store):
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] Coverage on changed lines meets the repo threshold (90%).
 - [ ] Public API changes are reflected in docstrings and any user-facing docs.
-- [ ] PR body includes `Refs #EPIC_01_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #2` and `Closes #13`.
 - [ ] Latest `Verdict:` from the Claude reviewer Action on HEAD is `LGTM`.
 
 ## Labels

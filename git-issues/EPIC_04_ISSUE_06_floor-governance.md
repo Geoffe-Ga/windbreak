@@ -8,8 +8,8 @@ Floor changes obey raise-freely/lower-slowly exactly per SPEC §10.7 (48h cool-o
 
 ## Context
 
-- **Parent epic:** #EPIC_04_NUMBER
-- **Predecessor issue(s):** #EPIC_04_ISSUE_05_NUMBER (must be merged first)
+- **Parent epic:** #5
+- **Predecessor issue(s):** #33 (must be merged first)
 - **SPEC section:** `plans/SPEC_v3.md` §10.7 (floor governance), §10.8 (human-ack thresholds), §10.3 ("human-ack satisfied if required" check), threat T7 (operator tilt), config keys `capital.floor_micros`, `capital.floor_ratchet_ppm_of_new_profits`, `capital.profit_sweep_threshold_micros`, `risk.require_human_ack_above_micros` (§16)
 - **Files involved:**
   - `hedgekit/riskkernel/governance.py` — new: floor-change state machine, ratchet, profit-sweep advisory
@@ -51,7 +51,7 @@ def test_dashboard_can_never_lower_floor():
 
 ## Constraints
 
-**Scope fence:** Do not build dashboard UI (Process D) — only the Kernel-side API refusal. Do not implement reconciliation itself ("until the next full reconciliation passes" hooks into #EPIC_04_ISSUE_04_NUMBER's verification results). If you find yourself touching files outside the list above, stop and check with the user.
+**Scope fence:** Do not build dashboard UI (Process D) — only the Kernel-side API refusal. Do not implement reconciliation itself ("until the next full reconciliation passes" hooks into #32's verification results). If you find yourself touching files outside the list above, stop and check with the user.
 
 **Anti-bypass (verbatim, non-negotiable):**
 
@@ -71,7 +71,7 @@ def test_dashboard_can_never_lower_floor():
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] 100% branch coverage on `riskkernel` (§17.6); ≥90% on other changed lines.
 - [ ] `mypy --strict` clean; CLI verbs documented in help text.
-- [ ] PR body includes `Refs #EPIC_04_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #5` and `Closes #34`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer Action is `LGTM`.
 
 ## Labels

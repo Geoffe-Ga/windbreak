@@ -8,8 +8,8 @@ Two-stage triage (SPEC §8.4) gates the expensive research pipeline: a cheap Sta
 
 ## Context
 
-- **Parent epic:** #EPIC_03_NUMBER
-- **Predecessor issue(s):** #EPIC_03_ISSUE_01_NUMBER (must be merged first — pipeline skeleton and cassette harness exist).
+- **Parent epic:** #4
+- **Predecessor issue(s):** #22 (must be merged first — pipeline skeleton and cassette harness exist).
 - **SPEC section:** `plans/SPEC_v3.md` §8.4 (two-stage triage), §4 T11 (LLM cost blowout), §2 "Why the LLM cost model is part of the strategy", §16 `forecast.triage_model` / `triage_threshold_ppm` / `budget` config keys, §6.3 `triage_stage` and `research_cost_micros` fields.
 - **Files involved:**
   - `hedgekit/forecast/triage.py` — Stage-0 prior + gating decision (new)
@@ -51,7 +51,7 @@ def test_triage_only_record_cannot_be_live_eligible():
 
 ## Constraints
 
-**Scope fence:** Do not implement real research tools or sandbox enforcement (#EPIC_03_ISSUE_03_NUMBER), ensemble aggregation (#EPIC_03_ISSUE_04_NUMBER), or per-day budget kill-switches (#EPIC_03_ISSUE_07_NUMBER — this issue ledgers costs; global budget *enforcement* is polish). If you find yourself touching files outside the list above, stop and check with the user.
+**Scope fence:** Do not implement real research tools or sandbox enforcement (#24), ensemble aggregation (#25), or per-day budget kill-switches (#28 — this issue ledgers costs; global budget *enforcement* is polish). If you find yourself touching files outside the list above, stop and check with the user.
 
 **Anti-bypass (verbatim, non-negotiable):**
 
@@ -71,7 +71,7 @@ def test_triage_only_record_cannot_be_live_eligible():
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] Coverage on changed lines ≥ 90%; `mypy --strict` passes.
 - [ ] Public API changes are reflected in docstrings.
-- [ ] PR body includes `Refs #EPIC_03_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #4` and `Closes #23`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer action is `LGTM`.
 
 ## Labels

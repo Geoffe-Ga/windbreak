@@ -8,8 +8,8 @@ At PAPER entry, the complete gate definition (metrics, windows, thresholds, base
 
 ## Context
 
-- **Parent epic:** #EPIC_07_NUMBER
-- **Predecessor issue(s):** #EPIC_07_ISSUE_05_NUMBER (must be merged first — the gate plan references windows and cohorts by name).
+- **Parent epic:** #8
+- **Predecessor issue(s):** #53 (must be merged first — the gate plan references windows and cohorts by name).
 - **SPEC section:** `plans/SPEC_v3.md` §13.6 (pre-registration), §4 T15 (metric shopping / Goodhart), §10.9 (the gates being registered: ≥300 resolved, ≥100 independent event groups, Brier skill CI excluding zero, etc.), §17.4 ("Any change to this model re-registers the gate plan" — the paper-fill model hash is part of the plan).
 - **Files involved:**
   - `hedgekit/evaluation/preregistration.py` — new: `GatePlan` dataclass, canonical serialization (sorted keys, integer units, no floats), hash, ledger events (`GATE_PLAN_REGISTERED`, `GATE_PLAN_CHANGED`)
@@ -45,7 +45,7 @@ def test_gate_plan_change_resets_paper_clock() -> None:
 
 ## Constraints
 
-**Scope fence:** Do not implement promotion/demotion decisions — the Risk Kernel (EPIC_04) owns mode transitions; you only produce the registered plan and clock read model. Do not implement the dual-path computation (#EPIC_07_ISSUE_07_NUMBER). If you find yourself touching files outside the list above, stop and check with the user.
+**Scope fence:** Do not implement promotion/demotion decisions — the Risk Kernel (EPIC_04) owns mode transitions; you only produce the registered plan and clock read model. Do not implement the dual-path computation (#55). If you find yourself touching files outside the list above, stop and check with the user.
 
 **Anti-bypass (verbatim, non-negotiable):**
 
@@ -67,7 +67,7 @@ def test_gate_plan_change_resets_paper_clock() -> None:
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] Coverage on changed lines ≥ 90%.
 - [ ] Public API changes are reflected in docstrings.
-- [ ] PR body includes `Refs #EPIC_07_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #8` and `Closes #54`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer GitHub Action is `LGTM`.
 
 ## Labels

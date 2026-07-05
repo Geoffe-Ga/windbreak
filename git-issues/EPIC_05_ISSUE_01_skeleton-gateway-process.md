@@ -8,7 +8,7 @@ A credential-isolated `hedgekit/order_gateway/` package runs as its own process,
 
 ## Context
 
-- **Parent epic:** #EPIC_05_NUMBER
+- **Parent epic:** #6
 - **Predecessor issue(s):** none — this is the skeleton issue for this epic. (Cross-epic: requires the M3 Risk Kernel token format and the M1 PaperExchange to be merged.)
 - **SPEC section:** `plans/SPEC_v3.md` §11.1–§11.3 (responsibility, requirements, state machine), §10.6 (approval-token fields the Gateway must verify), §5.2 (credential boundaries: trade-only creds + verification key live here), §5.3 (import-boundary CI rule)
 - **Files involved:**
@@ -57,7 +57,7 @@ def test_illegal_transition_raises():
 
 ## Constraints
 
-**Scope fence:** Do not implement real exchange submission, retry logic, crash recovery, the sweeper, or reduce-only checks — those belong to issues #EPIC_05_ISSUE_02_NUMBER through #EPIC_05_ISSUE_05_NUMBER. Submission is a stub. Do not touch `hedgekit/riskkernel/` (the signing side) except to import its published token schema. If you find yourself touching files outside the list above, stop and check with the user.
+**Scope fence:** Do not implement real exchange submission, retry logic, crash recovery, the sweeper, or reduce-only checks — those belong to issues #38 through #41. Submission is a stub. Do not touch `hedgekit/riskkernel/` (the signing side) except to import its published token schema. If you find yourself touching files outside the list above, stop and check with the user.
 
 **Anti-bypass (verbatim, non-negotiable):**
 
@@ -78,7 +78,7 @@ def test_illegal_transition_raises():
 - [ ] Coverage on changed lines ≥90%; token verification code at 100% branch coverage (SPEC §17.6).
 - [ ] `mypy --strict` clean.
 - [ ] Public API changes are reflected in docstrings.
-- [ ] PR body includes `Refs #EPIC_05_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #6` and `Closes #37`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer action is `LGTM`.
 
 ## Labels

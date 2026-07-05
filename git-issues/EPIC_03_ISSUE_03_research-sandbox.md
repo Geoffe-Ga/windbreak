@@ -8,8 +8,8 @@ The research stage can reach exactly three capabilities — `search`, `fetch`, a
 
 ## Context
 
-- **Parent epic:** #EPIC_03_NUMBER
-- **Predecessor issue(s):** #EPIC_03_ISSUE_01_NUMBER (must be merged first). Independent of #EPIC_03_ISSUE_02_NUMBER (triage) — parallel-safe.
+- **Parent epic:** #4
+- **Predecessor issue(s):** #22 (must be merged first). Independent of #23 (triage) — parallel-safe.
 - **SPEC section:** `plans/SPEC_v3.md` §8.3 (research tool boundary, "enforced structurally, not by prompt"), §1.1-5 (research/execution firewall), §15 (research cache disjoint from config/ledger/secrets/code; outbound allowlist), §5.3 CI import-boundary note.
 - **Files involved:**
   - `hedgekit/forecast/sandbox.py` — tool registry, allowlist enforcement, research-cache path jail (new)
@@ -48,7 +48,7 @@ def test_tool_surface_is_exactly_three(sandbox_tools):
 
 ## Constraints
 
-**Scope fence:** Do not implement injection-defense content handling (delimiting, quote extraction — #EPIC_03_ISSUE_06_NUMBER) or citation verification *logic* (#EPIC_03_ISSUE_05_NUMBER; this issue only reserves the capability slot). OS-level namespace isolation may land as a documented follow-up if the process-level structural boundary is complete and CI-enforced. If you find yourself touching files outside the list above, stop and check with the user.
+**Scope fence:** Do not implement injection-defense content handling (delimiting, quote extraction — #27) or citation verification *logic* (#26; this issue only reserves the capability slot). OS-level namespace isolation may land as a documented follow-up if the process-level structural boundary is complete and CI-enforced. If you find yourself touching files outside the list above, stop and check with the user.
 
 **Anti-bypass (verbatim, non-negotiable):**
 
@@ -68,7 +68,7 @@ def test_tool_surface_is_exactly_three(sandbox_tools):
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] Coverage on changed lines ≥ 90%; `mypy --strict` passes.
 - [ ] Import-boundary check (`plans/architecture/run-check.sh`) passes and demonstrably fails on a seeded violation.
-- [ ] PR body includes `Refs #EPIC_03_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #4` and `Closes #24`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer action is `LGTM`.
 
 ## Labels

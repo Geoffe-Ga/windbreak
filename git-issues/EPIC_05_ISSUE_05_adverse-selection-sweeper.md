@@ -8,8 +8,8 @@ A stale-order sweeper cancels any resting order whose `resting_ttl_seconds` has 
 
 ## Context
 
-- **Parent epic:** #EPIC_05_NUMBER
-- **Predecessor issue(s):** #EPIC_05_ISSUE_04_NUMBER (must be merged first — the sweeper's cancels must survive crashes via the WAL/Reconciler)
+- **Parent epic:** #6
+- **Predecessor issue(s):** #40 (must be merged first — the sweeper's cancels must survive crashes via the WAL/Reconciler)
 - **SPEC section:** `plans/SPEC_v3.md` §9.7 (execution style & adverse-selection controls: TTL default 900s, `cancel_on_move_ticks` default 2, volatility freeze), §11.2 ("run the adverse-selection sweeper — cancel resting orders on TTL expiry or cancel_on_move_ticks breach"), §11.5 (sweeper verified against recorded volatile-market fixtures), §4 row T13, §2 rationale ("a resting limit order… is a free option for anyone with faster news access")
 - **Files involved:**
   - `hedgekit/order_gateway/sweeper.py` — new: periodic scan of resting orders; TTL and price-move checks; cancel via the §11.3 `CANCEL_REQUESTED → CANCELLED` path
@@ -73,7 +73,7 @@ def test_cancel_on_move_breach(gateway, paper_exchange, resting_intent_factory):
 - [ ] Coverage on changed lines ≥90%.
 - [ ] `mypy --strict` clean.
 - [ ] Public API changes are reflected in docstrings.
-- [ ] PR body includes `Refs #EPIC_05_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #6` and `Closes #41`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer action is `LGTM`.
 
 ## Labels

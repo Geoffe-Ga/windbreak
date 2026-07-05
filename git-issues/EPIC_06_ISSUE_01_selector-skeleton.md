@@ -8,7 +8,7 @@ The Trade Selector exists as a pure, credentialless function with the full typed
 
 ## Context
 
-- **Parent epic:** #EPIC_06_NUMBER
+- **Parent epic:** #7
 - **Predecessor issue(s):** none — this is the skeleton issue for this epic. (Cross-epic: requires the domain types from EPIC_01 — `ForecastRecord`, `NormalizedOrderIntent`, fixed-point numeric types — and recorded order-book fixtures from EPIC_02.)
 - **SPEC section:** `plans/SPEC_v3.md` §9.1 (responsibility, purity, determinism), §6.4 (`NormalizedOrderIntent`), §6.1 (numeric units)
 - **Files involved:**
@@ -46,7 +46,7 @@ def test_stub_returns_zero_intents_with_reason(recorded_inputs_bundle_a):
 
 ## Constraints
 
-**Scope fence:** Do not implement edge computation, sizing, price bands, or any real selection logic — those belong to issues #EPIC_06_ISSUE_02_NUMBER through #EPIC_06_ISSUE_05_NUMBER. Do not touch `hedgekit/riskkernel/` or `hedgekit/order_gateway/`. If you find yourself touching files outside the list above, stop and check with the user.
+**Scope fence:** Do not implement edge computation, sizing, price bands, or any real selection logic — those belong to issues #44 through #47. Do not touch `hedgekit/riskkernel/` or `hedgekit/order_gateway/`. If you find yourself touching files outside the list above, stop and check with the user.
 
 **Anti-bypass (verbatim, non-negotiable):**
 
@@ -66,7 +66,7 @@ def test_stub_returns_zero_intents_with_reason(recorded_inputs_bundle_a):
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] Coverage on changed lines ≥ 90%; `mypy --strict` passes.
 - [ ] Public API documented with docstrings citing SPEC §9.1.
-- [ ] PR body includes `Refs #EPIC_06_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #7` and `Closes #43`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer action is `LGTM`.
 
 ## Labels

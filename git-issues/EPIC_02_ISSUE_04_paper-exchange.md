@@ -8,8 +8,8 @@ A `PaperExchange` adapter replays recorded real order books and simulates fills 
 
 ## Context
 
-- **Parent epic:** #EPIC_02_NUMBER
-- **Predecessor issue(s):** #EPIC_02_ISSUE_03_NUMBER (must be merged first — fee model exists to charge against)
+- **Parent epic:** #3
+- **Predecessor issue(s):** #18 (must be merged first — fee model exists to charge against)
 - **SPEC section:** `plans/SPEC_v3.md` §7.5 (PaperExchange), §17.4 (paper-fill realism model — normative), §9.5 (participation caps apply in simulation exactly as live: `max_participation_ppm` default 250000), §4 T13 (adverse selection — the resting model exists to charge for it), §13.6 (any change to this model re-registers the gate plan)
 - **Files involved:**
   - `hedgekit/connector/paper.py` — `PaperExchange(MarketConnector)` replaying recorded books
@@ -70,7 +70,7 @@ def test_no_fill_better_than_recorded_book(book, order):
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] Coverage on changed lines ≥ 90%; `mypy --strict` clean.
 - [ ] Public API changes are reflected in docstrings.
-- [ ] PR body includes `Refs #EPIC_02_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #3` and `Closes #19`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer action is `LGTM`.
 
 ## Labels

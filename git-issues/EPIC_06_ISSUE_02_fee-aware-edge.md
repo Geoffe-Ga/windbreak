@@ -8,8 +8,8 @@ You are a senior Python engineer with market-microstructure experience, working 
 
 ## Context
 
-- **Parent epic:** #EPIC_06_NUMBER
-- **Predecessor issue(s):** #EPIC_06_ISSUE_01_NUMBER (must be merged first — provides `SelectorInputs`/`SelectorDecision` and the determinism harness)
+- **Parent epic:** #7
+- **Predecessor issue(s):** #43 (must be merged first — provides `SelectorInputs`/`SelectorDecision` and the determinism harness)
 - **SPEC section:** `plans/SPEC_v3.md` §9.2 (fee-aware executable edge), §9.3 (entry conditions, all required), §2 (why fees/microstructure are first-class), §16 `risk:` keys `min_net_edge_ppm`, `annualized_hurdle_ppm`, `idle_cash_apr_ppm`
 - **Files involved:**
   - `hedgekit/selector/edge.py` — book-walking and edge arithmetic (new)
@@ -24,7 +24,7 @@ You are a senior Python engineer with market-microstructure experience, working 
 Deliverable is a single PR containing:
 
 - [ ] `hedgekit/selector/edge.py`: walk the book's asks (for YES buys) / bids side to the proposed size, accumulating executable cost level by level; fail with an explicit reason if depth is insufficient; compute all five edge figures
-- [ ] `hedgekit/selector/entry.py`: every §9.3 condition — `net_edge ≥ min_net_edge`, annualized return ≥ hurdle net of idle-cash yield, forecast CI does not straddle the executable price, quote/forecast/fee-model freshness, market eligibility (jurisdiction, category, coherence, citation support), price bands (band values consumed here, enforcement logic may be a stub until #EPIC_06_ISSUE_04_NUMBER), `forecast.eligible_for_live` for live modes — each producing a named pass/fail entry in `SelectorDecision.reasons`
+- [ ] `hedgekit/selector/entry.py`: every §9.3 condition — `net_edge ≥ min_net_edge`, annualized return ≥ hurdle net of idle-cash yield, forecast CI does not straddle the executable price, quote/forecast/fee-model freshness, market eligibility (jurisdiction, category, coherence, citation support), price bands (band values consumed here, enforcement logic may be a stub until #46), `forecast.eligible_for_live` for live modes — each producing a named pass/fail entry in `SelectorDecision.reasons`
 - [ ] Tests: hand-computed edge fixtures (book + fees → expected edges, computed in the test by hand, not by calling the code under test); negative tests for each failed entry condition
 - [ ] No drive-by changes unrelated to the goal
 
@@ -48,7 +48,7 @@ def test_no_intent_when_ci_straddles_price(inputs_with_wide_ci):
 
 ## Constraints
 
-**Scope fence:** Do not implement sizing (that is #EPIC_06_ISSUE_03_NUMBER — emit a fixed 1-contract probe size behind a clearly named placeholder so intents are shape-complete), price-band/execution-style logic beyond consuming config values (#EPIC_06_ISSUE_04_NUMBER), or correlation caps (#EPIC_06_ISSUE_05_NUMBER). No floats anywhere on money/price/probability paths.
+**Scope fence:** Do not implement sizing (that is #45 — emit a fixed 1-contract probe size behind a clearly named placeholder so intents are shape-complete), price-band/execution-style logic beyond consuming config values (#46), or correlation caps (#47). No floats anywhere on money/price/probability paths.
 
 **Anti-bypass (verbatim, non-negotiable):**
 
@@ -60,7 +60,7 @@ def test_no_intent_when_ci_straddles_price(inputs_with_wide_ci):
 > reference URL, an alternative considered, and a review date. See the
 > `max-quality-no-shortcuts` skill.
 
-**Tracer-code invariant:** The system must remain demoable after this PR merges: golden determinism tests from #EPIC_06_ISSUE_01_NUMBER still pass byte-identically (update goldens only via the documented regeneration script, with the diff explained in the PR body).
+**Tracer-code invariant:** The system must remain demoable after this PR merges: golden determinism tests from #43 still pass byte-identically (update goldens only via the documented regeneration script, with the diff explained in the PR body).
 
 ## Definition of Done (stay-green)
 
@@ -68,7 +68,7 @@ def test_no_intent_when_ci_straddles_price(inputs_with_wide_ci):
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] Coverage on changed lines ≥ 90%; `mypy --strict` passes.
 - [ ] Edge formulas documented in docstrings with SPEC § citations.
-- [ ] PR body includes `Refs #EPIC_06_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #7` and `Closes #44`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer action is `LGTM`.
 
 ## Labels

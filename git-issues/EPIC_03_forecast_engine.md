@@ -34,15 +34,13 @@ The epic is done when:
 
 ## Child Issues
 
-_Filled in after child issues are filed (Step 8/9 of spec-decomposition)._
-
-- [ ] #NNN — Skeleton: pipeline stages as stubs + cassette harness
-- [ ] #NNN — Core: two-stage triage with cost ledgering
-- [ ] #NNN — Core: research sandbox structural tool boundary
-- [ ] #NNN — Core: ensemble votes, pinning, dispersion, coherence
-- [ ] #NNN — Edges: citation verification + scored abstention
-- [ ] #NNN — Edges: prompt-injection defense + adversarial corpus
-- [ ] #NNN — Polish: canary drift detection + budget enforcement
+- [ ] #22 — feat(forecast): Wire pipeline stages as stubs with LLM cassette harness
+- [ ] #23 — feat(forecast): Two-stage triage with cost ledgering
+- [ ] #24 — feat(forecast): Research sandbox with structural tool boundary
+- [ ] #25 — feat(forecast): Pinned ensemble, median aggregation, and coherence normalization
+- [ ] #26 — feat(forecast): Citation verification and scored abstention
+- [ ] #27 — feat(forecast): Prompt-injection defense with poisoned-page CI corpus
+- [ ] #28 — feat(forecast): Weekly canary set and research budget enforcement
 
 ## Sequencing Notes
 

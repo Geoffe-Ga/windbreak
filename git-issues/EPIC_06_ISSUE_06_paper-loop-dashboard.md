@@ -8,8 +8,8 @@ You are a senior Python engineer with daemon/scheduler and dashboard experience,
 
 ## Context
 
-- **Parent epic:** #EPIC_06_NUMBER
-- **Predecessor issue(s):** #EPIC_06_ISSUE_04_NUMBER and #EPIC_06_ISSUE_05_NUMBER (both merged — the selector is feature-complete for PAPER). Cross-epic: EPIC_03 (Forecast Engine), EPIC_04 (Risk Kernel), EPIC_05 (Order Gateway + Reconciler) must all be merged; this issue only *wires*, it does not modify them.
+- **Parent epic:** #7
+- **Predecessor issue(s):** #46 and #47 (both merged — the selector is feature-complete for PAPER). Cross-epic: EPIC_03 (Forecast Engine), EPIC_04 (Risk Kernel), EPIC_05 (Order Gateway + Reconciler) must all be merged; this issue only *wires*, it does not modify them.
 - **SPEC section:** `plans/SPEC_v3.md` §18 M5 ("always-on RESEARCH→PAPER loop; dashboard positions/equity/floor; weekly reports; Done: continuous paper operation"), §5.3 (order flow — there is no other path), §14 (dashboard display list and mutation allowlist)
 - **Files involved:**
   - `hedgekit/scheduler/loop.py` — the periodic pipeline tick for PAPER mode (extends the M0 RESEARCH idle loop)
@@ -67,7 +67,7 @@ def test_full_paper_tick_offline(recorded_market_bundle, llm_cassettes):
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] Coverage on changed lines ≥ 90%; `mypy --strict` passes.
 - [ ] RUNBOOK section updated: starting/observing the PAPER loop.
-- [ ] PR body includes `Refs #EPIC_06_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #7` and `Closes #48`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer action is `LGTM`.
 
 ## Labels

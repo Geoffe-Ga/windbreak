@@ -8,8 +8,8 @@ Every connector endpoint has recorded-fixture contract tests (happy path + the �
 
 ## Context
 
-- **Parent epic:** #EPIC_02_NUMBER
-- **Predecessor issue(s):** #EPIC_02_ISSUE_05_NUMBER (must be merged first — validation/fault machinery exists to test against)
+- **Parent epic:** #3
+- **Predecessor issue(s):** #20 (must be merged first — validation/fault machinery exists to test against)
 - **SPEC section:** `plans/SPEC_v3.md` §7.6 (acceptance criteria — "recorded-fixture contract tests for every endpoint including error/rate-limit/malformed/schema-drift cases; fixed-point preservation with no float conversion anywhere in the path"), §16 `screener:` block (`category_blocklist: [sports, crypto_price, celebrity, insider_prone]`, `min_volume_24h_micros`, `min_depth_contract_centis`, `horizon_days {min: 2, max: 120}`), §1.2 (sports blocked by default; unblocking requires explicit config plus a ledgered legal-risk acknowledgement), §18 M1 done criterion
 - **Files involved:**
   - `hedgekit/screener/filters.py` — pure filter functions over `NormalizedMarket` + book stats
@@ -70,7 +70,7 @@ def test_screen_decision_ledgered_with_reasons(screener, ledger, thin_market):
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] Coverage on changed lines ≥ 90%; `mypy --strict` clean.
 - [ ] Public API changes are reflected in docstrings.
-- [ ] PR body includes `Refs #EPIC_02_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #3` and `Closes #21`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer action is `LGTM`.
 
 ## Labels

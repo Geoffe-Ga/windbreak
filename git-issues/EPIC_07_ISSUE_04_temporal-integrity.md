@@ -8,8 +8,8 @@ The evaluation package rejects, at ingestion, any forecast record whose `created
 
 ## Context
 
-- **Parent epic:** #EPIC_07_NUMBER
-- **Predecessor issue(s):** #EPIC_07_ISSUE_02_NUMBER (must be merged first — needs real resolution timestamps). Parallel-safe with #EPIC_07_ISSUE_03_NUMBER.
+- **Parent epic:** #8
+- **Predecessor issue(s):** #50 (must be merged first — needs real resolution timestamps). Parallel-safe with #51.
 - **SPEC section:** `plans/SPEC_v3.md` §1.1-6 (temporal integrity invariant), §8.6 ("the evaluation package must reject any record whose `created_at` postdates question resolution or predates system deployment"), §13.6 ("Unresolved markets can never enter a headline metric — enforced in code, tested"), §4 T14.
 - **Files involved:**
   - `hedgekit/evaluation/temporal.py` — new: the temporal-integrity gate, a single choke point every metric-input query passes through
@@ -45,7 +45,7 @@ def test_backdated_forecast_never_reaches_metrics() -> None:
 
 ## Constraints
 
-**Scope fence:** Do not implement observation windows or selection-bias reporting (#EPIC_07_ISSUE_05_NUMBER), and do not touch the Forecast Engine's own eligibility flags (EPIC_03 owns `eligible_for_live`). If you find yourself touching files outside the list above, stop and check with the user.
+**Scope fence:** Do not implement observation windows or selection-bias reporting (#53), and do not touch the Forecast Engine's own eligibility flags (EPIC_03 owns `eligible_for_live`). If you find yourself touching files outside the list above, stop and check with the user.
 
 **Anti-bypass (verbatim, non-negotiable):**
 
@@ -67,7 +67,7 @@ def test_backdated_forecast_never_reaches_metrics() -> None:
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] Coverage on changed lines ≥ 90%.
 - [ ] Public API changes are reflected in docstrings.
-- [ ] PR body includes `Refs #EPIC_07_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #8` and `Closes #52`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer GitHub Action is `LGTM`.
 
 ## Labels

@@ -8,7 +8,7 @@ A `riskkernel` process exists as an independently runnable service with the full
 
 ## Context
 
-- **Parent epic:** #EPIC_04_NUMBER
+- **Parent epic:** #5
 - **Predecessor issue(s):** none — this is the skeleton issue (requires EPIC_01/M0 foundations: ledger, config loader, structured logging)
 - **SPEC section:** `plans/SPEC_v3.md` §10.1–§10.3, §5.1 (process topology), §5.3 (import-boundary CI test), §18 M3
 - **Files involved:**
@@ -51,7 +51,7 @@ def test_stub_pipeline_vetoes_everything():
 
 ## Constraints
 
-**Scope fence:** Do not implement floor math (issue #EPIC_04_ISSUE_02_NUMBER), reservations/tokens (#EPIC_04_ISSUE_03_NUMBER), exchange verification (#EPIC_04_ISSUE_04_NUMBER), promotion logic (#EPIC_04_ISSUE_05_NUMBER), governance (#EPIC_04_ISSUE_06_NUMBER), or kill triggers (#EPIC_04_ISSUE_07_NUMBER). Every check stub vetoes. If you find yourself touching files outside the list above, stop and check with the user.
+**Scope fence:** Do not implement floor math (issue #30), reservations/tokens (#31), exchange verification (#32), promotion logic (#33), governance (#34), or kill triggers (#35). Every check stub vetoes. If you find yourself touching files outside the list above, stop and check with the user.
 
 **Anti-bypass (verbatim, non-negotiable):**
 
@@ -71,7 +71,7 @@ def test_stub_pipeline_vetoes_everything():
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] Coverage on changed lines ≥90%; `riskkernel` targets 100% branch coverage (§17.6).
 - [ ] `mypy --strict` clean; public APIs have docstrings.
-- [ ] PR body includes `Refs #EPIC_04_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #5` and `Closes #29`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer Action is `LGTM`.
 
 ## Labels

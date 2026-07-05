@@ -8,8 +8,8 @@ Every Kernel cycle independently cross-checks exchange-verified balances and pos
 
 ## Context
 
-- **Parent epic:** #EPIC_04_NUMBER
-- **Predecessor issue(s):** #EPIC_04_ISSUE_03_NUMBER (must be merged first); consumes EPIC_02 (M1) connector fixtures and the `BalanceSemantics` record
+- **Parent epic:** #5
+- **Predecessor issue(s):** #31 (must be merged first); consumes EPIC_02 (M1) connector fixtures and the `BalanceSemantics` record
 - **SPEC section:** `plans/SPEC_v3.md` §10.1 (read-only verification is a Kernel responsibility), §10.4 last paragraph (cross-check every cycle; mismatch beyond tolerance → HALT), §7.3 (balance-semantics contract: "the Risk Kernel refuses live trading while any field is `unknown`"), §5.2 (Kernel: read-only creds), §10.3 (balance/position/open-order reconciliation checks), T18
 - **Files involved:**
   - `hedgekit/riskkernel/verification.py` — new: periodic verification loop
@@ -68,7 +68,7 @@ def test_unknown_balance_semantics_blocks_live_only():
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] 100% branch coverage on `riskkernel` (§17.6); ≥90% on other changed lines.
 - [ ] `mypy --strict` clean; public APIs documented.
-- [ ] PR body includes `Refs #EPIC_04_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #5` and `Closes #32`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer Action is `LGTM`.
 
 ## Labels

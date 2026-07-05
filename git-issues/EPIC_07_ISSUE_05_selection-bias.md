@@ -8,8 +8,8 @@ Every eligible forecast is scored — not only traded ones — with reports spli
 
 ## Context
 
-- **Parent epic:** #EPIC_07_NUMBER
-- **Predecessor issue(s):** #EPIC_07_ISSUE_03_NUMBER and #EPIC_07_ISSUE_04_NUMBER (must be merged first — needs real metrics and the temporal gate).
+- **Parent epic:** #8
+- **Predecessor issue(s):** #51 and #52 (must be merged first — needs real metrics and the temporal gate).
 - **SPEC section:** `plans/SPEC_v3.md` §13.3 (selection-bias controls), §13.4 (observation windows: first-per-market, latest-before-close, daily snapshots, trade-triggering; "the headline Brier metric names its window"), §6.3 (`abstention_reason` is a first-class outcome), §13.1 (selection-quality track: did traded forecasts outperform skipped ones?).
 - **Files involved:**
   - `hedgekit/evaluation/cohorts.py` — new: cohort assignment from ledger events (selector decisions, screen decisions)
@@ -43,7 +43,7 @@ def test_mixing_observation_windows_is_a_failure() -> None:
 
 ## Constraints
 
-**Scope fence:** Do not implement the pre-registration hash flow (#EPIC_07_ISSUE_06_NUMBER) or dual-path computation (#EPIC_07_ISSUE_07_NUMBER). If you find yourself touching files outside the list above, stop and check with the user.
+**Scope fence:** Do not implement the pre-registration hash flow (#54) or dual-path computation (#55). If you find yourself touching files outside the list above, stop and check with the user.
 
 **Anti-bypass (verbatim, non-negotiable):**
 
@@ -63,7 +63,7 @@ def test_mixing_observation_windows_is_a_failure() -> None:
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] Coverage on changed lines ≥ 90%.
 - [ ] Public API changes are reflected in docstrings.
-- [ ] PR body includes `Refs #EPIC_07_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #8` and `Closes #53`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer GitHub Action is `LGTM`.
 
 ## Labels

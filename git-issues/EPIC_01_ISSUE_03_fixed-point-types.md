@@ -8,8 +8,8 @@ The four SPEC §6.1 fixed-point types (`PricePips`, `ContractCentis`, `MoneyMicr
 
 ## Context
 
-- **Parent epic:** #EPIC_01_NUMBER
-- **Predecessor issue(s):** #EPIC_01_ISSUE_01_NUMBER (must be merged first — `hedgekit/numeric/` package exists).
+- **Parent epic:** #2
+- **Predecessor issue(s):** #10 (must be merged first — `hedgekit/numeric/` package exists).
 - **SPEC section:** plans/SPEC_v3.md §6.1 (units: PricePips = 0.0001 payout-dollars; ContractCentis = 0.01 contracts; MoneyMicros = 1e-6 dollars; ProbabilityPpm = 1e-6 probability; "Rounding is always conservative in the direction of overstating cost/risk and understating equity"); §17.3 (AST lint + property tests; metamorphic conservatism).
 - **Files involved:**
   - `hedgekit/numeric/types.py` — the four types + arithmetic and cross-unit conversion (e.g., price × count → money) (new).
@@ -71,7 +71,7 @@ exit status 1
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] Coverage on changed lines meets the repo threshold (90%); note SPEC §17.6 targets 100% branch coverage for this package by M3 — aim for it now.
 - [ ] Public API changes are reflected in docstrings and any user-facing docs.
-- [ ] PR body includes `Refs #EPIC_01_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #2` and `Closes #12`.
 - [ ] Latest `Verdict:` from the Claude reviewer Action on HEAD is `LGTM`.
 
 ## Labels

@@ -8,8 +8,8 @@ The Gateway survives death at any point in the order lifecycle: a write-ahead in
 
 ## Context
 
-- **Parent epic:** #EPIC_05_NUMBER
-- **Predecessor issue(s):** #EPIC_05_ISSUE_03_NUMBER (must be merged first — reduce-only path, so recovery covers close orders too)
+- **Parent epic:** #6
+- **Predecessor issue(s):** #39 (must be merged first — reduce-only path, so recovery covers close orders too)
 - **SPEC section:** `plans/SPEC_v3.md` §11.4 (crash recovery: load ledger → fetch exchange state → reconcile → halt on mismatch → only then accept approvals; continuous Reconciler), §4 rows T9 (crash mid-order) and T3 (reconciliation loop as runaway-order mitigation), §11.3 (`RECONCILED`/`DISPUTED` terminal states), §10.5 (reservation release/adjustment on reconciliation)
 - **Files involved:**
   - `hedgekit/order_gateway/wal.py` — new: write-ahead intent log written before `SUBMISSION_REQUESTED`
@@ -18,7 +18,7 @@ The Gateway survives death at any point in the order lifecycle: a write-ahead in
   - `hedgekit/order_gateway/gateway.py` — refuse new approvals until recovery completes
   - `tests/order_gateway/test_recovery.py` — kill-between-every-pair-of-states scenarios using PaperExchange
   - `tests/order_gateway/test_reconciler.py` — benign auto-heal vs unexplained-mismatch halt
-- **Prior decisions:** Deterministic client order IDs from #EPIC_05_ISSUE_02_NUMBER are the join key between WAL entries and exchange open orders. "Benign" is a closed allowlist, not a heuristic — anything not on it halts (guiding principle §3.2: "When in doubt, halt and alert"). Reservation adjustments flow through the Kernel's ledger interfaces from EPIC_04; this issue consumes them, it does not reimplement them.
+- **Prior decisions:** Deterministic client order IDs from #38 are the join key between WAL entries and exchange open orders. "Benign" is a closed allowlist, not a heuristic — anything not on it halts (guiding principle §3.2: "When in doubt, halt and alert"). Reservation adjustments flow through the Kernel's ledger interfaces from EPIC_04; this issue consumes them, it does not reimplement them.
 - **State of the world:** After issue 03 the Gateway submits and validates orders but restarts blind: an intent submitted-but-unacked before a crash would be lost or double-submitted.
 
 ## Output Format
@@ -56,7 +56,7 @@ def test_unexplained_exchange_order_halts(paper_exchange, ledger):
 
 ## Constraints
 
-**Scope fence:** Do not implement the sweeper (issue #EPIC_05_ISSUE_05_NUMBER) or extend the chaos suite beyond the recovery matrix (issue #EPIC_05_ISSUE_06_NUMBER covers network cuts, duplicate ACKs, and fill races). Do not add Kernel-side reservation logic. If you find yourself touching files outside the list above, stop and check with the user.
+**Scope fence:** Do not implement the sweeper (issue #41) or extend the chaos suite beyond the recovery matrix (issue #42 covers network cuts, duplicate ACKs, and fill races). Do not add Kernel-side reservation logic. If you find yourself touching files outside the list above, stop and check with the user.
 
 **Anti-bypass (verbatim, non-negotiable):**
 
@@ -77,7 +77,7 @@ def test_unexplained_exchange_order_halts(paper_exchange, ledger):
 - [ ] Coverage on changed lines ≥90%.
 - [ ] `mypy --strict` clean.
 - [ ] Public API changes are reflected in docstrings.
-- [ ] PR body includes `Refs #EPIC_05_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #6` and `Closes #40`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer action is `LGTM`.
 
 ## Labels

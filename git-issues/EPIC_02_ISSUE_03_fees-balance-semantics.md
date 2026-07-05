@@ -8,8 +8,8 @@ The connector exposes a fee-model lookup and a machine-readable `BalanceSemantic
 
 ## Context
 
-- **Parent epic:** #EPIC_02_NUMBER
-- **Predecessor issue(s):** #EPIC_02_ISSUE_02_NUMBER (must be merged first — Kalshi adapter exists)
+- **Parent epic:** #3
+- **Predecessor issue(s):** #17 (must be merged first — Kalshi adapter exists)
 - **SPEC section:** `plans/SPEC_v3.md` §7.3 (balance-semantics contract — "blocker for live trading"), §2 ("Why fees and microstructure are first-class" — fees ∝ `p·(1−p)`, rounded up), §4 T18 (settlement-lag mis-accounting), §20 Q1 (pull fee fields from the live schedule; golden tests against exchange-documented examples), §20 Q4 (idle-cash interest terms)
 - **Files involved:**
   - `hedgekit/connector/semantics.py` — `BalanceSemantics` model: open-order collateral inclusion/exclusion, fee debit + rounding behavior, partial-fill representation, cancellation collateral release, unsettled-proceeds visibility, paused/halted-market behavior — each field a typed enum, never a bare bool, with `UNKNOWN` as an explicit member
@@ -68,7 +68,7 @@ def test_fee_upper_bound_never_understates(fee_model):
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] Coverage on changed lines ≥ 90%; `mypy --strict` clean.
 - [ ] Public API changes are reflected in docstrings.
-- [ ] PR body includes `Refs #EPIC_02_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #3` and `Closes #18`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer action is `LGTM`.
 
 ## Labels

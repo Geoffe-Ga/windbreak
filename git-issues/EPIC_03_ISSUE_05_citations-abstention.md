@@ -8,8 +8,8 @@ Every citation is verified at forecast time (URL reachability, retrieved-content
 
 ## Context
 
-- **Parent epic:** #EPIC_03_NUMBER
-- **Predecessor issue(s):** #EPIC_03_ISSUE_03_NUMBER (must be merged first — verification runs through the sandbox's `verify_citation` capability and evidence lands in the research cache).
+- **Parent epic:** #4
+- **Predecessor issue(s):** #24 (must be merged first — verification runs through the sandbox's `verify_citation` capability and evidence lands in the research cache).
 - **SPEC section:** `plans/SPEC_v3.md` §8.8 (citation verification & abstention), §6.3 (`citations`, `source_quality_notes`, `abstention_reason`, `eligible_for_live`), §16 `forecast.min_verified_citations` (default 3), §13.3 (abstentions evaluated counterfactually — downstream consumer).
 - **Files involved:**
   - `hedgekit/forecast/citations.py` — verification checks + verdict per citation (new)
@@ -48,7 +48,7 @@ def test_quote_absent_from_fetched_content_fails_verification(sandbox_tools):
 
 ## Constraints
 
-**Scope fence:** Do not implement source-reliability *scoring* (post-v1, §18 M8) or the evaluation-side counterfactual scoring of abstentions (EPIC_07 / M6). Do not touch injection-defense content sanitization (#EPIC_03_ISSUE_06_NUMBER). If you find yourself touching files outside the list above, stop and check with the user.
+**Scope fence:** Do not implement source-reliability *scoring* (post-v1, §18 M8) or the evaluation-side counterfactual scoring of abstentions (EPIC_07 / M6). Do not touch injection-defense content sanitization (#27). If you find yourself touching files outside the list above, stop and check with the user.
 
 **Anti-bypass (verbatim, non-negotiable):**
 
@@ -68,7 +68,7 @@ def test_quote_absent_from_fetched_content_fails_verification(sandbox_tools):
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] Coverage on changed lines ≥ 90%; `mypy --strict` passes.
 - [ ] Public API changes are reflected in docstrings.
-- [ ] PR body includes `Refs #EPIC_03_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #4` and `Closes #26`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer action is `LGTM`.
 
 ## Labels

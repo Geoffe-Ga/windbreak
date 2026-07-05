@@ -8,8 +8,8 @@ All eight §19 documents exist at the repo root, are accurate against the shippe
 
 ## Context
 
-- **Parent epic:** #EPIC_08_NUMBER
-- **Predecessor issue(s):** #EPIC_08_ISSUE_04_NUMBER (must be merged first — the RUNBOOK documents the drills as they actually behave).
+- **Parent epic:** #9
+- **Predecessor issue(s):** #59 (must be merged first — the RUNBOOK documents the drills as they actually behave).
 - **SPEC section:** `plans/SPEC_v3.md` §19 (full document list + mandated README statements + RUNBOOK contents), §2 (residual risks that must appear in OPERATOR_WARNINGS.md), §10.7 (floor governance procedures), §12 (audit-bundle export), §16 (config reference to document).
 - **Files involved:**
   - `SECURITY.md` — §15 posture: secrets handling, credential boundaries (§5.2 table), network allowlist, reporting a vulnerability.
@@ -79,7 +79,7 @@ def test_runbook_commands_exist(cli_registry):
 - [ ] All new and existing tests pass (`./scripts/test.sh`).
 - [ ] `pre-commit run --all-files` is clean — no skipped hooks, no bypassed checks.
 - [ ] Coverage on changed lines ≥90% (the docs-consistency test module); `mypy --strict` clean.
-- [ ] PR body includes `Refs #EPIC_08_NUMBER` and `Closes #THIS_ISSUE_NUMBER`.
+- [ ] PR body includes `Refs #9` and `Closes #60`.
 - [ ] Latest `Verdict:` on HEAD from the Claude reviewer GitHub Action is `LGTM`.
 
 ## Labels
