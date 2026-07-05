@@ -258,3 +258,203 @@ def test_full_scan_mode_real_repo_denylisted_packages_are_clean() -> None:
     result = _run_cli()
 
     assert result.returncode == 0, result.stdout
+
+
+# --- In-process CLI / file-IO coverage ------------------------------------------
+#
+# The subprocess-based `_run_cli` tests above exercise the CLI end-to-end but
+# run the script in a *separate* interpreter, so they contribute no coverage to
+# this test suite's measurement. The tests below drive the same public callables
+# (`main`, `_lint_file`, `_expand_targets`, `_denylisted_files`) in-process so
+# CI's `--cov=.` scope (which includes `scripts/`) actually measures them, and
+# so their behaviour is pinned with real assertions rather than smoke calls.
+
+
+def test_main_returns_1_and_prints_each_violation(
+    lint_module: types.ModuleType,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`main` on a dirty file returns 1 and prints one line per violation."""
+    bad_file = tmp_path / "bad.py"
+    bad_file.write_text("x = 1.5\ny = float(2)\n", encoding="utf-8")
+
+    exit_code = lint_module.main([str(bad_file)])
+
+    assert exit_code == 1
+    out_lines = capsys.readouterr().out.splitlines()
+    assert len(out_lines) == 2
+    assert any("FLOAT-001" in line for line in out_lines)
+    assert any("FLOAT-004" in line for line in out_lines)
+    assert all(str(bad_file) in line for line in out_lines)
+
+
+def test_main_returns_0_and_prints_nothing_for_clean_file(
+    lint_module: types.ModuleType,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`main` on a clean file returns 0 with empty stdout."""
+    clean_file = tmp_path / "clean.py"
+    clean_file.write_text(
+        "def add(a: int, b: int) -> int:\n    return a + b\n", encoding="utf-8"
+    )
+
+    exit_code = lint_module.main([str(clean_file)])
+
+    assert exit_code == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_main_no_args_scans_denylisted_packages(
+    lint_module: types.ModuleType,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`main([])` falls back to scanning DENYLISTED_PACKAGES (money path clean)."""
+    exit_code = lint_module.main([])
+
+    assert exit_code == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_main_expands_directory_argument(
+    lint_module: types.ModuleType,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A directory argument is recursively expanded to its `*.py` files."""
+    pkg = tmp_path / "pkg"
+    nested = pkg / "nested"
+    nested.mkdir(parents=True)
+    (pkg / "clean.py").write_text("z: int = 3\n", encoding="utf-8")
+    (nested / "dirty.py").write_text("w: float = 0\n", encoding="utf-8")
+
+    exit_code = lint_module.main([str(pkg)])
+
+    assert exit_code == 1
+    out = capsys.readouterr().out
+    assert "FLOAT-002" in out
+    assert "dirty.py" in out
+    assert "clean.py" not in out
+
+
+def test_lint_file_formats_path_line_col_code_message(
+    lint_module: types.ModuleType,
+    tmp_path: Path,
+) -> None:
+    """`_lint_file` renders `path:line:col CODE message` per violation."""
+    target = tmp_path / "sample.py"
+    target.write_text("value = 2.5\n", encoding="utf-8")
+
+    lines = lint_module._lint_file(target)
+
+    assert lines == [f"{target}:1:8 FLOAT-001 float literal is banned"]
+
+
+def test_lint_file_returns_empty_for_clean_file(
+    lint_module: types.ModuleType,
+    tmp_path: Path,
+) -> None:
+    """`_lint_file` returns no lines when the file is float-free."""
+    target = tmp_path / "ok.py"
+    target.write_text("value: int = 2\n", encoding="utf-8")
+
+    assert lint_module._lint_file(target) == []
+
+
+def test_expand_targets_recurses_dirs_and_passes_files_through(
+    lint_module: types.ModuleType,
+    tmp_path: Path,
+) -> None:
+    """Directories expand to sorted `*.py`; explicit file paths pass through."""
+    (tmp_path / "b.py").write_text("", encoding="utf-8")
+    (tmp_path / "a.py").write_text("", encoding="utf-8")
+    (tmp_path / "notpython.txt").write_text("", encoding="utf-8")
+    explicit = tmp_path / "explicit_file.py"
+    explicit.write_text("", encoding="utf-8")
+
+    expanded = lint_module._expand_targets([tmp_path, explicit])
+
+    # Directory expansion is sorted and .py-only; the explicit path is appended.
+    assert expanded == [
+        tmp_path / "a.py",
+        tmp_path / "b.py",
+        explicit,
+        explicit,
+    ]
+
+
+def test_denylisted_files_only_covers_existing_packages(
+    lint_module: types.ModuleType,
+) -> None:
+    """Scan targets come only from denylisted packages that exist on disk."""
+    files = lint_module._denylisted_files()
+
+    repo_root = lint_module._REPO_ROOT
+    numeric_dir = repo_root / "hedgekit/numeric"
+    # hedgekit/numeric exists in this repo, so at least its files are returned.
+    assert files, "expected at least the numeric package to be scanned"
+    assert all(path.suffix == ".py" for path in files)
+    assert any(numeric_dir in path.parents for path in files)
+    # Every returned file must live under an existing denylisted package dir.
+    existing_dirs = [
+        repo_root / pkg
+        for pkg in lint_module.DENYLISTED_PACKAGES
+        if (repo_root / pkg).is_dir()
+    ]
+    assert all(
+        any(directory in path.parents for directory in existing_dirs) for path in files
+    )
+
+
+def test_denylisted_files_skips_nonexistent_packages(
+    lint_module: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A denylisted prefix with no directory on disk is silently skipped."""
+    monkeypatch.setattr(
+        lint_module,
+        "DENYLISTED_PACKAGES",
+        ("hedgekit/definitely_not_a_real_package",),
+    )
+
+    assert lint_module._denylisted_files() == []
+
+
+# --- Signature-annotation edge cases (branch coverage) --------------------------
+
+
+def test_vararg_and_kwarg_float_annotations_are_flagged(
+    lint_module: types.ModuleType,
+) -> None:
+    """`*args: float` and `**kwargs: float` annotations are both caught."""
+    source = "def f(*args: float, **kwargs: float) -> None:\n    return None\n"
+
+    violations = lint_module.collect_violations(source, "example.py")
+
+    assert len(violations) == 2
+    assert {v.code for v in violations} == {"FLOAT-002"}
+
+
+def test_unannotated_function_yields_no_violation(
+    lint_module: types.ModuleType,
+) -> None:
+    """A function with no annotations at all produces nothing (skip branches)."""
+    source = "def f(x, *args, **kwargs):\n    return x\n"
+
+    assert lint_module.collect_violations(source, "example.py") == []
+
+
+def test_float_named_via_subscript_call_is_not_a_cast(
+    lint_module: types.ModuleType,
+) -> None:
+    """A call whose callee is neither Name nor Attribute is not a float cast.
+
+    Exercises the final `return False` of `_names_float`: here the callee is a
+    Subscript (`registry['float']()`), so no FLOAT-004 is emitted.
+    """
+    source = "registry = {}\nregistry['float']()\n"
+
+    violations = lint_module.collect_violations(source, "example.py")
+
+    assert all(v.code != "FLOAT-004" for v in violations)
