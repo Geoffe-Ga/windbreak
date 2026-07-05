@@ -1,14 +1,15 @@
 """Pre-trade veto checks for the Risk Kernel (SPEC S10.3).
 
-This module ships the 24 SPEC S10.3 pre-trade checks. Issues #30, #31, and #32
-give 20 of them real logic -- instrument whitelist, mode/ceiling, the floor
+This module ships the 24 SPEC S10.3 pre-trade checks. Issues #30, #31, #32, and
+#34 give 21 of them real logic -- instrument whitelist, mode/ceiling, the floor
 invariant, balance/position/open-order reconciliation (#32), fee-bound presence,
 concentration, daily loss, trailing drawdown, velocity, quote/forecast
-freshness, price band, participation cap, approval-token and idempotency-key
-uniqueness (#31), clock skew, and reduce-only provability -- each reading a full
-:class:`EvaluationContext`. The remaining 4 are deliberate stubs that still veto,
-each naming the GitHub issue that will replace it (:data:`_STUB_REASONS`), so an
-operator sees *why* a check is not yet live rather than a bare "not implemented".
+freshness, price band, participation cap, human-ack satisfaction (#34),
+approval-token and idempotency-key uniqueness (#31), clock skew, and reduce-only
+provability -- each reading a full :class:`EvaluationContext`. The remaining 3
+are deliberate stubs that still veto, each naming the GitHub issue that will
+replace it (:data:`_STUB_REASONS`), so an operator sees *why* a check is not yet
+live rather than a bare "not implemented".
 
 Every check is a small, pure callable taking ``(intent, context)`` and
 returning a :class:`CheckResult`; :func:`evaluate_intent` runs the whole
@@ -315,7 +316,7 @@ def _is_stale(timestamp: int | None, now: int, ttl_seconds: int) -> bool:
     return now - timestamp > ttl_seconds
 
 
-# --- The 20 real checks (SPEC S10.3) ---------------------------------------------
+# --- The 21 real checks (SPEC S10.3) ---------------------------------------------
 
 
 class _InstrumentWhitelist:
@@ -727,6 +728,45 @@ class _ClockSkewLimit:
         return _approve()
 
 
+class _HumanAckSatisfied:
+    """Veto a live over-threshold order lacking a human acknowledgement (#34)."""
+
+    name = "human_ack_satisfied"
+
+    def __call__(self, intent: OrderIntent, context: EvaluationContext) -> CheckResult:
+        """Approve unless a live over-threshold order lacks an acknowledgement.
+
+        Real capital is only at risk in the live modes, so RESEARCH/PAPER always
+        approve; a ``None`` threshold means no human-ack gate is configured and
+        also always approves. Otherwise the order's worst-case cost is compared
+        against the threshold (inclusive): a cost at or below it approves, and a
+        cost strictly above it approves only when the intent id is already
+        acknowledged. A missing fee bound makes the cost unprovable and vetoes
+        fail-closed as ``"unprovable"``, exactly like every cost-consuming check.
+
+        Args:
+            intent: The order intent supplying the id, price, and size.
+            context: The evaluation context supplying the mode, threshold, fee
+                bounds, and acknowledged-intent-id set.
+
+        Returns:
+            An approval outside the live modes or with no configured threshold; a
+            ``"unprovable"`` veto when the cost is indeterminate; a
+            ``"human acknowledgement required"`` veto for an unacknowledged
+            over-threshold cost; else an approval.
+        """
+        threshold = context.limits.require_human_ack_above_micros
+        if threshold is None or context.mode not in _LIVE_TRADING_MODES:
+            return _approve()
+        try:
+            cost = _order_cost(intent, context)
+        except _UnprovableCostError:
+            return _veto(_UNPROVABLE_REASON)
+        if cost > threshold and intent.intent_id not in context.acknowledged_intent_ids:
+            return _veto("human acknowledgement required")
+        return _approve()
+
+
 class _ApprovalTokenUniqueness:
     """Veto an intent whose id already has an issued approval token (#31)."""
 
@@ -882,7 +922,7 @@ _RECONCILIATION_CHECKS: tuple[_ReconciliationCheck, ...] = (
 )
 
 
-# --- The 4 deliberate stubs (each blocked on a later issue) -----------------------
+# --- The 3 deliberate stubs (each blocked on a later issue) -----------------------
 
 
 @dataclass(frozen=True, slots=True)
@@ -923,7 +963,6 @@ class _ExplicitVetoStub:
 #: built below.
 _STUB_REASON_ITEMS: tuple[tuple[str, str], ...] = (
     ("jurisdiction_product_eligibility", "awaiting NormalizedMarket metadata"),
-    ("human_ack_satisfied", "blocked on #34 (human acknowledgement)"),
     ("exchange_status_ok", "blocked on #110 (exchange status feed)"),
     ("pipeline_heartbeat_ok", "blocked on #110 (pipeline heartbeat)"),
 )
@@ -963,7 +1002,7 @@ _SPEC_10_3_CHECK_NAMES: tuple[str, ...] = (
     "reduce_only_provable",
 )
 
-#: The 20 real checks, keyed by SPEC S10.3 name for order-independent assembly.
+#: The 21 real checks, keyed by SPEC S10.3 name for order-independent assembly.
 _REAL_CHECKS: tuple[Check, ...] = (
     _InstrumentWhitelist(),
     _ModePermissionCeiling(),
@@ -979,18 +1018,19 @@ _REAL_CHECKS: tuple[Check, ...] = (
     _ForecastFreshness(),
     _PriceBandCompliance(),
     _ParticipationCapCompliance(),
+    _HumanAckSatisfied(),
     _ApprovalTokenUniqueness(),
     _IdempotencyKeyUniqueness(),
     _ClockSkewLimit(),
     _ReduceOnlyProvable(),
 )
 
-#: The 4 stub checks, keyed by SPEC S10.3 name, each vetoing with its reason.
+#: The 3 stub checks, keyed by SPEC S10.3 name, each vetoing with its reason.
 _STUB_CHECKS: tuple[Check, ...] = tuple(
     _ExplicitVetoStub(name, reason) for name, reason in _STUB_REASONS.items()
 )
 
-#: Name-to-check lookup spanning all 24 checks (17 real, 7 stub); the pinned
+#: Name-to-check lookup spanning all 24 checks (21 real, 3 stub); the pinned
 #: :data:`_SPEC_10_3_CHECK_NAMES` sequence selects and orders them.
 _CHECK_BY_NAME: dict[str, Check] = {
     check.name: check for check in (*_REAL_CHECKS, *_STUB_CHECKS)

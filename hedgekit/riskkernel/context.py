@@ -153,6 +153,10 @@ class RiskLimits:
         verification_ttl_seconds: Max admissible age of a verification snapshot,
             in seconds, before the reconciliation checks treat it as stale and
             fail closed (issue #32).
+        require_human_ack_above_micros: The worst-case-cost threshold above
+            which an order needs a human acknowledgement, in micros, or ``None``
+            when no human-ack gate is configured (the permissive default, under
+            which ``human_ack_satisfied`` always approves). Issue #34.
     """
 
     floor: MoneyMicros
@@ -174,6 +178,7 @@ class RiskLimits:
     clock_skew_max_seconds: int
     rounding_buffer: MoneyMicros
     verification_ttl_seconds: int
+    require_human_ack_above_micros: MoneyMicros | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,6 +206,10 @@ class EvaluationContext:
             ``None`` when no cycle has run yet, for the reconciliation checks
             (issue #32). Required with no production default: a forgotten wiring
             must fail loudly (the checks fail closed on ``None``), never open.
+        acknowledged_intent_ids: Every intent id with a granted human
+            acknowledgement, for the ``human_ack_satisfied`` check (issue #34).
+            Required with no production default: a forgotten wiring must fail
+            loudly, never open.
     """
 
     mode: Mode
@@ -212,3 +221,4 @@ class EvaluationContext:
     used_intent_ids: frozenset[str]
     used_idempotency_keys: frozenset[str]
     verification: VerificationSnapshot | None
+    acknowledged_intent_ids: frozenset[str]
