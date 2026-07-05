@@ -155,5 +155,47 @@ def test_build_parser_accepts_config_flag() -> None:
     assert isinstance(args.config, Path)
     assert args.config == Path("x.yaml")
 
+
+def test_run_with_config_and_process_composes_load_and_component(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`run --config X --process Y` loads the config AND stamps the component.
+
+    Pins the integration of the `--config` loader (issue #11) with the
+    `--process` component flag (issue #15) in a single invocation: the config
+    diagnostics still fire (``config loaded`` + hash) and every heartbeat and
+    shutdown JSON record carries the requested, non-default component.
+    """
+    exit_code = main(
+        [
+            "run",
+            "--config",
+            str(_SPEC16_PATH),
+            "--process",
+            "riskkernel",
+            "--heartbeat-interval",
+            "0",
+            "--max-beats",
+            "1",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payloads = [json.loads(line) for line in captured.err.splitlines() if line]
+
+    assert exit_code == 0
+    config_line = next(
+        payload for payload in payloads if "config loaded" in str(payload.get("msg"))
+    )
+    assert _HEX64_PATTERN.search(config_line["msg"]) is not None
+    heartbeat_payload = next(
+        payload for payload in payloads if "seq=1" in str(payload.get("msg"))
+    )
+    shutdown_payload = next(
+        payload for payload in payloads if "shutdown reason=" in str(payload.get("msg"))
+    )
+    assert heartbeat_payload["component"] == "riskkernel"
+    assert shutdown_payload["component"] == "riskkernel"
+
     default_args = build_parser().parse_args(["run"])
     assert default_args.config is None

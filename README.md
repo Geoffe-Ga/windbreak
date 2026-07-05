@@ -97,6 +97,59 @@ prompts/             # Maintenance-scan prompts
 docs/                # Live metrics dashboard (GitHub Pages)
 ```
 
+### Deployment
+
+SPEC §5.1 mandates process isolation: the four processes run as **separate
+services** sharing only the ledger volume and localhost sockets — killing one
+must never kill another. `deploy/` ships two equivalent skeletons for this at
+M0.
+
+**docker compose**
+
+```bash
+docker compose -f deploy/docker-compose.yml up -d
+```
+
+Starts four services — `pipeline`, `riskkernel`, `order-gateway`, `dashboard`
+— each built from the repo-root `Dockerfile` and running
+`hedgekit run --process <name>`, with `restart: on-failure`. Only `dashboard`
+publishes a port, bound to `127.0.0.1:8080` (SPEC §14: no public inbound), and
+its ledger mount is read-only since it holds no trade authority. Process
+isolation in practice:
+
+```bash
+$ docker compose -f deploy/docker-compose.yml kill pipeline
+$ docker compose -f deploy/docker-compose.yml ps --format '{{.Name}} {{.State}}'
+hedgekit-pipeline       exited
+hedgekit-riskkernel     running
+hedgekit-order-gateway  running
+hedgekit-dashboard      running
+```
+
+**systemd**
+
+`deploy/systemd/` ships one unit per process —
+`hedgekit-{pipeline,riskkernel,order-gateway,dashboard}.service` — each with
+`Restart=on-failure`. Units are install-prefix-agnostic:
+`ExecStart=/usr/bin/env hedgekit run --process <name>` resolves `hedgekit`
+from `PATH` rather than a hardcoded install path.
+
+**Dashboard**
+
+The dashboard server (`hedgekit.dashboard.app`) binds `127.0.0.1` only — never
+a public interface — and every request must present a static bearer token
+(`Authorization: Bearer <token>`), serving a single read-only status page
+(mode + last heartbeat). At M0 this HTTP surface exists only as a library: the
+`dashboard` process still just idles with heartbeats, and the `127.0.0.1:8080`
+compose publish is a reserved placeholder — nothing binds it yet. The server is
+wired into the process (and its token and status source connected to their real
+backing: config, #11; ledger, #13) once those land. It is a **stub**: real
+views (positions, equity, calibration) and mutations (pause, kill, acknowledge,
+raise floor) arrive with later epics.
+
+This is an M0 skeleton: the tracer `hedgekit run` (no flags) still just idles
+in `RESEARCH` mode, emitting heartbeats.
+
 ### Ralph fleet loop
 
 The repo includes the opt-in Ralph autonomous fleet loop (`.claude/commands/ralph-tick.md`, `scripts/ralph/`, maintenance-scan workflows). It assumes a GitHub-hosted issue/PR backlog and git worktrees, and requires manual secret/label setup — see `scripts/ralph/FLEET.md` and `scripts/ralph/PROMPT.md`.
