@@ -88,8 +88,7 @@ _ORDER_PATH_DEFERRAL: Final = "the order path is deferred to milestone M4"
 
 #: Message naming the issue that wires the remaining account access.
 _ACCOUNT_DEFERRAL: Final = (
-    "account access (balances, positions, open orders, fills) is deferred "
-    "to issue #3"
+    "account access (balances, positions, open orders, fills) is deferred to issue #3"
 )
 
 #: One basis point is 100 ppm (1e-4 vs 1e-6), so a bps rate scales to ppm by
@@ -140,8 +139,7 @@ def _bps_to_ppm(value: object, field_name: str) -> int:
     """
     if isinstance(value, bool) or not isinstance(value, int):
         raise UnknownFeeModelError(
-            f"series fee leaf {field_name!r} must be an int, "
-            f"got {type(value).__name__}"
+            f"series fee leaf {field_name!r} must be an int, got {type(value).__name__}"
         )
     return value * _BPS_TO_PPM
 

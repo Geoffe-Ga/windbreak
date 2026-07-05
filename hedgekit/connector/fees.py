@@ -126,8 +126,7 @@ def _require_price_pips(value: int) -> None:
     _require_non_bool_int(value, "price_pips")
     if not _MIN_PRICE_PIPS <= value <= _MAX_PRICE_PIPS:
         raise ValueError(
-            f"price_pips must be in [{_MIN_PRICE_PIPS}, {_MAX_PRICE_PIPS}], "
-            f"got {value}"
+            f"price_pips must be in [{_MIN_PRICE_PIPS}, {_MAX_PRICE_PIPS}], got {value}"
         )
 
 
