@@ -119,6 +119,75 @@ def test_negation_within_unit_returns_same_type_and_negated_value(unit_type) -> 
 
 
 @pytest.mark.parametrize("unit_type", UNIT_TYPES)
+def test_scalar_multiplication_returns_same_type_and_product(unit_type) -> None:
+    """A unit value times a dimensionless int scales within the same unit.
+
+    e.g. ContractCentis(100) * 3 == ContractCentis(300); the dimension is
+    unchanged, so the result is the same unit type (SPEC S6.1 "scalar
+    multiplication").
+    """
+    result = unit_type(7) * 3
+
+    assert type(result) is unit_type
+    assert result.value == 21
+
+
+@pytest.mark.parametrize("unit_type", UNIT_TYPES)
+def test_scalar_right_multiplication_is_commutative(unit_type) -> None:
+    """`scalar * value` (via __rmul__) equals `value * scalar`."""
+    result = 3 * unit_type(7)
+
+    assert type(result) is unit_type
+    assert result.value == 21
+
+
+@pytest.mark.parametrize("unit_type", UNIT_TYPES)
+@pytest.mark.parametrize("scalar,expected", [(0, 0), (-4, -28)])
+def test_scalar_multiplication_zero_and_negative(unit_type, scalar, expected) -> None:
+    """Scaling by zero or a negative int is well-defined and stays in-unit."""
+    result = unit_type(7) * scalar
+
+    assert type(result) is unit_type
+    assert result.value == expected
+
+
+@pytest.mark.parametrize("unit_type", UNIT_TYPES)
+def test_scalar_multiplication_rejects_bool(unit_type) -> None:
+    """bool is an int subclass but is not a valid scalar (mirrors construction).
+
+    Silently accepting `True` as the factor `1` would let a stray boolean
+    flag masquerade as a scale factor without any signal.
+    """
+    with pytest.raises(TypeError):
+        unit_type(7) * True
+    with pytest.raises(TypeError):
+        True * unit_type(7)
+
+
+@pytest.mark.parametrize("unit_type", UNIT_TYPES)
+def test_scalar_multiplication_rejects_float(unit_type) -> None:
+    """Multiplying by a float would put a float on the money path -- forbidden."""
+    with pytest.raises(TypeError):
+        unit_type(7) * 2.5
+    with pytest.raises(TypeError):
+        2.5 * unit_type(7)
+
+
+@pytest.mark.parametrize("left_type,right_type", CROSS_UNIT_PAIRS)
+def test_cross_unit_multiplication_raises_type_error(left_type, right_type) -> None:
+    """A unit times another unit changes the dimension and must fail loudly."""
+    with pytest.raises(TypeError):
+        left_type(2) * right_type(3)
+
+
+@pytest.mark.parametrize("unit_type", UNIT_TYPES)
+def test_same_unit_multiplication_raises_type_error(unit_type) -> None:
+    """Even same-unit * same-unit is dimensionally nonsensical and must raise."""
+    with pytest.raises(TypeError):
+        unit_type(2) * unit_type(3)
+
+
+@pytest.mark.parametrize("unit_type", UNIT_TYPES)
 def test_within_unit_equality_and_ordering(unit_type) -> None:
     small, big, big_copy = unit_type(3), unit_type(9), unit_type(9)
 
@@ -130,6 +199,42 @@ def test_within_unit_equality_and_ordering(unit_type) -> None:
     assert small != big
     assert not big < small
     assert not (big < big_copy)
+
+
+@pytest.mark.parametrize("unit_type", UNIT_TYPES)
+@given(a=st.integers(), b=st.integers(), c=st.integers())
+def test_within_unit_addition_is_associative(unit_type, a: int, b: int, c: int) -> None:
+    """(x + y) + z == x + (y + z) for within-unit addition (SPEC S17.3).
+
+    A metamorphic property required by issue #12: because each unit carries
+    an exact integer payload, addition is exactly integer addition and must
+    be associative for every combination of operands, with the result always
+    the same unit type (never a float or a decayed int).
+    """
+    x, y, z = unit_type(a), unit_type(b), unit_type(c)
+
+    left_assoc = (x + y) + z
+    right_assoc = x + (y + z)
+
+    assert left_assoc == right_assoc
+    assert type(left_assoc) is unit_type
+    assert type(right_assoc) is unit_type
+
+
+@pytest.mark.parametrize("unit_type", UNIT_TYPES)
+@given(value=st.integers(), scalar=st.integers())
+def test_scalar_multiplication_never_returns_float(
+    unit_type, value: int, scalar: int
+) -> None:
+    """Scalar multiplication always yields the same unit type, never a float.
+
+    Backs the SPEC S6.1 "no operation returns float" invariant for the
+    scalar-multiply operation across the full integer domain.
+    """
+    result = unit_type(value) * scalar
+
+    assert type(result) is unit_type
+    assert result.value == value * scalar
 
 
 @pytest.mark.parametrize("unit_type", UNIT_TYPES)

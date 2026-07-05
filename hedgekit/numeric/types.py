@@ -128,6 +128,37 @@ class _IntUnit:
         """Return the negation as the same unit type."""
         return type(self)(-self.value)
 
+    def __mul__(self, scalar: int) -> Self:
+        """Return this value scaled by a dimensionless integer, same unit type.
+
+        Scalar multiplication is by a plain ``int`` factor (e.g. a repeat
+        count), never by another unit value: multiplying two unit values
+        would change the dimension (contracts times contracts is not
+        contracts) and is deliberately unsupported. ``bool`` is rejected for
+        the same reason construction rejects it -- a stray boolean must never
+        masquerade as the factor ``1``.
+
+        Args:
+            scalar: A dimensionless integer factor.
+
+        Returns:
+            The scaled value as the same unit type.
+
+        Raises:
+            TypeError: If ``scalar`` is a ``bool``, a ``float``, another unit
+                value, or anything other than a true ``int``.
+        """
+        if isinstance(scalar, bool) or not isinstance(scalar, int):
+            raise TypeError(
+                f"cannot multiply {type(self).__name__} by "
+                f"{type(scalar).__name__}; scalar must be a non-bool int"
+            )
+        return type(self)(self.value * scalar)
+
+    def __rmul__(self, scalar: int) -> Self:
+        """Return ``scalar * self``; scalar multiplication is commutative."""
+        return self.__mul__(scalar)
+
     def __lt__(self, other: Self) -> bool:
         """Order by scaled value; only defined within a single unit."""
         self._require_same_unit(other)
