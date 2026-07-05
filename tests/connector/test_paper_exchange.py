@@ -541,6 +541,147 @@ class TestTradeThroughFillTs:
             fills.trade_through_fill_ts(PricePips(4200), prints)
 
 
+class TestWalkTakerFillSkipsZeroQuantityLevels:
+    """A recorded book level with `quantity == 0` is walked past, not crashed.
+
+    Real exchange snapshots can carry a stale, about-to-be-removed zero-size
+    level; `FeeModel.max_trading_fee_micros` rejects a zero count, so the walk
+    must skip such a level rather than ask the fee model to price a zero fill.
+    """
+
+    def test_a_zero_quantity_eligible_level_is_skipped_not_crashed(self) -> None:
+        levels = (
+            OrderBookLevel(PricePips(4300), ContractCentis(0)),  # stale, zero size
+            OrderBookLevel(PricePips(4350), ContractCentis(1000)),
+        )
+
+        result = fills.walk_taker_fill(
+            levels,
+            PricePips(4400),
+            ContractCentis(1000),
+            _fee_model(),
+            haircut_ppm=0,
+            max_participation_ppm=1_000_000,  # full participation isolates the skip
+        )
+
+        # The zero-size 4300 level contributes no depth and is never consumed;
+        # the fill comes entirely from the 4350 level.
+        assert result.filled == ContractCentis(1000)
+        assert [level.price for level in result.consumed] == [PricePips(4350)]
+        assert result.consumed[0].quantity == ContractCentis(1000)
+
+
+class TestAllocateRestingFills:
+    """Pins `allocate_resting_fills`: same-side resting buys share one shrinking
+    trade-through volume pool, claimed in price priority, so their fills can
+    never jointly exceed the recorded trade-through volume (no double-count).
+    """
+
+    def test_a_single_request_matches_resting_fill_quantity(self) -> None:
+        prints = (fills.TradePrint(PricePips(4150), ContractCentis(2000), _TS),)
+        request = fills.RestingFillRequest(
+            PricePips(4200), ContractCentis(1000), ContractCentis(500)
+        )
+
+        (allocated,) = fills.allocate_resting_fills(
+            (request,), prints, max_participation_ppm=250_000
+        )
+
+        expected = fills.resting_fill_quantity(
+            PricePips(4200),
+            ContractCentis(1000),
+            prints,
+            ContractCentis(500),
+            max_participation_ppm=250_000,
+        )
+        assert allocated == expected == ContractCentis(125)
+
+    def test_a_single_trade_fills_only_the_more_aggressive_order(self) -> None:
+        """One 1000-centi print through both limits, with generous depth/caps:
+        the highest limit (4700) claims the whole 1000, leaving nothing for the
+        4600 order -- not 1000 each (which would double the recorded volume)."""
+        prints = (fills.TradePrint(PricePips(4500), ContractCentis(1000), _TS),)
+        requests = (
+            fills.RestingFillRequest(
+                PricePips(4700), ContractCentis(1000), ContractCentis(100_000)
+            ),
+            fills.RestingFillRequest(
+                PricePips(4600), ContractCentis(1000), ContractCentis(100_000)
+            ),
+        )
+
+        allocated = fills.allocate_resting_fills(
+            requests, prints, max_participation_ppm=1_000_000
+        )
+
+        assert allocated == (ContractCentis(1000), ContractCentis(0))
+
+    def test_price_priority_is_independent_of_request_order(self) -> None:
+        """The same two orders, listed 4600-then-4700, still let 4700 claim the
+        pool first -- priority follows the limit price, not insertion order."""
+        prints = (fills.TradePrint(PricePips(4500), ContractCentis(1000), _TS),)
+        requests = (
+            fills.RestingFillRequest(
+                PricePips(4600), ContractCentis(1000), ContractCentis(100_000)
+            ),
+            fills.RestingFillRequest(
+                PricePips(4700), ContractCentis(1000), ContractCentis(100_000)
+            ),
+        )
+
+        allocated = fills.allocate_resting_fills(
+            requests, prints, max_participation_ppm=1_000_000
+        )
+
+        assert allocated == (ContractCentis(0), ContractCentis(1000))
+
+    def test_lower_priced_volume_is_preserved_for_the_less_aggressive_order(
+        self,
+    ) -> None:
+        """Prints 4650x100 and 4500x100: the 4700 order (needs 50) claims from
+        the highest-priced through-print first, leaving the 4500x100 -- the only
+        volume the 4600 order can reach -- intact for it."""
+        prints = (
+            fills.TradePrint(PricePips(4650), ContractCentis(100), _TS),
+            fills.TradePrint(PricePips(4500), ContractCentis(100), _TS),
+        )
+        requests = (
+            fills.RestingFillRequest(
+                PricePips(4700), ContractCentis(50), ContractCentis(100_000)
+            ),
+            fills.RestingFillRequest(
+                PricePips(4600), ContractCentis(200), ContractCentis(100_000)
+            ),
+        )
+
+        allocated = fills.allocate_resting_fills(
+            requests, prints, max_participation_ppm=1_000_000
+        )
+
+        assert allocated == (ContractCentis(50), ContractCentis(100))
+
+    def test_participation_cap_still_binds_each_order_independently(self) -> None:
+        """When the participation cap (not the pool) binds, both orders fill up
+        to their cap -- sharing only kicks in when trade volume is the binding
+        constraint."""
+        prints = (fills.TradePrint(PricePips(4150), ContractCentis(2000), _TS),)
+        requests = (
+            fills.RestingFillRequest(
+                PricePips(4200), ContractCentis(1000), ContractCentis(500)
+            ),
+            fills.RestingFillRequest(
+                PricePips(4180), ContractCentis(1000), ContractCentis(500)
+            ),
+        )
+
+        allocated = fills.allocate_resting_fills(
+            requests, prints, max_participation_ppm=250_000
+        )
+
+        # cap = 25% of 500 = 125 each; pool (2000) is never the binding constraint.
+        assert allocated == (ContractCentis(125), ContractCentis(125))
+
+
 # =============================================================================
 # hedgekit.connector.paper.PaperExchange: the replay-driven MarketConnector
 # =============================================================================
@@ -906,6 +1047,76 @@ class TestPaperExchangeRestingOrderTradeThrough:
 
         cursor = datetime(2025, 1, 1, 0, 0, 30, tzinfo=UTC)
         assert len(exchange.get_fills(cursor)) == 1
+
+
+class TestPaperExchangeConcurrentRestingOrders:
+    """Two resting buys on one ticker share a single step's recorded trade
+    volume: their fills must never jointly exceed it (SPEC S17.4 pessimism --
+    a backtest can never flatter itself), and the more aggressive limit claims
+    first. The `concurrent_resting` fixture prints only 100 centis through both
+    resting limits while the book depth is deep enough that the participation
+    cap never binds, so the trade-through volume is the binding constraint.
+    """
+
+    def test_a_single_trade_never_fills_two_orders_beyond_its_own_volume(
+        self, books_fixture_dir: Path
+    ) -> None:
+        exchange = paper.PaperExchange.from_fixture_dir(
+            books_fixture_dir / "concurrent_resting"
+        )
+        # Both rest fully (limits below the 4400 ask; no immediate taker fill).
+        exchange.place_order(
+            paper.PaperOrderIntent(
+                "MKT-CONCURRENT", "yes", PricePips(4200), ContractCentis(1000)
+            ),
+            approval_token=object(),
+        )
+        exchange.place_order(
+            paper.PaperOrderIntent(
+                "MKT-CONCURRENT", "yes", PricePips(4100), ContractCentis(1000)
+            ),
+            approval_token=object(),
+        )
+
+        exchange.advance()  # a single 4050 x 100 print trades through both limits
+
+        recorded = exchange.get_fills(_SINCE)
+        total_filled = sum(fill.quantity.value for fill in recorded)
+        # The recorded trade was 100 centis; the two orders must not conjure 200.
+        assert total_filled == 100
+
+    def test_the_more_aggressive_limit_claims_the_shared_volume_first(
+        self, books_fixture_dir: Path
+    ) -> None:
+        exchange = paper.PaperExchange.from_fixture_dir(
+            books_fixture_dir / "concurrent_resting"
+        )
+        exchange.place_order(
+            paper.PaperOrderIntent(
+                "MKT-CONCURRENT", "yes", PricePips(4200), ContractCentis(1000)
+            ),
+            approval_token=object(),
+        )
+        exchange.place_order(
+            paper.PaperOrderIntent(
+                "MKT-CONCURRENT", "yes", PricePips(4100), ContractCentis(1000)
+            ),
+            approval_token=object(),
+        )
+
+        exchange.advance()
+
+        recorded = exchange.get_fills(_SINCE)
+        # Only the 4200 (more aggressive) order fills; the 4100 order gets nothing.
+        assert len(recorded) == 1
+        assert recorded[0].price == PricePips(4200)
+        assert recorded[0].quantity == ContractCentis(100)
+
+        remaining = {
+            order.price: order.quantity for order in exchange.get_open_orders()
+        }
+        assert remaining[PricePips(4200)] == ContractCentis(900)  # 1000 - 100
+        assert remaining[PricePips(4100)] == ContractCentis(1000)  # untouched
 
 
 class TestPaperExchangeReadOnlySurface:

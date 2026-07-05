@@ -42,8 +42,9 @@ from hedgekit.connector.fills import (
     DEFAULT_FEE_HAIRCUT_PPM,
     DEFAULT_MAX_PARTICIPATION_PPM,
     PAPER_FILL_MODEL_VERSION,
+    RestingFillRequest,
     TradePrint,
-    resting_fill_quantity,
+    allocate_resting_fills,
     trade_through_fill_ts,
     walk_taker_fill,
 )
@@ -359,38 +360,87 @@ class PaperExchange:
         return any_next
 
     def _process_resting_fills(self, ticker: str, step: _SessionStep) -> None:
-        """Fill this ticker's resting orders against ``step``'s trade prints."""
+        """Fill this ticker's resting orders against ``step``'s trade prints.
+
+        Resting orders on the same book side share one trade-through volume pool
+        (:func:`~hedgekit.connector.fills.allocate_resting_fills`): several
+        orders can never jointly claim more volume than the step actually
+        recorded, and the most aggressive limit is filled first. Orders on other
+        tickers are carried over untouched.
+
+        Args:
+            ticker: The market whose resting orders this step fills.
+            step: The replay step supplying the book depth and trade prints.
+        """
+        filled = self._allocate_resting_fills(ticker, step)
         survivors: list[OpenOrder] = []
         for order in self._resting:
             if order.ticker != ticker:
                 survivors.append(order)
                 continue
-            survivor = self._resting_fill(order, step)
+            survivor = self._apply_resting_fill(order, step, filled[order.id])
             if survivor is not None:
                 survivors.append(survivor)
         self._resting = survivors
 
-    def _resting_fill(self, order: OpenOrder, step: _SessionStep) -> OpenOrder | None:
-        """Apply ``step``'s trade-through fill to one resting ``order``.
+    def _allocate_resting_fills(
+        self, ticker: str, step: _SessionStep
+    ) -> dict[str, ContractCentis]:
+        """Allocate ``step``'s trade volume across ``ticker``'s resting orders.
+
+        Orders are grouped by side -- each side has its own buy-frame prints and
+        shares one volume pool -- and allocated in price priority via
+        :func:`~hedgekit.connector.fills.allocate_resting_fills`.
 
         Args:
-            order: The resting order to test against the step.
+            ticker: The market whose resting orders are being filled.
             step: The replay step supplying the book depth and trade prints.
+
+        Returns:
+            A mapping from resting-order id to its realized fill this step.
+        """
+        filled: dict[str, ContractCentis] = {}
+        for side in ("yes", "no"):
+            side_orders = [
+                order
+                for order in self._resting
+                if order.ticker == ticker and order.side == side
+            ]
+            if not side_orders:
+                continue
+            projected = [
+                self._resting_fill_inputs(order, step) for order in side_orders
+            ]
+            requests = tuple(
+                RestingFillRequest(limit, order.quantity, depth)
+                for order, (limit, _, depth) in zip(side_orders, projected, strict=True)
+            )
+            allocated = allocate_resting_fills(
+                requests,
+                projected[0][1],
+                max_participation_ppm=self.max_participation_ppm,
+            )
+            for order, fill in zip(side_orders, allocated, strict=True):
+                filled[order.id] = fill
+        return filled
+
+    def _apply_resting_fill(
+        self, order: OpenOrder, step: _SessionStep, filled: ContractCentis
+    ) -> OpenOrder | None:
+        """Emit ``order``'s allocated resting fill and return its survivor.
+
+        Args:
+            order: The resting order being filled.
+            step: The replay step (supplies the triggering trade-through time).
+            filled: The volume allocated to this order this step.
 
         Returns:
             The order with its remaining quantity reduced, or None if it filled
             completely and should be dropped.
         """
-        limit, prints, depth = self._resting_fill_inputs(order, step)
-        filled = resting_fill_quantity(
-            limit,
-            order.quantity,
-            prints,
-            depth,
-            max_participation_ppm=self.max_participation_ppm,
-        )
         if filled.value <= 0:
             return order
+        limit, prints, _ = self._resting_fill_inputs(order, step)
         # A resting fill occurs when the market trades *through* the limit, so it
         # is stamped at the triggering print's time -- not the (earlier) book
         # snapshot -- keeping Fill.ts honest for get_fills() since-filtering.

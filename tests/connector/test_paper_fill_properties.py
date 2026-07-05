@@ -40,7 +40,9 @@ from hypothesis import strategies as st
 
 from hedgekit.connector.fees import FeeModel
 from hedgekit.connector.fills import (
+    RestingFillRequest,
     TradePrint,
+    allocate_resting_fills,
     participation_cap,
     resting_fill_quantity,
     walk_taker_fill,
@@ -353,3 +355,83 @@ def test_consumed_slices_never_exceed_their_recorded_level_depth(
     for consumed_level, original_level in zip(result.consumed, levels, strict=False):
         assert consumed_level.price == original_level.price
         assert consumed_level.quantity.value <= original_level.quantity.value
+
+
+# --- (g)/(h): a shared trade-through pool never double-counts real volume ----
+
+
+@st.composite
+def _resting_requests(draw: st.DrawFn) -> tuple[RestingFillRequest, ...]:
+    """Build 1-4 same-side resting buys with independent limits/sizes/depths."""
+    count = draw(st.integers(min_value=1, max_value=4))
+    return tuple(
+        RestingFillRequest(
+            PricePips(draw(_PRICE_STRATEGY)),
+            ContractCentis(draw(_QTY_STRATEGY)),
+            ContractCentis(draw(_QTY_STRATEGY)),
+        )
+        for _ in range(count)
+    )
+
+
+@st.composite
+def _trade_prints(draw: st.DrawFn) -> tuple[TradePrint, ...]:
+    """Build 0-5 trade prints at arbitrary (price, quantity)."""
+    count = draw(st.integers(min_value=0, max_value=5))
+    return tuple(
+        TradePrint(
+            PricePips(draw(_PRICE_STRATEGY)), ContractCentis(draw(_QTY_STRATEGY)), _TS
+        )
+        for _ in range(count)
+    )
+
+
+@given(
+    requests=_resting_requests(),
+    prints=_trade_prints(),
+    max_participation_ppm=_PARTICIPATION_PPM_STRATEGY,
+)
+def test_allocated_fills_never_exceed_recorded_trade_through_volume(
+    requests: tuple[RestingFillRequest, ...],
+    prints: tuple[TradePrint, ...],
+    max_participation_ppm: int,
+) -> None:
+    """The pessimism invariant: the *sum* of every same-side resting fill can
+    never exceed the volume that actually traded through some limit -- one
+    real trade can never fill two orders in full (no self-flattering)."""
+    allocated = allocate_resting_fills(
+        requests, prints, max_participation_ppm=max_participation_ppm
+    )
+
+    highest_limit = max(request.limit.value for request in requests)
+    reachable_volume = sum(
+        print_.quantity.value for print_ in prints if print_.price.value < highest_limit
+    )
+    assert sum(fill.value for fill in allocated) <= reachable_volume
+
+
+@given(
+    requests=_resting_requests(),
+    prints=_trade_prints(),
+    max_participation_ppm=_PARTICIPATION_PPM_STRATEGY,
+)
+def test_shared_allocation_never_exceeds_an_isolated_resting_fill(
+    requests: tuple[RestingFillRequest, ...],
+    prints: tuple[TradePrint, ...],
+    max_participation_ppm: int,
+) -> None:
+    """Sharing is only ever more pessimistic: no order's shared fill exceeds the
+    fill it would have received alone against the full print stream."""
+    allocated = allocate_resting_fills(
+        requests, prints, max_participation_ppm=max_participation_ppm
+    )
+
+    for request, fill in zip(requests, allocated, strict=True):
+        isolated = resting_fill_quantity(
+            request.limit,
+            request.remaining,
+            prints,
+            request.depth_at_or_better,
+            max_participation_ppm=max_participation_ppm,
+        )
+        assert fill.value <= isolated.value

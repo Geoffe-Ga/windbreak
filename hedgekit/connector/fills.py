@@ -29,7 +29,7 @@ All money/size math is integer arithmetic routed through
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Final
 
 from hedgekit.connector.models import OrderBookLevel
@@ -175,7 +175,9 @@ def _consume_levels(
     price-times-count product is always exact) and the fee is the sum of the
     per-level worst-case fee on each consumed slice. When ``target`` is zero the
     loop consumes nothing, so the fee model is never asked for a zero-size fee
-    (which it rejects).
+    (which it rejects). A recorded level with a non-positive ``quantity`` (a
+    stale, about-to-be-removed snapshot level) is walked past for the same
+    reason, rather than asking the fee model to price a zero-size slice.
 
     Args:
         eligible: The at-or-better levels, best-first.
@@ -193,6 +195,8 @@ def _consume_levels(
     for level in eligible:
         if remaining <= 0:
             break
+        if level.quantity.value <= 0:
+            continue
         take = min(remaining, level.quantity.value)
         consumed.append(OrderBookLevel(level.price, ContractCentis(take)))
         book_cost += money_from_price_and_count(
@@ -283,6 +287,113 @@ def resting_fill_quantity(
         depth_at_or_better, max_participation_ppm=max_participation_ppm
     )
     return ContractCentis(min(remaining.value, cap.value, through_volume))
+
+
+@dataclass(frozen=True, slots=True)
+class RestingFillRequest:
+    """One resting buy's inputs for a shared trade-through-volume allocation.
+
+    Attributes:
+        limit: The resting order's limit price, in the shared buy frame (the
+            caller complements NO-side prices, so every request in one call is
+            already in the same frame).
+        remaining: The order's unfilled size, in contract-centis.
+        depth_at_or_better: Recorded same-side depth at prices at-or-better than
+            the limit, feeding this order's own participation cap.
+    """
+
+    limit: PricePips
+    remaining: ContractCentis
+    depth_at_or_better: ContractCentis
+
+
+def _consume_through_prints(
+    prints: Sequence[TradePrint], limit: PricePips, amount: int
+) -> list[TradePrint]:
+    """Return ``prints`` with ``amount`` of trade-through volume removed.
+
+    Volume is drawn from the prints that trade strictly *through* ``limit``
+    (price ``<`` limit) highest price first, so the lowest-priced volume -- the
+    only volume a less aggressive resting buy can reach -- is preserved for it.
+    A touch print (price ``==`` limit) is never consumed. Consumed prints keep
+    their original timestamp; only their remaining quantity shrinks.
+
+    Args:
+        prints: The current trade-print pool, in the shared buy frame.
+        limit: The claiming order's limit price.
+        amount: The trade-through volume to remove, in contract-centis.
+
+    Returns:
+        A new pool tuple-list with ``amount`` of through-volume removed.
+    """
+    pool = list(prints)
+    remaining = amount
+    highest_price_first = sorted(
+        range(len(pool)), key=lambda index: pool[index].price.value, reverse=True
+    )
+    for index in highest_price_first:
+        if remaining <= 0:
+            break
+        print_ = pool[index]
+        if print_.price >= limit or print_.quantity.value <= 0:
+            continue
+        take = min(remaining, print_.quantity.value)
+        pool[index] = replace(
+            print_, quantity=ContractCentis(print_.quantity.value - take)
+        )
+        remaining -= take
+    return pool
+
+
+def allocate_resting_fills(
+    requests: Sequence[RestingFillRequest],
+    prints: Sequence[TradePrint],
+    *,
+    max_participation_ppm: int,
+) -> tuple[ContractCentis, ...]:
+    """Allocate one step's trade-through volume across same-side resting buys.
+
+    Several resting buys on one book side compete for the *same* recorded
+    trade-through volume within a single step. Filling each in isolation would
+    let one real trade fill multiple orders in full -- overstating achievable
+    volume, the opposite of this module's pessimism mandate (SPEC S17.4). This
+    shares a single shrinking volume pool: orders claim in price priority (the
+    most aggressive limit first), each order's realized fill is computed by
+    :func:`resting_fill_quantity` against the *remaining* pool, and that fill is
+    then deducted from the pool. The sum of fills can therefore never exceed the
+    recorded trade-through volume. Per-order participation caps still bind
+    independently (they limit share of recorded depth, not of trade volume).
+
+    Every request must already be in the same buy frame; ``prints`` is that
+    frame's trade prints (the caller complements NO-side prices beforehand).
+
+    Args:
+        requests: The resting buys competing for this step's trade volume.
+        prints: The step's trade prints, in the shared buy frame.
+        max_participation_ppm: The participation cap, in ppm (SPEC S9.5).
+
+    Returns:
+        The realized fill per request, in the same order as ``requests``.
+    """
+    pool: Sequence[TradePrint] = prints
+    fills: list[ContractCentis] = [ContractCentis(0)] * len(requests)
+    priority = sorted(
+        range(len(requests)),
+        key=lambda index: requests[index].limit.value,
+        reverse=True,
+    )
+    for index in priority:
+        request = requests[index]
+        fill = resting_fill_quantity(
+            request.limit,
+            request.remaining,
+            pool,
+            request.depth_at_or_better,
+            max_participation_ppm=max_participation_ppm,
+        )
+        fills[index] = fill
+        pool = _consume_through_prints(pool, request.limit, fill.value)
+    return tuple(fills)
 
 
 def trade_through_fill_ts(limit: PricePips, prints: Sequence[TradePrint]) -> datetime:
