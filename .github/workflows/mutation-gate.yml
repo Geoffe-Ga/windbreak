@@ -52,9 +52,9 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          pip install -r requirements.txt || true
-          pip install -r requirements-dev.txt || true
-          pip install pytest mutmut
+          pip install -c constraints-quality.txt -r requirements.txt
+          pip install -c constraints-quality.txt -r requirements-dev.txt
+          pip install -c constraints-quality.txt pytest mutmut
 
       - name: Run mutation tests
         run: |
