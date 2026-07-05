@@ -320,3 +320,139 @@ def test_from_config_matches_the_default_hedgekit_config_mode_ceiling() -> None:
     ceiling token vocabulary end to end.
     """
     assert Mode.from_config(HedgekitConfig().mode_ceiling) == Mode.PAPER
+
+
+# --- Issue #33 additions: promote_one_rung / demote_one_rung / mode_ceiling -----
+#
+# These pin `ModeStateMachine.promote_one_rung`, `.demote_one_rung`, and the
+# `.mode_ceiling` read-only property that `hedgekit/riskkernel/promotion.py`
+# and `hedgekit/riskkernel/demotion.py` build on. Neither method exists yet,
+# so every test below fails collection alongside the rest of this file with
+# `ModuleNotFoundError` until `modes.py` grows an `effective_ceiling` kwarg and
+# these two methods -- the pre-existing 49-pair `transition()` matrix and the
+# 19-pair legal-transition table above are untouched and must keep passing
+# unchanged: `promote_one_rung`/`demote_one_rung` must not widen
+# `_ALLOWED_TRANSITIONS`, only add a narrower, ceiling-aware convenience path
+# on top of it.
+
+
+def test_promote_one_rung_steps_through_the_ladder_under_permissive_ceilings() -> None:
+    """`promote_one_rung` advances exactly one rung at a time -- RESEARCH ->
+    PAPER -> LIVE_MICRO -> LIVE -- when both the static `mode_ceiling` and the
+    caller-supplied `effective_ceiling` are fully permissive (LIVE).
+    """
+    machine = ModeStateMachine(mode_ceiling=Mode.LIVE, mode=Mode.RESEARCH)
+
+    assert machine.promote_one_rung(effective_ceiling=Mode.LIVE) == Mode.PAPER
+    assert machine.mode == Mode.PAPER
+
+    assert machine.promote_one_rung(effective_ceiling=Mode.LIVE) == Mode.LIVE_MICRO
+    assert machine.mode == Mode.LIVE_MICRO
+
+    assert machine.promote_one_rung(effective_ceiling=Mode.LIVE) == Mode.LIVE
+    assert machine.mode == Mode.LIVE
+
+
+def test_promote_one_rung_raises_when_the_static_ceiling_alone_blocks() -> None:
+    """A restrictive *static* `mode_ceiling` blocks the promotion even when
+    the caller-supplied `effective_ceiling` is fully permissive -- proving the
+    check combines both with OR, not `effective_ceiling` alone.
+    """
+    machine = ModeStateMachine(mode_ceiling=Mode.PAPER, mode=Mode.PAPER)
+
+    with pytest.raises(ModeCeilingExceededError):
+        machine.promote_one_rung(effective_ceiling=Mode.LIVE)
+
+    assert machine.mode == Mode.PAPER
+
+
+def test_promote_one_rung_raises_when_the_effective_ceiling_alone_blocks() -> None:
+    """A restrictive *effective* ceiling blocks the promotion even when the
+    static `mode_ceiling` is fully permissive -- proving the check combines
+    both with OR, not the static `mode_ceiling` alone.
+    """
+    machine = ModeStateMachine(mode_ceiling=Mode.LIVE, mode=Mode.PAPER)
+
+    with pytest.raises(ModeCeilingExceededError):
+        machine.promote_one_rung(effective_ceiling=Mode.PAPER)
+
+    assert machine.mode == Mode.PAPER
+
+
+def test_promote_one_rung_succeeds_when_both_ceilings_permit_it() -> None:
+    """When both the static and effective ceilings sit at (or above) the
+    target rung, the promotion succeeds and returns the new mode.
+    """
+    machine = ModeStateMachine(mode_ceiling=Mode.LIVE_MICRO, mode=Mode.PAPER)
+
+    result = machine.promote_one_rung(effective_ceiling=Mode.LIVE_MICRO)
+
+    assert result == Mode.LIVE_MICRO
+    assert machine.mode == Mode.LIVE_MICRO
+
+
+@pytest.mark.parametrize("mode", [Mode.LIVE, Mode.PAUSED, Mode.HALT, Mode.KILLED])
+def test_promote_one_rung_raises_illegal_transition_with_no_next_rung(
+    mode: Mode,
+) -> None:
+    """`promote_one_rung` raises the base `IllegalModeTransitionError` --
+    never the more specific `ModeCeilingExceededError` -- from LIVE (the top
+    rung) and from every safety mode, since no ladder rung exists to promote
+    to at all; `.mode` is left unchanged.
+    """
+    machine = ModeStateMachine(mode_ceiling=Mode.LIVE, mode=mode)
+
+    with pytest.raises(IllegalModeTransitionError) as exc_info:
+        machine.promote_one_rung(effective_ceiling=Mode.LIVE)
+
+    assert type(exc_info.value) is IllegalModeTransitionError
+    assert machine.mode == mode
+
+
+def test_demote_one_rung_steps_through_the_ladder_downward() -> None:
+    """`demote_one_rung` steps down exactly one rung at a time -- LIVE ->
+    LIVE_MICRO -> PAPER -> RESEARCH.
+    """
+    machine = ModeStateMachine(mode_ceiling=Mode.LIVE, mode=Mode.LIVE)
+
+    assert machine.demote_one_rung() == Mode.LIVE_MICRO
+    assert machine.mode == Mode.LIVE_MICRO
+
+    assert machine.demote_one_rung() == Mode.PAPER
+    assert machine.mode == Mode.PAPER
+
+    assert machine.demote_one_rung() == Mode.RESEARCH
+    assert machine.mode == Mode.RESEARCH
+
+
+@pytest.mark.parametrize("mode", [Mode.RESEARCH, Mode.PAUSED, Mode.HALT, Mode.KILLED])
+def test_demote_one_rung_raises_illegal_transition_with_no_rung_below(
+    mode: Mode,
+) -> None:
+    """`demote_one_rung` raises `IllegalModeTransitionError` from RESEARCH
+    (the bottom rung) and from every safety mode -- including KILLED -- since
+    no ladder rung exists below; `.mode` is left unchanged.
+
+    Note this deliberately differs from `hedgekit.riskkernel.demotion`'s
+    fail-safe `DEMOTE_ONE_MODE` trigger resolution (RESEARCH -> PAUSED): this
+    is the low-level state-machine primitive, not the demotion-trigger policy
+    built on top of it.
+    """
+    machine = ModeStateMachine(mode_ceiling=Mode.LIVE, mode=mode)
+
+    with pytest.raises(IllegalModeTransitionError):
+        machine.demote_one_rung()
+
+    assert machine.mode == mode
+
+
+@pytest.mark.parametrize(
+    "ceiling", [Mode.RESEARCH, Mode.PAPER, Mode.LIVE_MICRO, Mode.LIVE]
+)
+def test_mode_ceiling_property_returns_the_configured_ceiling(ceiling: Mode) -> None:
+    """The `mode_ceiling` property reflects exactly the ceiling passed at
+    construction, regardless of the current `.mode`.
+    """
+    machine = ModeStateMachine(mode_ceiling=ceiling, mode=Mode.RESEARCH)
+
+    assert machine.mode_ceiling == ceiling

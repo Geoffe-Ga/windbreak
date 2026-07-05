@@ -187,10 +187,110 @@ class AlertEmitted(Event):
         _derive_typed_event(self, payload)
 
 
+@dataclass(frozen=True)
+class PromotionEvaluated(Event):
+    """Records the outcome of one Risk Kernel promotion-gate evaluation.
+
+    Attributes:
+        source_mode: The mode promotion was requested from (``Mode.name``).
+        target_mode: The mode promotion was toward (``Mode.name``).
+        approved: Whether every gate criterion passed.
+        override_bypassed: Whether an active significance override promoted
+            despite the mandatory significance criterion failing -- ``True``
+            only when the override rescued a promotion the raw evaluation
+            (``approved is False``) would otherwise have blocked.
+        evidence: The evaluated ``GateEvidence`` snapshot as a payload.
+        results: One per-criterion result payload, in gate order.
+    """
+
+    source_mode: str
+    target_mode: str
+    approved: bool
+    override_bypassed: bool
+    evidence: dict[str, object]
+    results: list[dict[str, object]]
+    event_type: str = field(init=False)
+    payload_schema_version: int = field(init=False)
+    payload: dict[str, object] = field(init=False)
+
+    def __post_init__(self) -> None:
+        """Assemble the payload and derive the base ``Event`` fields."""
+        payload: dict[str, object] = {
+            "source_mode": self.source_mode,
+            "target_mode": self.target_mode,
+            "approved": self.approved,
+            "override_bypassed": self.override_bypassed,
+            "evidence": self.evidence,
+            "results": self.results,
+        }
+        _derive_typed_event(self, payload)
+
+
+@dataclass(frozen=True)
+class SignificanceOverrideApplied(Event):
+    """Records the one-way significance-gate override (SPEC S5.1).
+
+    Attributes:
+        operator_ack: The exact acknowledgement phrase the operator typed.
+        ceiling: The override's mode ceiling (always ``"LIVE_MICRO"``).
+    """
+
+    operator_ack: str
+    ceiling: str
+    event_type: str = field(init=False)
+    payload_schema_version: int = field(init=False)
+    payload: dict[str, object] = field(init=False)
+
+    def __post_init__(self) -> None:
+        """Assemble the payload and derive the base ``Event`` fields."""
+        payload: dict[str, object] = {
+            "operator_ack": self.operator_ack,
+            "ceiling": self.ceiling,
+        }
+        _derive_typed_event(self, payload)
+
+
+@dataclass(frozen=True)
+class DemotionTriggerFired(Event):
+    """Records one Risk Kernel demotion-trigger firing.
+
+    Attributes:
+        trigger: The firing trigger (``DemotionTrigger.name``).
+        action: The trigger's mapped action (``DemotionAction.name``).
+        from_mode: The mode at firing time (``Mode.name``).
+        to_mode: The mode after resolution (``Mode.name``; equals ``from_mode``
+            on a no-op firing).
+        transitioned: Whether the firing actually moved the mode.
+    """
+
+    trigger: str
+    action: str
+    from_mode: str
+    to_mode: str
+    transitioned: bool
+    event_type: str = field(init=False)
+    payload_schema_version: int = field(init=False)
+    payload: dict[str, object] = field(init=False)
+
+    def __post_init__(self) -> None:
+        """Assemble the payload and derive the base ``Event`` fields."""
+        payload: dict[str, object] = {
+            "trigger": self.trigger,
+            "action": self.action,
+            "from_mode": self.from_mode,
+            "to_mode": self.to_mode,
+            "transitioned": self.transitioned,
+        }
+        _derive_typed_event(self, payload)
+
+
 #: Maps each event_type string to its class, so a persisted envelope can be
 #: reconstructed as ``EVENT_TYPES[event_type](component=..., **data)``.
 EVENT_TYPES: dict[str, type[Event]] = {
     "ConfigLoaded": ConfigLoaded,
     "ModeHeartbeat": ModeHeartbeat,
     "AlertEmitted": AlertEmitted,
+    "PromotionEvaluated": PromotionEvaluated,
+    "SignificanceOverrideApplied": SignificanceOverrideApplied,
+    "DemotionTriggerFired": DemotionTriggerFired,
 }

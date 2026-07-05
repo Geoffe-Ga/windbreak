@@ -28,17 +28,45 @@ import threading
 import time
 from typing import TYPE_CHECKING, Protocol
 
-from hedgekit.ledger.events import Event, ModeHeartbeat
+from hedgekit.config import EvaluationConfig
+from hedgekit.ledger.events import (
+    DemotionTriggerFired,
+    Event,
+    ModeHeartbeat,
+    PromotionEvaluated,
+    SignificanceOverrideApplied,
+)
 from hedgekit.logging_setup import configure_logging
 from hedgekit.riskkernel import checks
-from hedgekit.riskkernel.modes import Mode, ModeStateMachine
+from hedgekit.riskkernel.demotion import TRIGGER_ACTIONS, resolve_demotion
+from hedgekit.riskkernel.modes import (
+    IllegalModeTransitionError,
+    Mode,
+    ModeStateMachine,
+)
+from hedgekit.riskkernel.promotion import (
+    OVERRIDE_CEILING,
+    SIGNIFICANCE_OVERRIDE_ACK_PHRASE,
+    OverrideAcknowledgementError,
+    build_promotion_gates,
+    effective_mode_ceiling,
+    evaluate_promotion,
+    override_applied_in,
+)
 from hedgekit.riskkernel.verification import VerificationOutcome
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Iterable, Mapping, Sequence
     from types import FrameType
 
     from hedgekit.riskkernel.context import EvaluationContext
+    from hedgekit.riskkernel.demotion import DemotionTrigger
+    from hedgekit.riskkernel.promotion import (
+        CriterionResult,
+        GateEvidence,
+        PromotionDecision,
+        PromotionGate,
+    )
     from hedgekit.riskkernel.verification import ReadOnlyVerifier, VerificationSnapshot
 
 #: Component label stamped on every event and log record this process emits.
@@ -64,6 +92,10 @@ _DEFAULT_HEARTBEAT_INTERVAL = 5
 #: The ceiling the default (unconfigured) kernel promotes no higher than.
 _DEFAULT_MODE_CEILING = Mode.PAPER
 
+#: Demotion destinations reachable via the ordinary safety transition (the
+#: rest -- ladder demotions -- go through ``demote_one_rung`` instead).
+_SAFETY_DESTINATIONS: frozenset[Mode] = frozenset({Mode.PAUSED, Mode.HALT, Mode.KILLED})
+
 _LOGGER = logging.getLogger("hedgekit.riskkernel")
 
 
@@ -78,6 +110,58 @@ def _default_clock() -> int:
         The current time, in whole epoch seconds.
     """
     return int(time.time())
+
+
+def _result_payload(result: CriterionResult) -> dict[str, object]:
+    """Project one criterion result into a JSON-safe payload dict.
+
+    Args:
+        result: The evaluated criterion result to serialize.
+
+    Returns:
+        A dict keyed by field name, with ``comparison`` rendered as its
+        ``.name`` string.
+    """
+    return {
+        "criterion_id": result.criterion_id,
+        "observed": result.observed,
+        "threshold": result.threshold,
+        "comparison": result.comparison.name,
+        "passed": result.passed,
+    }
+
+
+def _override_promotes(
+    gate: PromotionGate, decision: PromotionDecision, override_active: bool
+) -> bool:
+    """Return whether an active override rescues an otherwise-rejected promotion.
+
+    The significance override may promote past a failing gate only when *every*
+    failing criterion is :attr:`~hedgekit.riskkernel.promotion.GateCriterion.
+    overridable` -- i.e. the sole mandatory significance criterion is the only
+    thing standing in the way (SPEC S10.9). A single non-overridable failure
+    (e.g. too few resolved forecasts) blocks the bypass entirely, and an
+    already-approved decision needs no bypass.
+
+    Args:
+        gate: The gate ``decision`` was evaluated against.
+        decision: The raw, un-overridden promotion decision.
+        override_active: Whether the ledgered significance override is in force.
+
+    Returns:
+        ``True`` iff the override is active, the decision was not approved, and
+        every failing criterion (of which there is at least one) is overridable.
+    """
+    overridable_ids = {
+        criterion.criterion_id for criterion in gate.criteria if criterion.overridable
+    }
+    failures = [result for result in decision.results if not result.passed]
+    return (
+        override_active
+        and not decision.approved
+        and bool(failures)
+        and all(result.criterion_id in overridable_ids for result in failures)
+    )
 
 
 class KernelLedgerWriter(Protocol):
@@ -144,6 +228,7 @@ class RiskKernel:
         *,
         verifier: ReadOnlyVerifier | None = None,
         clock: Callable[[], int] | None = None,
+        evaluation_config: EvaluationConfig | None = None,
     ) -> None:
         """Initialize the kernel.
 
@@ -156,6 +241,8 @@ class RiskKernel:
             clock: A zero-argument callable returning the current epoch second,
                 injected so verification cycles are deterministic under test.
                 Defaults to :func:`_default_clock`.
+            evaluation_config: The promotion-threshold config the gates are
+                built from. Defaults to a stock :class:`EvaluationConfig`.
         """
         self._ledger_writer = ledger_writer
         self._mode_machine = (
@@ -166,6 +253,13 @@ class RiskKernel:
         self._verifier = verifier
         self._clock = clock if clock is not None else _default_clock
         self._latest_verification: VerificationSnapshot | None = None
+        config = (
+            evaluation_config if evaluation_config is not None else EvaluationConfig()
+        )
+        self._promotion_gates: Mapping[Mode, PromotionGate] = build_promotion_gates(
+            config
+        )
+        self._override_applied = False
 
     @classmethod
     def for_testing(cls) -> RiskKernel:
@@ -177,6 +271,39 @@ class RiskKernel:
         """
         return cls(InMemoryKernelLedgerWriter())
 
+    @classmethod
+    def from_events(
+        cls,
+        events: Iterable[Event],
+        ledger_writer: KernelLedgerWriter,
+        *,
+        mode_machine: ModeStateMachine | None = None,
+        evaluation_config: EvaluationConfig | None = None,
+    ) -> RiskKernel:
+        """Rebuild a kernel, replaying durable override state from the ledger.
+
+        The significance-override cap is durable, ledgered state rather than
+        process memory, so a kernel rebuilt over a history that recorded a
+        :class:`~hedgekit.ledger.events.SignificanceOverrideApplied` event comes
+        back with the cap already in force.
+
+        Args:
+            events: The event history to replay override state from.
+            ledger_writer: The writer the rebuilt kernel records new events to.
+            mode_machine: The operating-mode state machine to adopt.
+            evaluation_config: The promotion-threshold config for the gates.
+
+        Returns:
+            A :class:`RiskKernel` whose override cap reflects ``events``.
+        """
+        kernel = cls(
+            ledger_writer,
+            mode_machine=mode_machine,
+            evaluation_config=evaluation_config,
+        )
+        kernel._override_applied = override_applied_in(events)
+        return kernel
+
     @property
     def ledger_writer(self) -> KernelLedgerWriter:
         """Return the writer events are recorded through."""
@@ -186,6 +313,150 @@ class RiskKernel:
     def mode(self) -> Mode:
         """Return the kernel's current operating mode."""
         return self._mode_machine.mode
+
+    @property
+    def mode_ceiling_effective(self) -> Mode:
+        """Return the effective ceiling, folding in any significance override."""
+        return effective_mode_ceiling(
+            self._mode_machine.mode_ceiling, self._override_applied
+        )
+
+    def request_promotion(self, evidence: GateEvidence) -> PromotionDecision:
+        """Evaluate the current mode's promotion gate and, if cleared, promote.
+
+        Records exactly one
+        :class:`~hedgekit.ledger.events.PromotionEvaluated` event per attempt --
+        whether the evidence approved or rejected the promotion -- *before*
+        attempting the mode change, so the audit trail always captures the
+        evaluation even when the subsequent ceiling check blocks the move. The
+        ledger write is deliberately unguarded (fail-closed), matching
+        :meth:`evaluate_intent`.
+
+        With an active significance override, a promotion past a *failing*
+        mandatory significance criterion is applied -- reflected in the kernel's
+        mode and the event's ``override_bypassed=True`` -- even though the
+        returned ``decision.approved`` remains ``False`` (the override changes
+        the kernel's mode, never the pure evaluation). The override bypasses
+        *only* the ``overridable`` significance criterion: any other failing
+        criterion still blocks promotion. The override's permanent
+        ``LIVE_MICRO`` ceiling keeps full ``LIVE`` unreachable, so a bypassed
+        PAPER -> LIVE_MICRO promotion succeeds while a later LIVE_MICRO -> LIVE
+        attempt still raises ``ModeCeilingExceededError``.
+
+        Args:
+            evidence: The promotion-readiness evidence snapshot.
+
+        Returns:
+            The raw :class:`~hedgekit.riskkernel.promotion.PromotionDecision`
+            (its ``approved`` reflects the criteria alone, ignoring any
+            override).
+
+        Raises:
+            IllegalModeTransitionError: If the current mode has no promotion
+                gate (a safety mode, or ``LIVE`` at the top of the ladder). No
+                event is recorded in this case.
+            ModeCeilingExceededError: If the promotion cleared (on its merits or
+                via the override) but an active ceiling blocks the target rung.
+                The ``PromotionEvaluated`` event is still recorded first, and the
+                mode is left unchanged.
+        """
+        current = self._mode_machine.mode
+        gate = self._promotion_gates.get(current)
+        if gate is None:
+            raise IllegalModeTransitionError(f"no promotion gate from {current.name}")
+        decision = evaluate_promotion(gate, evidence)
+        override_bypassed = _override_promotes(gate, decision, self._override_applied)
+        self._ledger_writer.record(
+            PromotionEvaluated(
+                component=_COMPONENT,
+                source_mode=gate.source.name,
+                target_mode=gate.target.name,
+                approved=decision.approved,
+                override_bypassed=override_bypassed,
+                evidence=evidence.to_payload(),
+                results=[_result_payload(result) for result in decision.results],
+            )
+        )
+        if decision.approved or override_bypassed:
+            self._mode_machine.promote_one_rung(
+                effective_ceiling=self.mode_ceiling_effective
+            )
+        return decision
+
+    def fire_demotion_trigger(self, trigger: DemotionTrigger) -> Mode | None:
+        """Fire a demotion trigger, ledgering the firing and any transition.
+
+        Records exactly one
+        :class:`~hedgekit.ledger.events.DemotionTriggerFired` event per firing,
+        including a no-op firing (``transitioned=False``). Safety destinations
+        (``PAUSED``/``HALT``/``KILLED``) move via the ordinary transition; a
+        one-rung ladder demotion moves via ``demote_one_rung``. Never raises
+        from a safety mode -- every trigger resolves cleanly (possibly to a
+        no-op) -- and a ``KILLED`` kernel stays ``KILLED``.
+
+        Args:
+            trigger: The demotion trigger to fire.
+
+        Returns:
+            The resolved destination mode, or ``None`` for a no-op firing.
+        """
+        current = self._mode_machine.mode
+        action = TRIGGER_ACTIONS[trigger]
+        destination = resolve_demotion(current, trigger)
+        if destination is not None:
+            self._apply_demotion(destination)
+        to_mode = destination if destination is not None else current
+        self._ledger_writer.record(
+            DemotionTriggerFired(
+                component=_COMPONENT,
+                trigger=trigger.name,
+                action=action.name,
+                from_mode=current.name,
+                to_mode=to_mode.name,
+                transitioned=destination is not None,
+            )
+        )
+        return destination
+
+    def _apply_demotion(self, destination: Mode) -> None:
+        """Move to a resolved demotion destination via the right primitive.
+
+        Args:
+            destination: The resolved destination mode (never ``None``).
+        """
+        if destination in _SAFETY_DESTINATIONS:
+            self._mode_machine.transition(destination)
+        else:
+            self._mode_machine.demote_one_rung()
+
+    def apply_ledgered_override(self, operator_ack: str) -> None:
+        """Apply the one-way significance-gate override on the exact phrase.
+
+        On a verbatim, case-sensitive match, records a
+        :class:`~hedgekit.ledger.events.SignificanceOverrideApplied` event and
+        caps the effective ceiling at ``LIVE_MICRO`` permanently (no API ever
+        unsets it). A mismatch records nothing and changes nothing.
+
+        Args:
+            operator_ack: The acknowledgement phrase the operator typed.
+
+        Raises:
+            OverrideAcknowledgementError: If ``operator_ack`` does not equal
+                :data:`SIGNIFICANCE_OVERRIDE_ACK_PHRASE` exactly. No event is
+                recorded and the ceiling is unchanged.
+        """
+        if operator_ack != SIGNIFICANCE_OVERRIDE_ACK_PHRASE:
+            raise OverrideAcknowledgementError(
+                "significance-override acknowledgement phrase does not match"
+            )
+        self._ledger_writer.record(
+            SignificanceOverrideApplied(
+                component=_COMPONENT,
+                operator_ack=operator_ack,
+                ceiling=OVERRIDE_CEILING.name,
+            )
+        )
+        self._override_applied = True
 
     def run_verification_cycle(self) -> None:
         """Run one verification cycle, halting the kernel on a breach.

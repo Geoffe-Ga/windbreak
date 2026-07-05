@@ -123,6 +123,22 @@ def _next_rung(mode: Mode) -> Mode | None:
     return _PROMOTION_LADDER[rank + 1]
 
 
+def _prev_rung(mode: Mode) -> Mode | None:
+    """Return the one-rung-down demotion target for a mode, if any.
+
+    Args:
+        mode: The candidate source mode.
+
+    Returns:
+        The next ladder mode below ``mode``, or ``None`` if ``mode`` is
+        off-ladder or already at the bottom rung (``RESEARCH``).
+    """
+    rank = _LADDER_RANK.get(mode)
+    if rank is None or rank == 0:
+        return None
+    return _PROMOTION_LADDER[rank - 1]
+
+
 def _build_allowed_transitions() -> dict[Mode, frozenset[Mode]]:
     """Build the source-to-legal-targets table, ignoring the ceiling.
 
@@ -190,6 +206,11 @@ class ModeStateMachine:
         """Return the current operating mode."""
         return self._mode
 
+    @property
+    def mode_ceiling(self) -> Mode:
+        """Return the configured highest promotable ladder rung."""
+        return self._mode_ceiling
+
     def _exceeds_ceiling(self, target: Mode) -> bool:
         """Return whether promoting to ``target`` would exceed the ceiling.
 
@@ -229,6 +250,70 @@ class ModeStateMachine:
                 f"promotion to {target.name} exceeds ceiling {self._mode_ceiling.name}"
             )
         self._mode = target
+
+    def promote_one_rung(self, *, effective_ceiling: Mode) -> Mode:
+        """Promote exactly one ladder rung, honoring both ceilings.
+
+        A narrower, ceiling-aware convenience path layered on top of the static
+        :data:`_ALLOWED_TRANSITIONS` table: it never widens the legal-transition
+        matrix, only advances the machine one rung up the promotion ladder when
+        both the static ``mode_ceiling`` and the caller-supplied
+        ``effective_ceiling`` permit the target rung.
+
+        Args:
+            effective_ceiling: A second, dynamically-computed ceiling (e.g. a
+                significance-override cap) the target rung must also satisfy.
+
+        Returns:
+            The new (higher) mode.
+
+        Raises:
+            IllegalModeTransitionError: If there is no rung above the current
+                mode (already at ``LIVE``, or in a safety mode). The mode is
+                left unchanged.
+            ModeCeilingExceededError: If a next rung exists but sits above the
+                static ``mode_ceiling`` *or* the ``effective_ceiling``. The mode
+                is left unchanged.
+        """
+        target = _next_rung(self._mode)
+        if target is None:
+            raise IllegalModeTransitionError(
+                f"no ladder rung above {self._mode.name} to promote to"
+            )
+        target_rank = _LADDER_RANK[target]
+        if (
+            target_rank > _LADDER_RANK[self._mode_ceiling]
+            or target_rank > _LADDER_RANK[effective_ceiling]
+        ):
+            raise ModeCeilingExceededError(
+                f"promotion to {target.name} exceeds an active ceiling"
+            )
+        self._mode = target
+        return target
+
+    def demote_one_rung(self) -> Mode:
+        """Demote exactly one ladder rung downward.
+
+        The low-level state-machine primitive stepping ``LIVE -> LIVE_MICRO ->
+        PAPER -> RESEARCH`` one rung at a time. Unlike the demotion-trigger
+        policy built on top of it, this raises rather than floors: there is no
+        rung below ``RESEARCH`` and none below any safety mode.
+
+        Returns:
+            The new (lower) mode.
+
+        Raises:
+            IllegalModeTransitionError: If there is no rung below the current
+                mode (already at ``RESEARCH``, or in a safety mode including
+                ``KILLED``). The mode is left unchanged.
+        """
+        target = _prev_rung(self._mode)
+        if target is None:
+            raise IllegalModeTransitionError(
+                f"no ladder rung below {self._mode.name} to demote to"
+            )
+        self._mode = target
+        return target
 
     def rearm(self, confirmation: str) -> None:
         """Re-arm a KILLED machine back to RESEARCH on exact confirmation.
