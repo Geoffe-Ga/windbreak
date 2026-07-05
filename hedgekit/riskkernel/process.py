@@ -9,7 +9,7 @@ This module wires the Risk Kernel's runtime surface:
   state machine, a bounded heartbeat loop that records
   :class:`~hedgekit.ledger.events.ModeHeartbeat` events, and a ledgered
   :meth:`RiskKernel.evaluate_intent` that records one ``IntentVetoed`` event
-  per rejected intent.
+  per rejected intent (or ``IntentApproved`` when the pipeline passes it).
 - :func:`main`, a bounded CLI mirroring :mod:`hedgekit.main`'s
   ``--heartbeat-interval`` / ``--max-beats`` non-negative parsing conventions.
 
@@ -40,6 +40,9 @@ _COMPONENT = "riskkernel"
 
 #: Event type recorded when the kernel vetoes an intent.
 _INTENT_VETOED_EVENT = "IntentVetoed"
+
+#: Event type recorded when the kernel approves an intent (no check vetoed).
+_INTENT_APPROVED_EVENT = "IntentApproved"
 
 #: Payload schema version stamped on kernel-emitted events.
 _PAYLOAD_SCHEMA_VERSION = 1
@@ -189,19 +192,32 @@ class RiskKernel:
             stop_event.wait(heartbeat_interval)
 
     def evaluate_intent(self, intent: checks.OrderIntent) -> checks.Decision:
-        """Evaluate an intent and record its veto to the ledger.
+        """Evaluate an intent and record its verdict to the ledger.
+
+        Records exactly one event reflecting the true verdict: ``IntentVetoed``
+        when any check vetoes (with the veto reasons), or ``IntentApproved``
+        when the pipeline passes the intent (with empty reasons). Gating the
+        event type on ``decision.vetoed`` -- rather than always emitting
+        ``IntentVetoed`` -- keeps the audit trail correct once real check logic
+        (issues #30-#35) can produce a passing decision; today every default
+        check vetoes, so only the veto branch is reachable.
 
         Args:
             intent: The order intent to evaluate.
 
         Returns:
-            The :class:`~hedgekit.riskkernel.checks.Decision`, marked both
-            vetoed and ledgered, after recording one ``IntentVetoed`` event.
+            The :class:`~hedgekit.riskkernel.checks.Decision`, carrying the
+            pipeline's ``vetoed``/``reasons`` and marked ledgered.
         """
         decision = checks.evaluate_intent(intent)
+        event_type = _INTENT_VETOED_EVENT if decision.vetoed else _INTENT_APPROVED_EVENT
+        # Deliberately unguarded (no try/except around the ledger write, unlike
+        # connector.snapshot's fail-open writer): for a risk kernel a ledger
+        # failure must surface, never be swallowed, so the audit trail can never
+        # silently miss a decision. Letting it propagate is the fail-closed choice.
         self._ledger_writer.record(
             Event(
-                event_type=_INTENT_VETOED_EVENT,
+                event_type=event_type,
                 component=_COMPONENT,
                 payload_schema_version=_PAYLOAD_SCHEMA_VERSION,
                 payload={

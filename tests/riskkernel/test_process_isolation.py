@@ -377,6 +377,46 @@ def test_risk_kernel_evaluate_intent_records_one_intent_vetoed_event() -> None:
     assert list(event.payload["reasons"]) == list(decision.reasons)
 
 
+@pytest.mark.timeout(30)
+def test_risk_kernel_evaluate_intent_records_intent_approved_when_not_vetoed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the check pipeline approves an intent (no veto), the kernel ledgers
+    exactly one `IntentApproved` event and never a mislabeled `IntentVetoed`.
+
+    Today's `DEFAULT_CHECKS` veto unconditionally, so this branch is only
+    reachable once real check logic (issues #30-#35) lets an intent pass; the
+    approving pipeline is stubbed here so the audit trail's correctness is
+    pinned before that logic lands, not rediscovered as a ledger bug after.
+    """
+    from hedgekit.riskkernel import checks as checks_module
+
+    approved = checks_module.Decision(vetoed=False, reasons=())
+    monkeypatch.setattr(checks_module, "evaluate_intent", lambda intent: approved)
+
+    kernel = RiskKernel.for_testing()
+    intent = _make_intent()
+
+    decision = kernel.evaluate_intent(intent)
+
+    assert decision.vetoed is False
+    assert decision.ledgered is True
+
+    event_types = [event.event_type for event in kernel.ledger_writer.events]
+    assert "IntentVetoed" not in event_types
+    approved_events = [
+        event
+        for event in kernel.ledger_writer.events
+        if event.event_type == "IntentApproved"
+    ]
+    assert len(approved_events) == 1
+    event = approved_events[0]
+    assert event.component == "riskkernel"
+    assert event.payload_schema_version == 1
+    assert event.payload["intent_id"] == intent.intent_id
+    assert list(event.payload["reasons"]) == []
+
+
 # --- Process B survives Process A ------------------------------------------------
 
 

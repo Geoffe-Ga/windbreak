@@ -170,7 +170,18 @@ class ModeStateMachine:
             mode_ceiling: The highest ladder rung the runtime may ever promote
                 to. Must be one of the four promotable ladder modes.
             mode: The starting mode. Defaults to ``RESEARCH``.
+
+        Raises:
+            ValueError: If ``mode_ceiling`` is a safety mode rather than one of
+                the four promotable ladder modes -- the ceiling only bounds the
+                ladder, so a safety ceiling is meaningless and would otherwise
+                surface as a raw ``KeyError`` on the first promotion.
         """
+        if mode_ceiling not in _LADDER_RANK:
+            raise ValueError(
+                "mode_ceiling must be a promotable ladder mode, got "
+                f"{mode_ceiling.name}"
+            )
         self._mode_ceiling = mode_ceiling
         self._mode = mode
 

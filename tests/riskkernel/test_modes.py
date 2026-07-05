@@ -170,6 +170,30 @@ def test_promotion_beyond_ceiling_raises_mode_ceiling_exceeded() -> None:
     assert machine.mode == Mode.PAPER
 
 
+@pytest.mark.parametrize("bad_ceiling", [Mode.PAUSED, Mode.HALT, Mode.KILLED])
+def test_constructing_with_a_safety_mode_ceiling_raises_value_error(
+    bad_ceiling: Mode,
+) -> None:
+    """A non-ladder (safety) `mode_ceiling` is rejected at construction with a
+    clear `ValueError`, not left to surface later as a raw `KeyError` from the
+    ladder-rank lookup on the first promotion attempt.
+    """
+    with pytest.raises(ValueError, match="mode_ceiling"):
+        ModeStateMachine(mode_ceiling=bad_ceiling)
+
+
+@pytest.mark.parametrize(
+    "good_ceiling", [Mode.RESEARCH, Mode.PAPER, Mode.LIVE_MICRO, Mode.LIVE]
+)
+def test_constructing_with_each_ladder_mode_ceiling_is_accepted(
+    good_ceiling: Mode,
+) -> None:
+    """Each of the four promotable ladder modes is a valid `mode_ceiling`."""
+    machine = ModeStateMachine(mode_ceiling=good_ceiling)
+
+    assert machine.mode == Mode.RESEARCH
+
+
 @pytest.mark.parametrize("safety_target", [Mode.PAUSED, Mode.HALT, Mode.KILLED])
 def test_ceiling_never_blocks_a_move_to_a_safety_mode(safety_target: Mode) -> None:
     """A low `mode_ceiling` (PAPER) never blocks PAUSED/HALT/KILLED -- those

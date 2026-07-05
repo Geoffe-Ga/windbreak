@@ -215,9 +215,11 @@ def test_order_intent_string_fields_hold_the_constructed_values() -> None:
     assert intent.action == "sell"
 
 
-def test_order_intent_rejects_a_new_attribute_outside_its_slots() -> None:
-    """`OrderIntent` is slots-based: assigning an undeclared attribute raises
-    `AttributeError`, not a silent `__dict__` write.
+def test_order_intent_rejects_a_new_attribute() -> None:
+    """`OrderIntent` is a frozen dataclass: assigning any undeclared attribute
+    raises `AttributeError` (via `FrozenInstanceError`), not a silent
+    `__dict__` write. (It is intentionally *not* slots-based -- see the
+    `OrderIntent` docstring for the CPython frozen+slots rationale.)
     """
     intent = make_intent()
     forbidden_attribute = "not_a_declared_field"
