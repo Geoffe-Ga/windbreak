@@ -1,0 +1,72 @@
+mode_ceiling: paper
+
+exchange:
+  provider: kalshi
+  environment: demo
+  product_allowlist: [predictions]
+  product_blocklist: [perps, margin]
+  require_jurisdiction_eligible: true
+
+capital:
+  floor_micros: 1000000000
+  floor_ratchet_ppm_of_new_profits: 500000
+  profit_sweep_threshold_micros: 250000000
+  max_deploy_pct_above_floor_ppm: 500000
+  micro_cap_micros: 100000000
+
+risk:
+  min_net_edge_ppm: 30000
+  annualized_hurdle_ppm: 200000
+  idle_cash_apr_ppm: 40000
+  kelly_fraction_ppm: 100000
+  dispersion_zero_ceiling_ppm: 200000
+  min_open_price_pips: 500
+  max_open_price_pips: 9500
+  max_participation_ppm: 250000
+  max_pos_market_pct_ppm: 20000
+  max_pos_event_pct_ppm: 40000
+  max_pos_bucket_pct_ppm: 100000
+  daily_loss_limit_pct_ppm: 20000
+  max_drawdown_pct_ppm: 100000
+  max_orders_per_hour: 20
+  max_notional_per_day_micros: 500000000
+  quote_ttl_seconds: 10
+  approval_ttl_seconds: 60
+  resting_order_ttl_seconds: 900
+  cancel_on_move_ticks: 2
+  clock_skew_max_seconds: 2
+  require_human_ack_above_micros: null
+
+screener:
+  category_blocklist: [sports, crypto_price, celebrity, insider_prone]
+  min_volume_24h_micros: 5000000000
+  min_depth_contract_centis: 10000
+  horizon_days: {min: 2, max: 120}
+
+forecast:
+  ensemble:
+    - {provider: anthropic, model: "pinned-by-operator"}
+    - {provider: openai, model: "pinned-by-operator"}
+  triage_model: {provider: "cheapest-adequate", model: "pinned-by-operator"}
+  triage_threshold_ppm: 50000
+  shrink_to_market_lambda_ppm: 250000
+  budget: {per_forecast_micros: 3000000, per_day_micros: 20000000, max_pages: 20}
+  min_verified_citations: 3
+  canary: {enabled: true, cadence_days: 7}
+
+evaluation:
+  min_resolved_for_calibration: 150
+  promotion_min_resolved: 300
+  promotion_min_independent_event_groups: 100
+  brier_skill_required_ppm: 10000
+  bootstrap_confidence: 0.95
+  observation_window: latest_before_close
+
+ops:
+  state_dir: "~/.local/share/hedgekit"
+  backup_dir: "~/hedgekit-backups"
+  min_free_disk_mb: 1000
+  cancel_open_orders_on_shutdown: true
+
+alerts:
+  sinks: [{type: ntfy, topic: "configured-by-operator"}]
