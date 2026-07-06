@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-07-05T23:01:42.193632+00:00",
+  "timestamp": "2026-07-06T00:35:17.376702+00:00",
   "project": "hedgekit",
   "thresholds": {
     "coverage": 90,
@@ -47,7 +47,7 @@
       "passing_jobs": 0,
       "percentage": 0.0,
       "status": "unknown",
-      "run_url": "https://github.com/Geoffe-Ga/hedgekit/actions/runs/28757239750"
+      "run_url": "https://github.com/Geoffe-Ga/hedgekit/actions/runs/28757980270"
     }
   }
 }
