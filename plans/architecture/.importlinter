@@ -70,3 +70,41 @@ source_modules =
     hedgekit.logging_setup
 forbidden_modules =
     hedgekit.riskkernel.signing
+
+# Order-submission-client isolation boundary (SPEC S5.2/S5.3).
+#
+# Notes:
+#   1. Only the `hedgekit.order_gateway` package may import the exchange
+#      order-submission client `hedgekit.connector.paper` (and thereby hold a
+#      live trading credential); every other shipped module is enumerated below
+#      as a forbidden source. Both `hedgekit.order_gateway` (the sole intended
+#      consumer, issue #37's `PaperSubmitter`) and `hedgekit.connector` (where
+#      `PaperExchange` itself is defined and already re-exported) are
+#      deliberately absent from `source_modules`.
+#   2. As with the boundaries above, the PRIMARY, enforcing gate is the
+#      pure-stdlib `ast` check in tests/architecture/test_import_boundaries.py --
+#      it is strictly STRONGER than this config (it also flags a bare
+#      `from hedgekit.connector import paper` / `... import PaperExchange`
+#      module-plus-symbol import AND every relative import, loopholes a
+#      forbidden-modules contract cannot express). Wiring import-linter into CI
+#      is a follow-up; until then this file documents the contract and the
+#      pytest AST check enforces it.
+
+[importlinter:contract:order-submission-client-isolation]
+name = Only the Order Gateway may import the exchange order-submission client (SPEC S5.2/S5.3)
+type = forbidden
+source_modules =
+    hedgekit.alerts
+    hedgekit.config
+    hedgekit.dashboard
+    hedgekit.forecast
+    hedgekit.ledger
+    hedgekit.numeric
+    hedgekit.pipeline
+    hedgekit.riskkernel
+    hedgekit.screener
+    hedgekit.tokens
+    hedgekit.main
+    hedgekit.logging_setup
+forbidden_modules =
+    hedgekit.connector.paper
