@@ -52,6 +52,7 @@ from enum import Enum, auto
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from hedgekit.connector.paper import PaperOrderIntent
+from hedgekit.ledger.events import RecoveryCompleted
 from hedgekit.logging_setup import configure_logging
 from hedgekit.numeric import ContractCentis
 from hedgekit.order_gateway.client_order_id import client_order_id
@@ -62,6 +63,15 @@ from hedgekit.order_gateway.ledger_writer import (
     ReduceOnlyViolation,
     SubmissionRefused,
     apply_and_ledger,
+)
+from hedgekit.order_gateway.recovery import (
+    RecoveryReport,
+    TrackedOrder,
+    build_unaccounted_halt,
+    fold_ledger_states,
+    is_closing_action,
+    ledger_shows_halt,
+    pending_intents,
 )
 from hedgekit.order_gateway.reduce_only import (
     PositionSnapshot,
@@ -78,8 +88,14 @@ if TYPE_CHECKING:
     from types import FrameType
     from typing import Literal
 
-    from hedgekit.connector.models import ExchangeStatus, Position
+    from hedgekit.connector.models import ExchangeStatus, OpenOrder, Position
     from hedgekit.connector.paper import PaperExchange
+    from hedgekit.ledger.store import LedgerRecord
+    from hedgekit.order_gateway.recovery import (
+        LedgerReaderProtocol,
+        ReconciliationSourceProtocol,
+    )
+    from hedgekit.order_gateway.wal import WalRecord, WriteAheadLogProtocol
     from hedgekit.riskkernel.checks import OrderIntent
     from hedgekit.tokens.verify import SignedApprovalToken, SingleUseRegistry
 
@@ -99,12 +115,6 @@ _DEFAULT_HEARTBEAT_INTERVAL = 5
 #: The two admissible market outcomes, each mapping to the paper exchange's
 #: ``Literal["yes", "no"]`` side. Any other outcome is unroutable.
 _ADMISSIBLE_OUTCOMES: frozenset[str] = frozenset({"yes", "no"})
-
-#: The trade actions that *close* an existing position and are therefore
-#: subject to reduce-only enforcement (issue #39). Defined locally rather than
-#: imported from :mod:`hedgekit.riskkernel.checks` so the Gateway owns its own
-#: close predicate and keeps the process boundary clean (SPEC S5.3).
-_CLOSING_ACTIONS: frozenset[str] = frozenset({"sell_to_close"})
 
 _LOGGER = logging.getLogger("hedgekit.order_gateway")
 
@@ -236,6 +246,10 @@ class SubmitOutcome(Enum):
         REFUSED_REDUCE_ONLY: A close exceeded its closeable headroom (held net
             of in-flight closes), so it was refused before verification (issue
             #39).
+        REFUSED_RECOVERY_PENDING: Crash recovery has not yet completed, so a
+            brand-new intent was refused before verification, without consuming
+            its token (issue #40). The identical token ACKs once ``recover()``
+            has run.
         REJECTED_TOKEN: Token verification returned a non-``OK`` verdict.
     """
 
@@ -243,6 +257,7 @@ class SubmitOutcome(Enum):
     IDEMPOTENT_REPLAY = auto()
     REFUSED_EXCHANGE_STATUS = auto()
     REFUSED_REDUCE_ONLY = auto()
+    REFUSED_RECOVERY_PENDING = auto()
     REJECTED_TOKEN = auto()
 
 
@@ -340,8 +355,9 @@ class GatewayResult:
         outcome: The call's disposition (issue #38), or ``None`` on a bare
             pre-issue-#38 construction.
         refusal_reason: The exchange status (or ``"unknown"``) that caused a
-            ``REFUSED_EXCHANGE_STATUS`` outcome, or ``"reduce_only"`` on a
-            ``REFUSED_REDUCE_ONLY`` outcome, else ``None``.
+            ``REFUSED_EXCHANGE_STATUS`` outcome, ``"reduce_only"`` on a
+            ``REFUSED_REDUCE_ONLY`` outcome, or ``"recovery_pending"`` on a
+            ``REFUSED_RECOVERY_PENDING`` outcome (issue #40), else ``None``.
         client_order_id: The content-addressed id derived for the intent, or
             ``None`` on a bare pre-issue-#38 construction.
         position_snapshot: The reduce-only justification snapshot on a
@@ -410,16 +426,21 @@ class OrderGateway:
     """
 
     __slots__ = (
+        "_accepting_approvals",
         "_acks",
         "_clock",
         "_halted",
         "_inflight_closing",
+        "_ledger_reader",
         "_ledger_writer",
         "_position_source",
+        "_reconciliation_source",
         "_registry",
         "_status_source",
         "_submitter",
+        "_tracked",
         "_verification_key",
+        "_wal",
     )
 
     def __init__(
@@ -432,6 +453,9 @@ class OrderGateway:
         ledger_writer: GatewayLedgerWriter | None = None,
         status_source: GatewayStatusSource | None = None,
         position_source: GatewayPositionSource | None = None,
+        wal: WriteAheadLogProtocol | None = None,
+        ledger_reader: LedgerReaderProtocol | None = None,
+        reconciliation_source: ReconciliationSourceProtocol | None = None,
     ) -> None:
         """Initialize the Gateway.
 
@@ -454,6 +478,21 @@ class OrderGateway:
                 turns reduce-only enforcement off (backward compatible with the
                 pre-issue-#39 surface); production wiring must supply a real
                 source so a close can never grow a position past flat.
+            wal: The durable write-ahead log intents and acks are journalled
+                through for crash recovery (issue #40). ``None`` (the default)
+                disables journalling.
+            ledger_reader: The seam the durable ledger is folded back through on
+                :meth:`recover`. ``None`` (the default) leaves nothing to fold.
+            reconciliation_source: The seam the venue's live open orders/fills
+                are read through on :meth:`recover` and by the Reconciler.
+                ``None`` (the default) leaves nothing to reconcile against.
+
+        When *any* of ``wal``/``ledger_reader``/``reconciliation_source`` is
+        wired, the Gateway starts with ``accepting_approvals`` ``False`` and
+        refuses every brand-new intent ``REFUSED_RECOVERY_PENDING`` until
+        :meth:`recover` completes (issue #40). Wiring none of them preserves the
+        pre-issue-#40 surface exactly: approvals are accepted immediately and
+        :meth:`recover` is a harmless no-op.
         """
         self._submitter = submitter
         self._verification_key = verification_key
@@ -466,9 +505,52 @@ class OrderGateway:
         )
         self._status_source = status_source
         self._position_source = position_source
+        self._wal = wal
+        self._ledger_reader = ledger_reader
+        self._reconciliation_source = reconciliation_source
         self._acks: dict[str, SubmissionAck] = {}
+        self._tracked: dict[str, TrackedOrder] = {}
         self._inflight_closing: dict[str, ContractCentis] = {}
         self._halted = False
+        self._accepting_approvals = not self._recovery_wired
+
+    @property
+    def _recovery_wired(self) -> bool:
+        """Return whether any crash-recovery dependency is wired (issue #40).
+
+        Returns:
+            ``True`` iff a ``wal``, ``ledger_reader``, or
+            ``reconciliation_source`` was supplied at construction.
+        """
+        return (
+            self._wal is not None
+            or self._ledger_reader is not None
+            or self._reconciliation_source is not None
+        )
+
+    @property
+    def accepting_approvals(self) -> bool:
+        """Return whether the Gateway is accepting brand-new intents (issue #40).
+
+        ``False`` from construction until :meth:`recover` completes when any
+        recovery dependency is wired, and permanently ``False`` once a halt
+        stands. ``True`` on a Gateway with no recovery dependencies.
+
+        Returns:
+            Whether a brand-new intent would be admitted rather than refused
+            ``REFUSED_RECOVERY_PENDING``.
+        """
+        return self._accepting_approvals
+
+    @property
+    def halted(self) -> bool:
+        """Return whether the Gateway has fail-closed halted (issue #39/#40).
+
+        Returns:
+            ``True`` once a reduce-only net-short breach or a reconciliation
+            mismatch has latched the Gateway halted; there is no un-halt.
+        """
+        return self._halted
 
     def process_intent(
         self, intent: OrderIntent, token: SignedApprovalToken
@@ -530,14 +612,9 @@ class OrderGateway:
                 "gateway halted after a prior reduce-only net-short violation"
             )
         coid = client_order_id(intent)
-        if self._status_source is not None and coid not in self._acks:
-            status = self._status_source.get_exchange_status()
-            if status is None or status.status != "open":
-                return self._refuse_status(coid, status)
-        if coid not in self._acks:
-            refusal = self._reduce_only_gate(intent, coid)
-            if refusal is not None:
-                return refusal
+        refusal = self._gate_before_verify(intent, coid)
+        if refusal is not None:
+            return refusal
         verify_result = verify_and_consume(
             token,
             intent,
@@ -556,6 +633,36 @@ class OrderGateway:
         if coid in self._acks:
             return self._replay(coid)
         return self._submit_new(intent, token, coid)
+
+    def _gate_before_verify(
+        self, intent: OrderIntent, coid: str
+    ) -> GatewayResult | None:
+        """Run every pre-verification gate, returning the first refusal or None.
+
+        The gates run in fixed precedence -- recovery-pending, then exchange
+        status, then reduce-only -- and each refuses *before* the token is
+        verified or consumed, so no refused intent ever burns its token's single
+        use. An already-acked intent (its ``coid`` is cached) bypasses the status
+        and reduce-only gates so a pure replay is never blocked by the exchange's
+        current status.
+
+        Args:
+            intent: The order intent being processed.
+            coid: The intent's content-addressed client-order-id.
+
+        Returns:
+            The first gate's refusal :class:`GatewayResult`, or ``None`` to admit
+            the intent to token verification.
+        """
+        if not self._accepting_approvals:
+            return self._refuse_recovery_pending(coid)
+        if self._status_source is not None and coid not in self._acks:
+            status = self._status_source.get_exchange_status()
+            if status is None or status.status != "open":
+                return self._refuse_status(coid, status)
+        if coid not in self._acks:
+            return self._reduce_only_gate(intent, coid)
+        return None
 
     def _refuse_status(self, coid: str, status: ExchangeStatus | None) -> GatewayResult:
         """Ledger a refusal for a non-open exchange and return the verdict.
@@ -582,6 +689,33 @@ class OrderGateway:
             ack=None,
             outcome=SubmitOutcome.REFUSED_EXCHANGE_STATUS,
             refusal_reason=reason,
+            client_order_id=coid,
+        )
+
+    def _refuse_recovery_pending(self, coid: str) -> GatewayResult:
+        """Ledger a recovery-pending refusal and return the verdict (issue #40).
+
+        Args:
+            coid: The intent's content-addressed client-order-id.
+
+        Returns:
+            A ``REFUSED_RECOVERY_PENDING`` :class:`GatewayResult` still in
+            ``INTENT_CREATED`` with no ack; the token is never verified or
+            consumed, so the identical token ACKs once :meth:`recover` has run.
+        """
+        self._ledger_writer.record(
+            SubmissionRefused(
+                component=_COMPONENT,
+                client_order_id=coid,
+                reason="recovery_pending",
+            )
+        )
+        return GatewayResult(
+            verify_result=None,
+            state=OrderState.INTENT_CREATED,
+            ack=None,
+            outcome=SubmitOutcome.REFUSED_RECOVERY_PENDING,
+            refusal_reason="recovery_pending",
             client_order_id=coid,
         )
 
@@ -616,7 +750,7 @@ class OrderGateway:
             A ``REFUSED_REDUCE_ONLY`` :class:`GatewayResult` when the close is
             inadmissible, else ``None`` to admit it to verification.
         """
-        if self._position_source is None or intent.action not in _CLOSING_ACTIONS:
+        if self._position_source is None or not is_closing_action(intent.action):
             return None
         positions = self._position_source.get_positions()
         held = held_for_ticker(positions, intent.market_ticker)
@@ -696,18 +830,17 @@ class OrderGateway:
         Gateway fail-closed if the venue overshot the position into a net-short
         (SPEC S11.5).
 
-        Within-process limitation (issue #40): the in-flight tally is only ever
-        *incremented* -- it is never retired when a close settles or the position
-        source catches up -- and both it and the halt latch live only in memory.
-        The bias is fail-safe (a stale tally over-refuses legitimate closes and
-        never admits a net-short), but a long-lived process progressively
-        under-credits ``closeable_centis``, and a halted Gateway un-halts on
-        restart. Durable, fill-reconciled in-flight accounting and a persisted
-        halt latch are issue #40's crash-recovery work. This class assumes
-        strictly *sequential* :meth:`process_intent` calls (overlapping order
-        lifecycles, not concurrent threads); the read-then-write here is not
-        synchronized, so a real multi-threaded caller would need external
-        locking.
+        Within-process, the in-flight tally is only ever *incremented* here; it
+        is *retired* out-of-band -- on :meth:`recover` (rebuilt from the WAL:
+        only closes whose venue order is still resting keep counting) and by the
+        Reconciler when a close is confirmed filled (issue #40). The bias is
+        fail-safe (a momentarily stale tally over-refuses legitimate closes and
+        never admits a net-short). The halt latch is likewise durable across a
+        restart: :meth:`recover` folds a persisted ``ReduceOnlyViolation`` and
+        stays halted (issue #40). This class assumes strictly *sequential*
+        :meth:`process_intent` calls (overlapping order lifecycles, not
+        concurrent threads); the read-then-write here is not synchronized, so a
+        real multi-threaded caller would need external locking.
 
         Args:
             intent: The close that was just placed.
@@ -799,6 +932,13 @@ class OrderGateway:
         the ack is cached, so the placed order is recorded even if the re-verify
         then halts the Gateway (issue #39). An opening intent skips all of that.
 
+        Crash durability (issue #40): the intent is journalled to the write-ahead
+        log *before* the ``REQUEST_SUBMISSION`` transition, and the ack the
+        instant ``submit`` returns (before the ``SUBMIT`` write), so a crash at
+        any durable point along the chain leaves a fresh Gateway's
+        :meth:`recover` enough truth to reconcile without double-submitting.
+        Both writes are no-ops when no write-ahead log is wired.
+
         Args:
             intent: The order intent to submit.
             token: The approval token authorizing it.
@@ -811,6 +951,7 @@ class OrderGateway:
             GatewayHaltedError: If a closing intent's fill left the position
                 net-short, halting the Gateway fail-closed.
         """
+        self._wal_append_intent(intent, coid)
         state = apply_and_ledger(
             self._ledger_writer,
             OrderState.INTENT_CREATED,
@@ -823,9 +964,11 @@ class OrderGateway:
             OrderEvent.REQUEST_SUBMISSION,
             client_order_id=coid,
         )
-        closing = intent.action in _CLOSING_ACTIONS
+        closing = is_closing_action(intent.action)
         ack = self._place(intent, token, closing=closing)
+        self._wal_append_ack(coid, ack)
         self._acks[coid] = ack
+        self._track_if_resting(coid, intent, ack)
         state = apply_and_ledger(
             self._ledger_writer, state, OrderEvent.SUBMIT, client_order_id=coid
         )
@@ -841,6 +984,256 @@ class OrderGateway:
             outcome=SubmitOutcome.ACKED,
             client_order_id=coid,
         )
+
+    def _wal_append_intent(self, intent: OrderIntent, coid: str) -> None:
+        """Journal ``intent`` to the write-ahead log (no-op if none wired).
+
+        Args:
+            intent: The intent to journal.
+            coid: The intent's content-addressed client-order-id.
+        """
+        if self._wal is not None:
+            self._wal.append_intent(intent, coid)
+
+    def _wal_append_ack(self, coid: str, ack: SubmissionAck) -> None:
+        """Journal a placement's ack to the write-ahead log (no-op if none).
+
+        Args:
+            coid: The intent's content-addressed client-order-id.
+            ack: The submission receipt whose venue id and fill are journalled.
+        """
+        if self._wal is not None:
+            self._wal.append_ack(coid, ack.order_id, ack.filled)
+
+    def _track_if_resting(
+        self, coid: str, intent: OrderIntent, ack: SubmissionAck
+    ) -> None:
+        """Record a tracked order for a placement that left something resting.
+
+        A fully-filled placement (``ack.order_id is None``) rests nothing and is
+        never tracked; a resting placement is recorded so the Reconciler can
+        later diff it against the venue (issue #40).
+
+        Args:
+            coid: The intent's content-addressed client-order-id.
+            intent: The placed intent, supplying the order's economic profile.
+            ack: The submission receipt carrying the venue id and taker fill.
+        """
+        if ack.order_id is None:
+            return
+        self._tracked[ack.order_id] = TrackedOrder(
+            client_order_id=coid,
+            order_id=ack.order_id,
+            ticker=intent.market_ticker,
+            side=_outcome_to_side(intent.outcome),
+            price_pips=intent.price.value,
+            size_centis=intent.size.value,
+            action=intent.action,
+            filled_centis=ack.filled.value,
+        )
+
+    def recover(self) -> RecoveryReport:
+        """Reconcile the durable ledger/WAL against the venue, then open the gate.
+
+        Runs the SPEC S11.4 recovery sequence in order: load the ledger, fold its
+        durable halt latch (a prior ``ReduceOnlyViolation`` or
+        ``ReconciliationHalted`` keeps the Gateway halted -- there is no un-halt
+        event), rehydrate the ack cache / tracked orders / in-flight-closing
+        tally from the write-ahead log, then diff the venue's resting orders. A
+        resting order with no durable ack halts recovery (``foreign_open_order``
+        or ``ambiguous_match``) rather than guess. Only a clean reconciliation
+        ledgers a :class:`~hedgekit.ledger.events.RecoveryCompleted` and flips
+        ``accepting_approvals`` to ``True``; recovery never leaves the Gateway
+        accepting while a halt stands. A Gateway with no recovery dependencies
+        wired is a harmless no-op that stays open.
+
+        Returns:
+            The :class:`~hedgekit.order_gateway.recovery.RecoveryReport` summary.
+        """
+        if not self._recovery_wired:
+            return RecoveryReport(orders_reconciled=0, halted=False)
+        records = self._ledger_reader.read_all() if self._ledger_reader else []
+        if ledger_shows_halt(records):
+            self.mark_halted()
+            return RecoveryReport(orders_reconciled=0, halted=True)
+        wal_records = self._wal.read_all() if self._wal is not None else ()
+        open_orders = (
+            self._reconciliation_source.get_open_orders()
+            if self._reconciliation_source is not None
+            else ()
+        )
+        reconciled = self._rehydrate_from_wal(records, wal_records, open_orders)
+        halt = build_unaccounted_halt(
+            open_orders, frozenset(self._tracked), pending_intents(wal_records)
+        )
+        if halt is not None:
+            self._ledger_writer.record(halt)
+            self.mark_halted()
+            return RecoveryReport(orders_reconciled=reconciled, halted=True)
+        self._ledger_writer.record(
+            RecoveryCompleted(
+                component=_COMPONENT, orders_reconciled=reconciled, halted=False
+            )
+        )
+        self._accepting_approvals = True
+        return RecoveryReport(orders_reconciled=reconciled, halted=False)
+
+    def _rehydrate_from_wal(
+        self,
+        records: list[LedgerRecord],
+        wal_records: tuple[WalRecord, ...],
+        open_orders: tuple[OpenOrder, ...],
+    ) -> int:
+        """Rebuild in-memory state from the write-ahead log and ledger.
+
+        Rehydrates the ack cache, tracked resting orders, and in-flight-closing
+        tally, and completes each adopted order's ledgered lifecycle to
+        ``ACKED``.
+
+        Args:
+            records: The durable ledger records.
+            wal_records: The write-ahead log records.
+            open_orders: The venue's currently resting orders.
+
+        Returns:
+            The number of acked orders rehydrated.
+        """
+        open_ids = frozenset(order.id for order in open_orders)
+        intents: dict[str, OrderIntent] = {}
+        for rec in wal_records:
+            if rec.kind == "intent" and rec.intent is not None:
+                intents[rec.client_order_id] = rec.intent
+        ledger_states = fold_ledger_states(records)
+        reconciled = 0
+        for rec in wal_records:
+            if rec.kind != "ack":
+                continue
+            self._rehydrate_ack(rec, intents, open_ids, ledger_states)
+            reconciled += 1
+        return reconciled
+
+    def _rehydrate_ack(
+        self,
+        rec: WalRecord,
+        intents: dict[str, OrderIntent],
+        open_ids: frozenset[str],
+        ledger_states: dict[str, OrderState],
+    ) -> None:
+        """Rehydrate one ack: cache it, complete its ledger, track it if resting.
+
+        Args:
+            rec: The ack write-ahead record.
+            intents: The journalled intents, keyed by client-order-id.
+            open_ids: The venue order ids still resting.
+            ledger_states: Each coid's latest ledgered lifecycle state.
+        """
+        coid = rec.client_order_id
+        self._acks[coid] = SubmissionAck(order_id=rec.order_id, filled=rec.filled)
+        self._complete_ledger_to_acked(coid, ledger_states.get(coid))
+        order_id = rec.order_id
+        intent = intents.get(coid)
+        if order_id is not None and order_id in open_ids and intent is not None:
+            self._track_recovered_order(coid, order_id, intent, rec.filled.value)
+
+    def _track_recovered_order(
+        self, coid: str, order_id: str, intent: OrderIntent, filled_centis: int
+    ) -> None:
+        """Rebuild a tracked resting order and its in-flight-closing share.
+
+        A still-resting close keeps shrinking the closeable remainder across a
+        restart; a settled close (its venue order gone) is retired by simply not
+        being rehydrated here (issue #39/#40).
+
+        Args:
+            coid: The order's content-addressed client-order-id.
+            order_id: The venue's resting-order id.
+            intent: The journalled intent supplying the economic profile.
+            filled_centis: The quantity attributed to the order at placement.
+        """
+        self._tracked[order_id] = TrackedOrder(
+            client_order_id=coid,
+            order_id=order_id,
+            ticker=intent.market_ticker,
+            side=_outcome_to_side(intent.outcome),
+            price_pips=intent.price.value,
+            size_centis=intent.size.value,
+            action=intent.action,
+            filled_centis=filled_centis,
+        )
+        if is_closing_action(intent.action):
+            self._inflight_closing[intent.market_ticker] = ContractCentis(
+                self._inflight_for(intent.market_ticker) + intent.size.value
+            )
+
+    def _complete_ledger_to_acked(self, coid: str, state: OrderState | None) -> None:
+        """Advance an adopted order's ledgered lifecycle up to ``ACKED``.
+
+        Walks only the legal remaining edges from the durable state, so the
+        recovered chain stays a legal, continuous state-machine history. A coid
+        already at (or past) ``ACKED``, or with no ledgered transition, is a
+        no-op.
+
+        Args:
+            coid: The order's content-addressed client-order-id.
+            state: The coid's latest ledgered state, or ``None``.
+        """
+        if state is OrderState.SUBMISSION_REQUESTED:
+            submitted = apply_and_ledger(
+                self._ledger_writer, state, OrderEvent.SUBMIT, client_order_id=coid
+            )
+            apply_and_ledger(
+                self._ledger_writer, submitted, OrderEvent.ACK, client_order_id=coid
+            )
+        elif state is OrderState.SUBMITTED:
+            apply_and_ledger(
+                self._ledger_writer, state, OrderEvent.ACK, client_order_id=coid
+            )
+
+    def tracked_orders(self) -> tuple[TrackedOrder, ...]:
+        """Return every currently tracked resting order (Reconciler seam).
+
+        Returns:
+            The Gateway-placed orders still believed to be resting on the venue,
+            the unit the :class:`~hedgekit.order_gateway.reconciler.Reconciler`
+            diffs against the venue's live truth (issue #40).
+        """
+        return tuple(self._tracked.values())
+
+    def mark_halted(self) -> None:
+        """Latch the Gateway fail-closed (Reconciler/recovery seam, issue #40).
+
+        Sets the halt latch and stops accepting approvals; there is no un-halt.
+        """
+        self._halted = True
+        self._accepting_approvals = False
+
+    def retire_tracked_order(self, order: TrackedOrder) -> None:
+        """Drop a reconciled order from tracking, returning close headroom.
+
+        Called by the Reconciler when a tracked order is confirmed filled: the
+        order stops being tracked, and a *closing* order's size is returned to
+        the ticker's closeable headroom (its in-flight-closing tally is retired,
+        issue #39/#40).
+
+        Args:
+            order: The tracked order to retire.
+        """
+        self._tracked.pop(order.order_id, None)
+        if is_closing_action(order.action):
+            self._retire_inflight(order.ticker, order.size_centis)
+
+    def _retire_inflight(self, ticker: str, size_centis: int) -> None:
+        """Return ``size_centis`` of closing headroom to ``ticker``'s tally.
+
+        Args:
+            ticker: The market ticker whose in-flight-closing tally shrinks.
+            size_centis: The retired close's size, in contract-centis.
+        """
+        remaining = max(self._inflight_for(ticker) - size_centis, 0)
+        if remaining > 0:
+            self._inflight_closing[ticker] = ContractCentis(remaining)
+        else:
+            self._inflight_closing.pop(ticker, None)
 
     def _emit_heartbeat(self, beat: int) -> None:
         """Log one Gateway heartbeat.

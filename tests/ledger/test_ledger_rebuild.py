@@ -1,13 +1,22 @@
 """Tests for folding the ledger into read models (issue #13, `rebuild`).
 
 `rebuild` is a pure fold over `read_all()` after `verify_chain()` passes.
-These tests pin: exact byte-for-byte determinism of the two read-model
-files across repeated rebuilds of the same ledger, that only those two
+These tests pin: exact byte-for-byte determinism of the three read-model
+files across repeated rebuilds of the same ledger, that only those three
 files are ever written, that `AlertEmitted` and unrecognized event types
 are silently skipped rather than erroring, that an empty ledger still
 produces valid (empty) read models, and that a tampered ledger's
 corruption propagates as `ChainIntegrityError` instead of silently
 producing a plausible-looking but wrong read model.
+
+Issue #40 adds a third, always-written read model: `gateway_events.json`,
+a chronological `{seq, created_at, event_type, data}` projection of the
+seven Order Gateway / crash-recovery event types (`OrderTransitionLedgered`,
+`SubmissionRefused`, `ReduceOnlyRefused`, `ReduceOnlyViolation`,
+`ReconciliationHalted`, `ReconciliationHealed`, `RecoveryCompleted`),
+mirroring `config_versions.json`/`mode_history.json`'s own
+always-written-even-when-empty contract. The pre-existing two read models'
+content is unaffected by gateway events mixed into the same ledger.
 """
 
 from __future__ import annotations
@@ -22,6 +31,13 @@ from hedgekit.ledger.events import (
     AlertEmitted,
     ConfigLoaded,
     ModeHeartbeat,
+    OrderTransitionLedgered,
+    ReconciliationHalted,
+    ReconciliationHealed,
+    RecoveryCompleted,
+    ReduceOnlyRefused,
+    ReduceOnlyViolation,
+    SubmissionRefused,
     canonical_json,
 )
 from hedgekit.ledger.rebuild import rebuild
@@ -54,10 +70,14 @@ def _populate_interleaved_ledger(store: SqliteLedgerStore) -> None:
     )
 
 
-def test_rebuild_writes_only_the_two_documented_read_model_files(
+def test_rebuild_writes_only_the_three_documented_read_model_files(
     tmp_path: Path, deterministic_clock: Callable[[], datetime]
 ) -> None:
-    """Only config_versions.json and mode_history.json ever appear in output_dir."""
+    """Only the three documented read models ever appear in output_dir.
+
+    `gateway_events.json` is unconditionally written (empty here, since no
+    gateway/recovery events are present), mirroring the other two.
+    """
     db_path = tmp_path / "ledger.db"
     output_dir = tmp_path / "out"
     store = SqliteLedgerStore(db_path, now=deterministic_clock)
@@ -67,7 +87,11 @@ def test_rebuild_writes_only_the_two_documented_read_model_files(
     rebuild(db_path, output_dir)
 
     produced = sorted(path.name for path in output_dir.iterdir())
-    assert produced == ["config_versions.json", "mode_history.json"]
+    assert produced == [
+        "config_versions.json",
+        "gateway_events.json",
+        "mode_history.json",
+    ]
 
 
 def test_rebuild_is_byte_for_byte_deterministic_across_repeated_runs(
@@ -84,7 +108,7 @@ def test_rebuild_is_byte_for_byte_deterministic_across_repeated_runs(
     rebuild(db_path, first_dir)
     rebuild(db_path, second_dir)
 
-    for name in ("config_versions.json", "mode_history.json"):
+    for name in ("config_versions.json", "gateway_events.json", "mode_history.json"):
         assert (first_dir / name).read_bytes() == (second_dir / name).read_bytes()
 
 
@@ -138,7 +162,7 @@ def test_rebuild_read_models_are_canonical_json_with_one_trailing_newline(
 
     rebuild(db_path, output_dir)
 
-    for name in ("config_versions.json", "mode_history.json"):
+    for name in ("config_versions.json", "gateway_events.json", "mode_history.json"):
         raw = (output_dir / name).read_bytes()
         assert raw.endswith(b"\n")
         assert not raw.endswith(b"\n\n")
@@ -149,7 +173,7 @@ def test_rebuild_read_models_are_canonical_json_with_one_trailing_newline(
 def test_rebuild_on_empty_ledger_produces_valid_empty_read_models(
     tmp_path: Path, deterministic_clock: Callable[[], datetime]
 ) -> None:
-    """An empty ledger still produces two well-formed, empty read models."""
+    """An empty ledger still produces three well-formed, empty read models."""
     db_path = tmp_path / "ledger.db"
     output_dir = tmp_path / "out"
     store = SqliteLedgerStore(db_path, now=deterministic_clock)
@@ -158,6 +182,7 @@ def test_rebuild_on_empty_ledger_produces_valid_empty_read_models(
     rebuild(db_path, output_dir)
 
     assert json.loads((output_dir / "config_versions.json").read_text()) == []
+    assert json.loads((output_dir / "gateway_events.json").read_text()) == []
     assert json.loads((output_dir / "mode_history.json").read_text()) == []
 
 
@@ -206,9 +231,120 @@ def test_rebuild_skips_unknown_event_types_without_error(
     rebuild(db_path, output_dir)
 
     assert json.loads((output_dir / "config_versions.json").read_text()) == []
+    assert json.loads((output_dir / "gateway_events.json").read_text()) == []
     mode_history = json.loads((output_dir / "mode_history.json").read_text())
     assert len(mode_history) == 1
     assert mode_history[0]["beat"] == 1
+
+
+def _populate_gateway_and_recovery_events_ledger(store: SqliteLedgerStore) -> None:
+    """Append M0 events interleaved with all seven gateway/recovery events.
+
+    Sequence numbers: 1=ConfigLoaded, 2=OrderTransitionLedgered,
+    3=ModeHeartbeat, 4=SubmissionRefused, 5=ReduceOnlyRefused, 6=AlertEmitted,
+    7=ReduceOnlyViolation, 8=ReconciliationHalted, 9=ReconciliationHealed,
+    10=RecoveryCompleted.
+
+    Args:
+        store: The ledger store to append the fixed sequence into.
+    """
+    store.append(ConfigLoaded(component="pipeline", config_hash="hash-1", diff={}))
+    store.append(
+        OrderTransitionLedgered(
+            component="order_gateway",
+            client_order_id="coid-1",
+            from_state="INTENT_CREATED",
+            event="APPROVE",
+            to_state="APPROVED",
+        )
+    )
+    store.append(ModeHeartbeat(component="pipeline", mode="RESEARCH", beat=1))
+    store.append(
+        SubmissionRefused(
+            component="order_gateway", client_order_id="coid-2", reason="closed"
+        )
+    )
+    store.append(
+        ReduceOnlyRefused(
+            component="order_gateway",
+            client_order_id="coid-3",
+            ticker="MKT-DEEP",
+            held_centis=500,
+            inflight_closing_centis=0,
+            requested_close_centis=600,
+            reason="reduce_only",
+        )
+    )
+    store.append(AlertEmitted(component="alerts", severity="low", message="noop"))
+    store.append(
+        ReduceOnlyViolation(
+            component="order_gateway",
+            client_order_id="coid-4",
+            ticker="MKT-DEEP",
+            held_centis=500,
+            filled_centis=600,
+            net_centis=-100,
+        )
+    )
+    store.append(
+        ReconciliationHalted(
+            component="order_gateway",
+            reason="foreign_open_order",
+            ticker="MKT-DEEP",
+            venue_order_id="paper-order-9",
+            client_order_id="",
+            detail="untracked order discovered on the venue",
+        )
+    )
+    store.append(
+        ReconciliationHealed(
+            component="order_gateway",
+            client_order_id="coid-5",
+            action="fill_confirmed",
+            detail="matched an out-of-band fill",
+        )
+    )
+    store.append(
+        RecoveryCompleted(component="order_gateway", orders_reconciled=3, halted=False)
+    )
+
+
+def test_rebuild_gateway_events_contains_only_the_seven_gateway_rows_in_order(
+    tmp_path: Path, deterministic_clock: Callable[[], datetime]
+) -> None:
+    """gateway_events.json holds exactly the 7 gateway/recovery rows, in order.
+
+    Each entry is the `{seq, created_at, event_type, data}` shape; the
+    pre-existing `config_versions.json`/`mode_history.json` projections are
+    unaffected by the gateway events mixed into the same ledger.
+    """
+    db_path = tmp_path / "ledger.db"
+    output_dir = tmp_path / "out"
+    store = SqliteLedgerStore(db_path, now=deterministic_clock)
+    _populate_gateway_and_recovery_events_ledger(store)
+    store.close()
+
+    rebuild(db_path, output_dir)
+
+    gateway_events = json.loads((output_dir / "gateway_events.json").read_text())
+    assert [entry["seq"] for entry in gateway_events] == [2, 4, 5, 7, 8, 9, 10]
+    assert [entry["event_type"] for entry in gateway_events] == [
+        "OrderTransitionLedgered",
+        "SubmissionRefused",
+        "ReduceOnlyRefused",
+        "ReduceOnlyViolation",
+        "ReconciliationHalted",
+        "ReconciliationHealed",
+        "RecoveryCompleted",
+    ]
+    assert all("created_at" in entry for entry in gateway_events)
+    assert gateway_events[0]["data"]["client_order_id"] == "coid-1"
+    assert gateway_events[-1]["data"] == {"orders_reconciled": 3, "halted": False}
+
+    config_versions = json.loads((output_dir / "config_versions.json").read_text())
+    assert [entry["seq"] for entry in config_versions] == [1]
+    mode_history = json.loads((output_dir / "mode_history.json").read_text())
+    assert [entry["seq"] for entry in mode_history] == [3]
 
 
 def test_rebuild_on_tampered_ledger_raises_chain_integrity_error(

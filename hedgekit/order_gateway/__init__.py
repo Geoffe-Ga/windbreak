@@ -9,7 +9,7 @@ by the pure-``ast`` scanner in ``tests/architecture/test_import_boundaries.py``
 and the matching ``order-submission-client-isolation`` contract in
 ``plans/architecture/.importlinter``.
 
-This package ships three surfaces:
+This package ships these surfaces:
 
     * :mod:`hedgekit.order_gateway.tokens` -- Gateway-side approval-token
       verification wrapping the shared, key-isolated ``verify_token``.
@@ -17,6 +17,9 @@ This package ships three surfaces:
       machine and its legal transition table.
     * :mod:`hedgekit.order_gateway.gateway` -- the :class:`OrderGateway` itself,
       its submission adapters, and the bounded-heartbeat CLI.
+    * :mod:`hedgekit.order_gateway.wal` / :mod:`hedgekit.order_gateway.recovery`
+      / :mod:`hedgekit.order_gateway.reconciler` -- the crash-recovery
+      write-ahead log, pure recovery core, and continuous reconciler (issue #40).
 """
 
 from hedgekit.order_gateway.client_order_id import client_order_id
@@ -41,9 +44,12 @@ from hedgekit.order_gateway.ledger_writer import (
     OrderTransitionLedgered,
     ReduceOnlyRefused,
     ReduceOnlyViolation,
+    SqliteGatewayLedgerWriter,
     SubmissionRefused,
     apply_and_ledger,
 )
+from hedgekit.order_gateway.reconciler import ReconcileOutcome, Reconciler
+from hedgekit.order_gateway.recovery import RecoveryReport, TrackedOrder
 from hedgekit.order_gateway.reduce_only import (
     PositionSnapshot,
     closeable_centis,
@@ -63,6 +69,7 @@ from hedgekit.order_gateway.tokens import (
     intent_matches_claims,
     verify_and_consume,
 )
+from hedgekit.order_gateway.wal import WalRecord, WriteAheadLog
 
 __all__ = [
     "LEGAL_TRANSITIONS",
@@ -81,13 +88,20 @@ __all__ = [
     "OrderTransitionLedgered",
     "PaperSubmitter",
     "PositionSnapshot",
+    "ReconcileOutcome",
+    "Reconciler",
+    "RecoveryReport",
     "ReduceOnlyCapableSubmitter",
     "ReduceOnlyRefused",
     "ReduceOnlyViolation",
+    "SqliteGatewayLedgerWriter",
     "SubmissionAck",
     "SubmissionRefused",
     "SubmitOutcome",
+    "TrackedOrder",
     "VerifyResult",
+    "WalRecord",
+    "WriteAheadLog",
     "apply_and_ledger",
     "build_parser",
     "client_order_id",

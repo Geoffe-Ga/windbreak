@@ -19,6 +19,14 @@ persists:
 - `EVENT_TYPES` maps each `event_type` string to its class, so a
   persisted envelope can be reconstructed as
   `EVENT_TYPES[event_type](component=..., **data)`.
+
+Issue #40 moves the four Order Gateway event types (`OrderTransitionLedgered`,
+`SubmissionRefused`, `ReduceOnlyRefused`, `ReduceOnlyViolation`) into this
+module (still re-exported from `hedgekit.order_gateway.ledger_writer` for
+backward compatibility) and adds three crash-recovery event types
+(`ReconciliationHalted`, `ReconciliationHealed`, `RecoveryCompleted`), growing
+`EVENT_TYPES` to 16 entries. Each gets the same registry-round-trip coverage
+as every other concrete event type.
 """
 
 from __future__ import annotations
@@ -41,8 +49,15 @@ from hedgekit.ledger.events import (
     KillEngaged,
     KillReArmed,
     ModeHeartbeat,
+    OrderTransitionLedgered,
     PromotionEvaluated,
+    ReconciliationHalted,
+    ReconciliationHealed,
+    RecoveryCompleted,
+    ReduceOnlyRefused,
+    ReduceOnlyViolation,
     SignificanceOverrideApplied,
+    SubmissionRefused,
     canonical_json,
     utc_now_iso,
 )
@@ -216,12 +231,137 @@ def test_event_types_registry_maps_type_name_to_class() -> None:
         "KillEngaged": KillEngaged,
         "CancelAllDirective": CancelAllDirective,
         "KillReArmed": KillReArmed,
+        "OrderTransitionLedgered": OrderTransitionLedgered,
+        "SubmissionRefused": SubmissionRefused,
+        "ReduceOnlyRefused": ReduceOnlyRefused,
+        "ReduceOnlyViolation": ReduceOnlyViolation,
+        "ReconciliationHalted": ReconciliationHalted,
+        "ReconciliationHealed": ReconciliationHealed,
+        "RecoveryCompleted": RecoveryCompleted,
     } == EVENT_TYPES
 
 
 def test_event_types_registry_round_trips_from_payload_data() -> None:
     """A registry lookup plus the persisted `data` dict reconstructs the event."""
     original = ConfigLoaded(component="pipeline", config_hash="deadbeef", diff={"x": 1})
+    envelope = json.loads(original.envelope_json)
+
+    rebuilt_cls = EVENT_TYPES[original.event_type]
+    rebuilt = rebuilt_cls(component=envelope["component"], **envelope["data"])
+
+    assert rebuilt == original
+
+
+# --- Issue #40: registry round-trips for the four moved Gateway events and ----
+# --- the three new crash-recovery events, mirroring the test above -----------
+
+
+def test_event_types_registry_round_trips_order_transition_ledgered() -> None:
+    """A registry lookup + persisted `data` reconstructs `OrderTransitionLedgered`."""
+    original = OrderTransitionLedgered(
+        component="order_gateway",
+        client_order_id="coid-abc",
+        from_state="INTENT_CREATED",
+        event="APPROVE",
+        to_state="APPROVED",
+    )
+    envelope = json.loads(original.envelope_json)
+
+    rebuilt_cls = EVENT_TYPES[original.event_type]
+    rebuilt = rebuilt_cls(component=envelope["component"], **envelope["data"])
+
+    assert rebuilt == original
+
+
+def test_event_types_registry_round_trips_submission_refused() -> None:
+    """A registry lookup plus persisted `data` reconstructs `SubmissionRefused`."""
+    original = SubmissionRefused(
+        component="order_gateway", client_order_id="coid-abc", reason="paused"
+    )
+    envelope = json.loads(original.envelope_json)
+
+    rebuilt_cls = EVENT_TYPES[original.event_type]
+    rebuilt = rebuilt_cls(component=envelope["component"], **envelope["data"])
+
+    assert rebuilt == original
+
+
+def test_event_types_registry_round_trips_reduce_only_refused() -> None:
+    """A registry lookup plus persisted `data` reconstructs `ReduceOnlyRefused`."""
+    original = ReduceOnlyRefused(
+        component="order_gateway",
+        client_order_id="coid-abc",
+        ticker="MKT-DEEP",
+        held_centis=500,
+        inflight_closing_centis=0,
+        requested_close_centis=600,
+        reason="reduce_only",
+    )
+    envelope = json.loads(original.envelope_json)
+
+    rebuilt_cls = EVENT_TYPES[original.event_type]
+    rebuilt = rebuilt_cls(component=envelope["component"], **envelope["data"])
+
+    assert rebuilt == original
+
+
+def test_event_types_registry_round_trips_reduce_only_violation() -> None:
+    """A registry lookup plus persisted `data` reconstructs `ReduceOnlyViolation`."""
+    original = ReduceOnlyViolation(
+        component="order_gateway",
+        client_order_id="coid-abc",
+        ticker="MKT-DEEP",
+        held_centis=500,
+        filled_centis=600,
+        net_centis=-100,
+    )
+    envelope = json.loads(original.envelope_json)
+
+    rebuilt_cls = EVENT_TYPES[original.event_type]
+    rebuilt = rebuilt_cls(component=envelope["component"], **envelope["data"])
+
+    assert rebuilt == original
+
+
+def test_event_types_registry_round_trips_reconciliation_halted() -> None:
+    """A registry lookup plus persisted `data` reconstructs `ReconciliationHalted`."""
+    original = ReconciliationHalted(
+        component="order_gateway",
+        reason="foreign_open_order",
+        ticker="MKT-DEEP",
+        venue_order_id="paper-order-9",
+        client_order_id="",
+        detail="untracked order discovered on the venue",
+    )
+    envelope = json.loads(original.envelope_json)
+
+    rebuilt_cls = EVENT_TYPES[original.event_type]
+    rebuilt = rebuilt_cls(component=envelope["component"], **envelope["data"])
+
+    assert rebuilt == original
+
+
+def test_event_types_registry_round_trips_reconciliation_healed() -> None:
+    """A registry lookup plus persisted `data` reconstructs `ReconciliationHealed`."""
+    original = ReconciliationHealed(
+        component="order_gateway",
+        client_order_id="coid-abc",
+        action="fill_confirmed",
+        detail="matched an out-of-band fill",
+    )
+    envelope = json.loads(original.envelope_json)
+
+    rebuilt_cls = EVENT_TYPES[original.event_type]
+    rebuilt = rebuilt_cls(component=envelope["component"], **envelope["data"])
+
+    assert rebuilt == original
+
+
+def test_event_types_registry_round_trips_recovery_completed() -> None:
+    """A registry lookup plus persisted `data` reconstructs `RecoveryCompleted`."""
+    original = RecoveryCompleted(
+        component="order_gateway", orders_reconciled=3, halted=False
+    )
     envelope = json.loads(original.envelope_json)
 
     rebuilt_cls = EVENT_TYPES[original.event_type]
