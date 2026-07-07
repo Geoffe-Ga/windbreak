@@ -166,6 +166,7 @@ bash scripts/ralph/test_pr_ready.sh
 | Scenario | Handling |
 | --- | --- |
 | Two "independent" issues touch the same file | Whichever merges first wins; the other goes `BEHIND`, lazily syncs main in, re-greens, then merges. A sync conflict ⇒ drops to Gate 1. Never a broken merge. |
+| A PR modifies `.github/workflows/code-review.yml` | Cannot receive an automated review — claude-code-action's workflow-validation guard skips the review agent on any PR whose merge ref changes the invoking workflow. The claude-review check stays red by design (no rerun can help until merge); assert-review-posted.sh detects the workflow-file diff and prints the guard message; the PR requires operator review + admin merge. This prevents a review-workflow change from self-approving. |
 | A slow lane would stall a fast one | It can't — lanes are independent; a ready lane merges immediately and its slot refills without waiting on any sibling. |
 | A worker crashes / abandons an issue | `reconcile` releases it once its PR closes; an un-PR'd stale worktree is re-detected and either resumed or released on the next wake. |
 | Fleet silts up with merged work | `reconcile` at the top of every wake GCs merged/closed worktrees. |
