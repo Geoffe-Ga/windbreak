@@ -22,6 +22,15 @@ name: Ralph Fleet Tests
 # guards deslop.yml + deslop-areas.json (root-only Python layout, real area
 # paths), so an edit to any of them must re-run this suite even when no
 # scripts/ralph/ file changes.
+#
+# This suite also guards code-review.yml's verdict-comment verification (issues
+# #135/#140): test_assert_review_posted.sh covers assert-review-posted.sh (the
+# post-gate that proves a FRESH verdict comment landed) plus static assertions
+# over code-review.yml itself (the REVIEW_STARTED_AT-before-action ordering, no
+# use_sticky_comment, env-mapped token). assert-review-posted.sh shares its
+# verdict regex with pr-ready.sh via verdict-regex.sh — the single source of
+# truth whose drift is the class of silent-stall bug #135 fixes — so
+# code-review.yml is a path trigger here too.
 
 on:
   push:
@@ -34,6 +43,7 @@ on:
       - ".github/workflows/scan-*.yml"
       - ".github/workflows/hopper.yml"
       - ".github/workflows/deslop.yml"
+      - ".github/workflows/code-review.yml"
       - ".github/deslop-areas.json"
   pull_request:
     paths:
@@ -45,6 +55,7 @@ on:
       - ".github/workflows/scan-*.yml"
       - ".github/workflows/hopper.yml"
       - ".github/workflows/deslop.yml"
+      - ".github/workflows/code-review.yml"
       - ".github/deslop-areas.json"
 
 permissions:
@@ -68,3 +79,4 @@ jobs:
           bash scripts/ralph/test_provision_venv.sh
           bash scripts/ralph/test_scan_workflows.sh
           bash scripts/ralph/test_deslop_workflow.sh
+          bash scripts/ralph/test_assert_review_posted.sh

@@ -42,31 +42,14 @@ while [[ $# -gt 0 ]]; do
 done
 [[ "$pr" =~ ^[0-9]+$ ]] || die "usage: pr-ready.sh <PR_NUMBER> [--repo <owner/repo>]"
 
-# The canonical verdict line `claude-code-review.yml` posts is
-# `## Verdict: <LGTM|CHANGES_REQUESTED|COMMENTS>` (also tolerated: `**Verdict:**`
-# and a bare `Verdict:`), sitting at the END of a longer `## Summary …` body — so
-# the match must be case-insensitive AND multiline (`m`, so `^` anchors to the
-# verdict line — which sits at the END of a multi-line `## Summary …` body, not
-# at string start), prefix-tolerant, and keyed to the verdict LINE (a stray
-# "LGTM" in prose must not count). Reviewers are also seen posting `## Verdict`
-# as a bare heading with an emoji-prefixed token on the NEXT line (e.g.
-# `## Verdict\n✅ LGTM`), so the LGTM separator tolerates any non-alphanumeric
-# decoration (emoji/whitespace/newline) between `verdict` and `lgtm`. That stays
-# safe: a stray "LGTM" in prose never matches (it is keyed to the verdict line),
-# and a non-LGTM token like COMMENTS/CHANGES_REQUESTED puts a letter right after
-# the emoji, breaking the non-alphanumeric run before any later "LGTM". Only the
-# LGTM matcher widens; `VERDICT_RE` (comment selection) keeps its strict
-# `[:*\s]` class unchanged. Backslashes are doubled because this text is spliced
-# into a jq string literal, where `\s` is an invalid escape and must reach the
-# regex engine as `\\s` (the negated class `[^a-zA-Z0-9]` has no backslash, so
-# it is spelled literally — the explicit form self-documents and sidesteps the
-# Oniguruma subtlety of case-folding a negated class). The per-branch fragments
-# are SINGLE-quoted (not folded into the surrounding double quotes) so their
-# `\\s` survives verbatim: inside double quotes bash would collapse `\\s` → `\s`,
-# which jq then rejects as an invalid escape — the class must stay `[:*\\s]`.
-readonly VERDICT_PREFIX_RE='(?im)^\\s*(?:#{1,6}\\s+|\\*\\*)?verdict'
-readonly VERDICT_RE="${VERDICT_PREFIX_RE}"'[:*\\s]'
-readonly VERDICT_LGTM_RE="${VERDICT_PREFIX_RE}"'[^a-zA-Z0-9]+lgtm'
+# The verdict-regex constants (VERDICT_PREFIX_RE/VERDICT_RE/VERDICT_LGTM_RE) live
+# in verdict-regex.sh — the single source of truth shared with the post gate
+# (assert-review-posted.sh). Resolve it relative to THIS script (not cwd) so the
+# check stays cwd-independent. See that file for the full escaping commentary.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/ralph/verdict-regex.sh
+# shellcheck disable=SC1091  # sourced at runtime; not followed without -x
+source "$SCRIPT_DIR/verdict-regex.sh"
 
 # `${arr[@]+"${arr[@]}"}` expands to nothing when the array is empty instead of
 # tripping `set -u` on bash 3.2 (stock /bin/bash on macOS).

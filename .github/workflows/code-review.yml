@@ -20,6 +20,15 @@ jobs:
         with:
           fetch-depth: 1
 
+      # Record the review window's start BEFORE the action runs (issue #135): the
+      # post-gate below only counts verdict comments with createdAt >= this
+      # timestamp, so a stale verdict from a prior run cannot satisfy this run.
+      # Timing it here (pre-action) is load-bearing — capturing it after the
+      # action would time the wrong window and let a comment posted before the
+      # window slip through.
+      - name: Record review start time
+        run: echo "REVIEW_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+
       - name: Run Claude Code Review
         id: claude-review
         uses: anthropics/claude-code-action@v1
@@ -75,3 +84,41 @@ jobs:
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # for allowed-tools syntax and security model.
           claude_args: '--allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"'
+
+      # Regression guard for #135 (silent-success stall) and #140 (expired-token
+      # instant is_error incident). The action above can go GREEN without ever
+      # posting a verdict — either by finishing "successfully" but silently (the
+      # #135 stall, where pr-ready.sh then reports awaiting-review forever) or by
+      # failing INSTANTLY on an OAuth/credit error while the step still reports
+      # success (the #140 incident). This step turns both into a loud failure:
+      # it reads the action's own is_error flag AND asserts a fresh
+      # verdict-bearing comment (createdAt >= REVIEW_STARTED_AT) actually landed.
+      #
+      # DO NOT switch the action above into sticky-comment mode (the action's
+      # single-edited-in-place review comment): a sticky comment is EDITED in
+      # place, which bumps updatedAt but NOT createdAt — and both this gate and
+      # pr-ready.sh key freshness on createdAt, so a sticky verdict from a prior
+      # run would look stale forever and permanently starve the lane. The
+      # fleet-tests suite statically asserts that mode stays off.
+      #
+      # Every value flows into the run: body through env: — no inline ${{ }} in
+      # the script — for injection-safety and actionlint/shellcheck cleanliness.
+      # REVIEW_STARTED_AT was exported into $GITHUB_ENV by the "Record review
+      # start time" step; it is re-surfaced here via `env.REVIEW_STARTED_AT` (NOT
+      # re-wrapped inside the run: body) so shellcheck sees the shell var as
+      # assigned — a bare $VAR that is only set via $GITHUB_ENV upstream trips
+      # SC2154 (referenced-but-not-assigned) in the analyzed fragment. The job
+      # already grants pull-requests: read, which is all `gh pr view --json
+      # comments` needs — no write permission is added. The repo is already
+      # checked out (step 1), so scripts/ralph/assert-review-posted.sh is on disk.
+      - name: Assert the review verdict comment was posted
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          REVIEW_STARTED_AT: ${{ env.REVIEW_STARTED_AT }}
+          EXECUTION_FILE: ${{ steps.claude-review.outputs.execution_file }}
+        run: |
+          bash scripts/ralph/assert-review-posted.sh "$PR_NUMBER" "$REVIEW_STARTED_AT" \
+            --repo "$REPO" --execution-file "$EXECUTION_FILE"
