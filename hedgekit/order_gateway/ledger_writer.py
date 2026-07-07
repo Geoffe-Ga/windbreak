@@ -9,9 +9,12 @@ seam and the two event types that flow through it:
       the credential-free CLI) and an :class:`InMemoryGatewayLedgerWriter` (for
       tests), mirroring the Risk Kernel writer triad in
       :mod:`hedgekit.riskkernel.process`.
-    * :class:`OrderTransitionLedgered` / :class:`SubmissionRefused` -- frozen
+    * :class:`OrderTransitionLedgered` / :class:`SubmissionRefused` /
+      :class:`ReduceOnlyRefused` / :class:`ReduceOnlyViolation` -- frozen
       :class:`~hedgekit.ledger.events.Event` subclasses following the ledger's
-      ``field(init=False)`` + ``__post_init__`` derivation pattern.
+      ``field(init=False)`` + ``__post_init__`` derivation pattern. The two
+      reduce-only events (issue #39) record a refused oversized close and a
+      post-fill net-short halt, respectively.
     * :func:`apply_and_ledger` -- computes a state transition and records it
       *before* returning the target, structurally enforcing write-before-next-
       action: if the ledger write raises, the caller never receives the target
@@ -167,6 +170,90 @@ class SubmissionRefused(Event):
         payload: dict[str, object] = {
             "client_order_id": self.client_order_id,
             "reason": self.reason,
+        }
+        _derive_typed_event(self, payload)
+
+
+@dataclass(frozen=True)
+class ReduceOnlyRefused(Event):
+    """Records a close refused for exceeding its closeable headroom (issue #39).
+
+    Emitted when the Gateway declines a ``SELL_TO_CLOSE`` whose size exceeds the
+    held position net of in-flight closes -- *before* the token is verified or
+    consumed, so a refusal never burns the token's single use. The five count
+    fields pin the exact numbers the reduce-only verdict was computed from (see
+    :class:`~hedgekit.order_gateway.reduce_only.PositionSnapshot`).
+
+    Attributes:
+        client_order_id: The content-addressed id of the refused close (see
+            :func:`~hedgekit.order_gateway.client_order_id`).
+        ticker: The market ticker the close targeted.
+        held_centis: The net held position for ``ticker``, in contract-centis.
+        inflight_closing_centis: The sum of closes already in flight for
+            ``ticker``, in contract-centis.
+        requested_close_centis: The refused close's size, in contract-centis.
+        reason: A short machine-readable reason (always ``"reduce_only"``).
+    """
+
+    client_order_id: str
+    ticker: str
+    held_centis: int
+    inflight_closing_centis: int
+    requested_close_centis: int
+    reason: str
+    event_type: str = field(init=False)
+    payload_schema_version: int = field(init=False)
+    payload: dict[str, object] = field(init=False)
+
+    def __post_init__(self) -> None:
+        """Assemble the payload and derive the base ``Event`` fields."""
+        payload: dict[str, object] = {
+            "client_order_id": self.client_order_id,
+            "ticker": self.ticker,
+            "held_centis": self.held_centis,
+            "inflight_closing_centis": self.inflight_closing_centis,
+            "requested_close_centis": self.requested_close_centis,
+            "reason": self.reason,
+        }
+        _derive_typed_event(self, payload)
+
+
+@dataclass(frozen=True)
+class ReduceOnlyViolation(Event):
+    """Records a post-fill net-short breach that halts the Gateway (issue #39).
+
+    Emitted when a close filled more than was held, leaving the position
+    net-short (``net_centis < 0``). This is the fail-closed halt trigger (SPEC
+    S11.5): the Gateway records this event and then refuses all further work.
+
+    Attributes:
+        client_order_id: The content-addressed id of the offending close (see
+            :func:`~hedgekit.order_gateway.client_order_id`).
+        ticker: The market ticker the close targeted.
+        held_centis: The net held position observed for ``ticker`` after the
+            fill, in contract-centis.
+        filled_centis: The quantity the venue reported filled, in
+            contract-centis.
+        net_centis: ``held_centis - filled_centis``, negative on a breach.
+    """
+
+    client_order_id: str
+    ticker: str
+    held_centis: int
+    filled_centis: int
+    net_centis: int
+    event_type: str = field(init=False)
+    payload_schema_version: int = field(init=False)
+    payload: dict[str, object] = field(init=False)
+
+    def __post_init__(self) -> None:
+        """Assemble the payload and derive the base ``Event`` fields."""
+        payload: dict[str, object] = {
+            "client_order_id": self.client_order_id,
+            "ticker": self.ticker,
+            "held_centis": self.held_centis,
+            "filled_centis": self.filled_centis,
+            "net_centis": self.net_centis,
         }
         _derive_typed_event(self, payload)
 
