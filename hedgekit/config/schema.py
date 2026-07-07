@@ -84,6 +84,8 @@ class RiskConfig:
     Attributes:
         require_human_ack_above_micros: Notional above which a trade needs
             human acknowledgement, or ``None`` to require none (paper mode).
+        kill_after_consecutive_mismatches: Number of consecutive reconciliation
+            ``BREACH`` outcomes that auto-engages the kill switch (issue #35).
     """
 
     min_net_edge_ppm: int = 30000
@@ -107,6 +109,7 @@ class RiskConfig:
     cancel_on_move_ticks: int = 2
     clock_skew_max_seconds: int = 2
     require_human_ack_above_micros: int | None = None
+    kill_after_consecutive_mismatches: int = 3
 
 
 @dataclass(frozen=True, slots=True)

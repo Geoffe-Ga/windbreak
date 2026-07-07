@@ -189,6 +189,27 @@ class ReservationLedger:
         with self._lock:
             self._release_locked(intent_id, reason)
 
+    def release_all_active(self, *, reason: str) -> None:
+        """Release every currently-active reservation under one lock (issue #35).
+
+        The kill switch's capital-release primitive: it frees all reserved
+        capital in a single locked pass so a killed kernel holds no live
+        reservation, recording one
+        :class:`~hedgekit.ledger.events.Event` (``ReservationReleased``) per
+        released intent via :meth:`_release_locked`. It deliberately never
+        touches ``_seen_intent_ids`` / ``_seen_idempotency_keys``: every id and
+        key stays permanently remembered, so no stale pre-kill intent can be
+        replayed after a re-arm.
+
+        Args:
+            reason: The reason recorded on each release event. The kill path
+                passes a hold-only reason (never a sell/close/submit/dump
+                action), preserving the position-hold invariant.
+        """
+        with self._lock:
+            for intent_id in list(self._active):
+                self._release_locked(intent_id, reason)
+
     def adjust(self, intent_id: str, remaining_amount: MoneyMicros) -> None:
         """Decrease an active reservation to ``remaining_amount`` (decrease-only).
 
