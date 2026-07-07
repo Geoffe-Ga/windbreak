@@ -80,6 +80,7 @@ from hedgekit.order_gateway.reduce_only import (
     is_net_short_after_fill,
 )
 from hedgekit.order_gateway.state_machine import OrderEvent, OrderState
+from hedgekit.order_gateway.sweeper import RestingOrderMeta
 from hedgekit.order_gateway.tokens import VerifyResult, verify_and_consume
 from hedgekit.tokens.verify import InMemorySingleUseRegistry
 
@@ -95,6 +96,7 @@ if TYPE_CHECKING:
         LedgerReaderProtocol,
         ReconciliationSourceProtocol,
     )
+    from hedgekit.order_gateway.sweeper import Sweeper, SweepOutcome
     from hedgekit.order_gateway.wal import WalRecord, WriteAheadLogProtocol
     from hedgekit.riskkernel.checks import OrderIntent
     from hedgekit.tokens.verify import SignedApprovalToken, SingleUseRegistry
@@ -436,8 +438,10 @@ class OrderGateway:
         "_position_source",
         "_reconciliation_source",
         "_registry",
+        "_resting_meta",
         "_status_source",
         "_submitter",
+        "_sweeper",
         "_tracked",
         "_verification_key",
         "_wal",
@@ -510,6 +514,8 @@ class OrderGateway:
         self._reconciliation_source = reconciliation_source
         self._acks: dict[str, SubmissionAck] = {}
         self._tracked: dict[str, TrackedOrder] = {}
+        self._resting_meta: dict[str, RestingOrderMeta] = {}
+        self._sweeper: Sweeper | None = None
         self._inflight_closing: dict[str, ContractCentis] = {}
         self._halted = False
         self._accepting_approvals = not self._recovery_wired
@@ -1031,6 +1037,10 @@ class OrderGateway:
             action=intent.action,
             filled_centis=ack.filled.value,
         )
+        self._resting_meta[ack.order_id] = RestingOrderMeta(
+            created_epoch_s=self._clock(),
+            baseline_price_pips=intent.price.value,
+        )
 
     def recover(self) -> RecoveryReport:
         """Reconcile the durable ledger/WAL against the venue, then open the gate.
@@ -1144,6 +1154,12 @@ class OrderGateway:
         restart; a settled close (its venue order gone) is retired by simply not
         being rehydrated here (issue #39/#40).
 
+        The recovered order's sweep metadata (issue #41) is stamped with the
+        *recovery* clock time, not its original placement time: the WAL does not
+        journal placement wall-clock, so restarting the TTL from recovery is the
+        conservative choice (it never expires a resting order earlier than a full
+        fresh TTL after restart).
+
         Args:
             coid: The order's content-addressed client-order-id.
             order_id: The venue's resting-order id.
@@ -1159,6 +1175,10 @@ class OrderGateway:
             size_centis=intent.size.value,
             action=intent.action,
             filled_centis=filled_centis,
+        )
+        self._resting_meta[order_id] = RestingOrderMeta(
+            created_epoch_s=self._clock(),
+            baseline_price_pips=intent.price.value,
         )
         if is_closing_action(intent.action):
             self._inflight_closing[intent.market_ticker] = ContractCentis(
@@ -1208,19 +1228,60 @@ class OrderGateway:
         self._accepting_approvals = False
 
     def retire_tracked_order(self, order: TrackedOrder) -> None:
-        """Drop a reconciled order from tracking, returning close headroom.
+        """Drop a terminal order from tracking, returning close headroom.
 
-        Called by the Reconciler when a tracked order is confirmed filled: the
-        order stops being tracked, and a *closing* order's size is returned to
-        the ticker's closeable headroom (its in-flight-closing tally is retired,
-        issue #39/#40).
+        The single retirement point for a tracked order: it stops being tracked,
+        its sweep metadata (issue #41) is dropped, and a *closing* order's size
+        is returned to the ticker's closeable headroom (its in-flight-closing
+        tally is retired, issue #39/#40). Called by the Reconciler when a tracked
+        order is confirmed filled out-of-band, and by the Sweeper (issue #41)
+        when it cancels a stale resting order or resolves one filled during a
+        cancel -- retiring here exactly once on either path is what keeps close
+        headroom from being double-counted.
 
         Args:
             order: The tracked order to retire.
         """
         self._tracked.pop(order.order_id, None)
+        self._resting_meta.pop(order.order_id, None)
         if is_closing_action(order.action):
             self._retire_inflight(order.ticker, order.size_centis)
+
+    def resting_meta(self, order_id: str) -> RestingOrderMeta | None:
+        """Return a tracked resting order's sweep metadata (Sweeper seam, #41).
+
+        Args:
+            order_id: The venue's resting-order id to look up.
+
+        Returns:
+            The order's :class:`~hedgekit.order_gateway.sweeper.RestingOrderMeta`
+            captured at placement/recovery, or ``None`` when the order is not (or
+            no longer) tracked.
+        """
+        return self._resting_meta.get(order_id)
+
+    def attach_sweeper(self, sweeper: Sweeper) -> None:
+        """Attach the :class:`~hedgekit.order_gateway.sweeper.Sweeper` (issue #41).
+
+        Args:
+            sweeper: The Sweeper :meth:`sweep` delegates to.
+        """
+        self._sweeper = sweeper
+
+    def sweep(self) -> SweepOutcome:
+        """Run one sweep cycle through the attached Sweeper (issue #41).
+
+        Returns:
+            The attached Sweeper's :class:`~hedgekit.order_gateway.sweeper.
+            SweepOutcome` for this cycle.
+
+        Raises:
+            RuntimeError: If no Sweeper has been attached via
+                :meth:`attach_sweeper`.
+        """
+        if self._sweeper is None:
+            raise RuntimeError("no sweeper attached; call attach_sweeper() first")
+        return self._sweeper.sweep_once()
 
     def _retire_inflight(self, ticker: str, size_centis: int) -> None:
         """Return ``size_centis`` of closing headroom to ``ticker``'s tally.
