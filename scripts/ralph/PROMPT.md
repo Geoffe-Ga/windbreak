@@ -104,6 +104,13 @@ drives Gates 3–4. The taxonomy you dispatch is mapped in
 
 ## Hard constraints
 - One issue per call. Never chain.
+- **Shared pinned-toolchain venv (issue #133).** The fleet uses ONE shared
+  `.venv` at the main repo root, provisioned ONCE with
+  `bash scripts/provision-venv.sh`. Every worktree SHARES that root `.venv` (a
+  call from inside a worktree still resolves to `<main-root>/.venv`).
+  `check-all.sh` drift-checks it against `constraints-quality.txt` and
+  PATH-prepends it automatically. NEVER build per-lane venvs, NEVER use
+  `--break-system-packages`, and NEVER sync or pollute global site-packages.
 - **No blocking waits — never hang the lane.** Never write an unbounded shell
   polling loop (`until <cond>; do …; sleep N; done`, `while ! <cond>; do sleep N; done`,
   or open-ended sleep-and-retry). Waiting on CI/review/merge is the
