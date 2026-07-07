@@ -72,6 +72,23 @@ if [[ "$1" == "-m" && "$2" == "pip" ]]; then
     install)
       shift
       printf '%s\n' "$*" >> "${PIP_LOG:?PIP_LOG not set}"
+      # Optional concurrency instrumentation (set only by lock/race scenarios):
+      # BEGIN/END markers bracket a (deliberately slow) install so a test can
+      # detect whether two concurrent installs overlapped or were serialized.
+      if [[ -n "${INSTALL_TRACE:-}" ]]; then
+        printf 'BEGIN %s\n' "$$" >> "$INSTALL_TRACE"
+        sleep "${INSTALL_SLEEP:-0}"
+        printf 'END %s\n' "$$" >> "$INSTALL_TRACE"
+      fi
+      # Simulate pip resolving the env to a post-install freeze state, so a
+      # sibling lane's re-check-under-lock sees the drift as already healed.
+      if [[ -n "${INSTALL_RESULT_FREEZE:-}" ]]; then
+        cat "$INSTALL_RESULT_FREEZE" > "${FREEZE_FILE:?FREEZE_FILE not set}"
+      fi
+      # Simulate an install failure (exercises lock release on error).
+      if [[ -n "${INSTALL_FAIL:-}" ]]; then
+        exit 1
+      fi
       ;;
     *) : ;;
   esac
@@ -373,6 +390,208 @@ check "check-all.sh guards the provision-venv.sh call conditionally (absent-.ven
 
 check "scripts/ralph/PROMPT.md mentions provision-venv.sh" "yes" \
   "$( grep -q 'provision-venv\.sh' "$PROMPT_MD" 2>/dev/null && echo yes || echo no )"
+
+# ===============================================================================
+# 14) Concurrency lock — released on success. A fresh provision must grab the
+#     advisory lock around create+install and release it on the way out, so no
+#     "<venv>.lock" directory is left behind to wedge later lanes.
+# ===============================================================================
+new_fixture_proj lock_release_ok
+cat > "$FIXTURE/constraints-quality.txt" <<'EOF'
+foo==1.0
+EOF
+PIP_LOG="$WORK/pip.lock_release_ok.log"; : > "$PIP_LOG"
+FREEZE_FILE="$WORK/freeze.lock_release_ok.txt"; : > "$FREEZE_FILE"
+export PIP_LOG FREEZE_FILE
+
+out=$(PATH="$BIN:$PATH" bash "$FPV" 2>&1) && rc=0 || rc=$?
+check "lock: fresh provision exits 0" "0" "$rc"
+check "lock: released after success (no <venv>.lock dir remains)" \
+  "no" "$( [[ -d "$FIXTURE/.venv.lock" ]] && echo yes || echo no )"
+
+# ===============================================================================
+# 15) Concurrency lock — released on FAILURE. When pip install fails mid-way,
+#     the lock must still be released (trap on EXIT) so a crashed/aborted lane
+#     can't permanently wedge the shared venv for the rest of the fleet.
+# ===============================================================================
+new_fixture_proj lock_release_fail
+cat > "$FIXTURE/constraints-quality.txt" <<'EOF'
+foo==1.0
+EOF
+PIP_LOG="$WORK/pip.lock_release_fail.log"; : > "$PIP_LOG"
+FREEZE_FILE="$WORK/freeze.lock_release_fail.txt"; : > "$FREEZE_FILE"
+INSTALL_FAIL=1
+export PIP_LOG FREEZE_FILE INSTALL_FAIL
+
+out=$(PATH="$BIN:$PATH" bash "$FPV" 2>&1) && rc=0 || rc=$?
+unset INSTALL_FAIL
+check "lock: provision surfaces the pip install failure (nonzero exit)" \
+  "nonzero" "$( [[ "$rc" -ne 0 ]] && echo nonzero || echo zero )"
+check "lock: released even after a failed install (no <venv>.lock dir remains)" \
+  "no" "$( [[ -d "$FIXTURE/.venv.lock" ]] && echo yes || echo no )"
+
+# ===============================================================================
+# 16) Concurrency lock — serialization. Two lanes that BOTH detect drift and
+#     provision the shared venv at the same time must NOT run their pip installs
+#     concurrently (interleaved site-packages writes corrupt the venv). With the
+#     install deliberately slowed, the BEGIN/END trace must never show two
+#     installs in flight at once (max nesting depth == 1).
+# ===============================================================================
+new_fixture_proj lock_serialize
+cat > "$FIXTURE/constraints-quality.txt" <<'EOF'
+foo==1.0
+EOF
+make_fixture_venv "$FIXTURE/.venv"
+FREEZE_FILE="$WORK/freeze.lock_serialize.txt"
+cat > "$FREEZE_FILE" <<'EOF'
+foo==0.9
+EOF
+PIP_LOG="$WORK/pip.lock_serialize.log"; : > "$PIP_LOG"
+INSTALL_TRACE="$WORK/trace.lock_serialize.log"; : > "$INSTALL_TRACE"
+INSTALL_SLEEP=0.5
+export PIP_LOG FREEZE_FILE INSTALL_TRACE INSTALL_SLEEP
+# NB: INSTALL_RESULT_FREEZE intentionally UNSET here, so the freeze stays
+# drifted and BOTH lanes install — that is what we want to prove is serialized.
+
+( PATH="$BIN:$PATH" bash "$FPV" >/dev/null 2>&1 ) & p1=$!
+( PATH="$BIN:$PATH" bash "$FPV" >/dev/null 2>&1 ) & p2=$!
+wait "$p1" && sr1=0 || sr1=$?
+wait "$p2" && sr2=0 || sr2=$?
+serialize_trace="$INSTALL_TRACE"
+unset INSTALL_TRACE INSTALL_SLEEP
+maxdepth=$(awk '/^BEGIN/{d++; if (d>m) m=d} /^END/{d--} END{print m+0}' "$serialize_trace")
+check "lock: two concurrent provisions both exit 0" \
+  "yes" "$( [[ "$sr1" -eq 0 && "$sr2" -eq 0 ]] && echo yes || echo no )"
+check "lock: concurrent installs are serialized (trace nesting depth never > 1)" \
+  "1" "$maxdepth"
+
+# ===============================================================================
+# 17) Concurrency lock — convergence (anti-thrash). When one lane finishes
+#     provisioning to matching constraints, a second lane that was waiting on
+#     the lock must RE-CHECK drift after acquiring it and skip the redundant
+#     reinstall — so the shared venv converges instead of thrashing. Here the
+#     install heals the drift (INSTALL_RESULT_FREEZE), so exactly ONE lane's
+#     constraint install should land.
+# ===============================================================================
+new_fixture_proj lock_converge
+cat > "$FIXTURE/constraints-quality.txt" <<'EOF'
+foo==1.0
+EOF
+make_fixture_venv "$FIXTURE/.venv"
+FREEZE_FILE="$WORK/freeze.lock_converge.txt"
+cat > "$FREEZE_FILE" <<'EOF'
+foo==0.9
+EOF
+HEALED="$WORK/freeze.lock_converge.healed.txt"
+cat > "$HEALED" <<'EOF'
+foo==1.0
+EOF
+PIP_LOG="$WORK/pip.lock_converge.log"; : > "$PIP_LOG"
+INSTALL_RESULT_FREEZE="$HEALED"
+INSTALL_SLEEP=0.3
+export PIP_LOG FREEZE_FILE INSTALL_RESULT_FREEZE INSTALL_SLEEP
+
+( PATH="$BIN:$PATH" bash "$FPV" >/dev/null 2>&1 ) & q1=$!
+( PATH="$BIN:$PATH" bash "$FPV" >/dev/null 2>&1 ) & q2=$!
+wait "$q1" || true
+wait "$q2" || true
+unset INSTALL_RESULT_FREEZE INSTALL_SLEEP
+constraint_installs=$(grep -c -- '-c constraints-quality.txt' "$PIP_LOG" 2>/dev/null || true)
+check "lock: convergence — a healed drift triggers exactly ONE constraint install" \
+  "1" "$constraint_installs"
+
+# ===============================================================================
+# 18) Concurrency lock — stale lock reclaimed. A leftover "<venv>.lock" whose
+#     recorded holder PID is dead (e.g. a lane that crashed mid-provision) must
+#     be treated as stale and broken, so provisioning still proceeds rather than
+#     hanging forever.
+# ===============================================================================
+new_fixture_proj lock_stale
+cat > "$FIXTURE/constraints-quality.txt" <<'EOF'
+foo==1.0
+EOF
+make_fixture_venv "$FIXTURE/.venv"
+FREEZE_FILE="$WORK/freeze.lock_stale.txt"
+cat > "$FREEZE_FILE" <<'EOF'
+foo==0.9
+EOF
+PIP_LOG="$WORK/pip.lock_stale.log"; : > "$PIP_LOG"
+export PIP_LOG FREEZE_FILE
+mkdir -p "$FIXTURE/.venv.lock"
+printf '%s\n' "99999999" > "$FIXTURE/.venv.lock/pid"   # a PID that is not alive
+
+out=$(PATH="$BIN:$PATH" bash "$FPV" 2>&1) && rc=0 || rc=$?
+check "lock: a stale lock (dead holder PID) is reclaimed and provisioning succeeds" \
+  "0" "$rc"
+check "lock: stale-lock provision actually installs (drift healed)" \
+  "yes" "$(pip_log_has '-c constraints-quality.txt' "$(cat "$PIP_LOG" 2>/dev/null)")"
+check "lock: reclaimed lock is released on the way out" \
+  "no" "$( [[ -d "$FIXTURE/.venv.lock" ]] && echo yes || echo no )"
+
+# ===============================================================================
+# 18b) Stale-lock reclaim must itself be race-safe. TWO lanes that both find the
+#      SAME stale lock (dead holder PID) must not both "reclaim" it and end up
+#      both owning it — reclaim has to be atomic (rename-then-remove), or the
+#      two lanes would run concurrent installs, re-opening the very window this
+#      lock closes. With the install slowed, the serialization trace must still
+#      never show two installs in flight at once (max nesting depth == 1).
+# ===============================================================================
+new_fixture_proj lock_stale_race
+cat > "$FIXTURE/constraints-quality.txt" <<'EOF'
+foo==1.0
+EOF
+make_fixture_venv "$FIXTURE/.venv"
+FREEZE_FILE="$WORK/freeze.lock_stale_race.txt"
+cat > "$FREEZE_FILE" <<'EOF'
+foo==0.9
+EOF
+PIP_LOG="$WORK/pip.lock_stale_race.log"; : > "$PIP_LOG"
+INSTALL_TRACE="$WORK/trace.lock_stale_race.log"; : > "$INSTALL_TRACE"
+INSTALL_SLEEP=0.5
+export PIP_LOG FREEZE_FILE INSTALL_TRACE INSTALL_SLEEP
+mkdir -p "$FIXTURE/.venv.lock"
+printf '%s\n' "99999999" > "$FIXTURE/.venv.lock/pid"   # dead holder -> stale
+
+( PATH="$BIN:$PATH" bash "$FPV" >/dev/null 2>&1 ) & s1=$!
+( PATH="$BIN:$PATH" bash "$FPV" >/dev/null 2>&1 ) & s2=$!
+wait "$s1" && sc1=0 || sc1=$?
+wait "$s2" && sc2=0 || sc2=$?
+stale_race_trace="$INSTALL_TRACE"
+unset INSTALL_TRACE INSTALL_SLEEP
+stale_maxdepth=$(awk '/^BEGIN/{d++; if (d>m) m=d} /^END/{d--} END{print m+0}' "$stale_race_trace")
+check "lock: two lanes racing to reclaim ONE stale lock both exit 0" \
+  "yes" "$( [[ "$sc1" -eq 0 && "$sc2" -eq 0 ]] && echo yes || echo no )"
+check "lock: stale-lock reclaim is atomic (racing installs stay serialized, depth <= 1)" \
+  "1" "$stale_maxdepth"
+
+# ===============================================================================
+# 19) Concurrency lock — a live holder is respected (blocks, then times out).
+#     A lock held by a LIVE process must NOT be stolen; the waiter honors
+#     PROVISION_LOCK_TIMEOUT and exits nonzero WITHOUT installing (never
+#     corrupting the venv another lane is actively provisioning).
+# ===============================================================================
+new_fixture_proj lock_live
+cat > "$FIXTURE/constraints-quality.txt" <<'EOF'
+foo==1.0
+EOF
+make_fixture_venv "$FIXTURE/.venv"
+FREEZE_FILE="$WORK/freeze.lock_live.txt"
+cat > "$FREEZE_FILE" <<'EOF'
+foo==0.9
+EOF
+PIP_LOG="$WORK/pip.lock_live.log"; : > "$PIP_LOG"
+export PIP_LOG FREEZE_FILE
+mkdir -p "$FIXTURE/.venv.lock"
+printf '%s\n' "$$" > "$FIXTURE/.venv.lock/pid"   # THIS test process — very much alive
+
+out=$( (PATH="$BIN:$PATH" PROVISION_LOCK_TIMEOUT=1 bash "$FPV" 2>&1) ) && rc=0 || rc=$?
+check "lock: a live-held lock is respected — waiter times out nonzero" \
+  "nonzero" "$( [[ "$rc" -ne 0 ]] && echo nonzero || echo zero )"
+check "lock: a live-held lock blocks the install (pip-install log stays empty)" \
+  "" "$(cat "$PIP_LOG" 2>/dev/null)"
+check "lock: the live holder's lock is left intact (not stolen)" \
+  "yes" "$( [[ -d "$FIXTURE/.venv.lock" ]] && echo yes || echo no )"
+rm -rf "$FIXTURE/.venv.lock"
 
 # ===============================================================================
 # 13) shellcheck (skip-with-note if not on PATH — CI's ubuntu runner has it).

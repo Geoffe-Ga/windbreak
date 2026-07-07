@@ -10,6 +10,26 @@
 # The shared venv lives at "<main-worktree-root>/.venv". A call from inside a
 # linked worktree (.ralph/worktrees/issue-N/) still resolves to the SAME main
 # root .venv, so the toolchain is installed once and shared by all lanes.
+#
+# CONCURRENCY: because the .venv is shared, two fleet lanes that independently
+# detect toolchain drift could otherwise run `python3 -m venv` / `pip install`
+# into the SAME site-packages at once and corrupt it (interleaved writes), or
+# thrash it back and forth when their branches pin different constraints. So the
+# create+install section is serialized with an advisory lock:
+#   - Mechanism: a mkdir-based lock directory ("<venv>.lock"). mkdir is atomic
+#     on every POSIX filesystem, and unlike flock(1) it needs no extra binary --
+#     macOS ships no flock(1) by default, while the Linux CI runner does, so a
+#     mkdir lock is the portable common denominator that works on both.
+#   - Liveness: the lock records its holder's PID; a lock whose holder PID is no
+#     longer alive is treated as stale and reclaimed (atomically, so two lanes
+#     can't both reclaim it), so a lane that crashes mid-provision -- or is
+#     SIGINT/SIGTERM-killed before its EXIT trap can release the lock -- can't
+#     wedge the fleet forever. Waiters honor PROVISION_LOCK_TIMEOUT (seconds,
+#     default 300) and never steal a lock held by a live process.
+#   - Convergence (anti-thrash): after acquiring the lock, provision() RE-CHECKS
+#     drift and skips reinstalling when a sibling lane already provisioned to
+#     matching constraints. The shared venv therefore converges to the pins of
+#     whichever lane last ran, rather than being reinstalled once per lane.
 
 set -euo pipefail
 
@@ -100,6 +120,12 @@ resolve_venv() {
 
 VENV="$(resolve_venv)"
 
+# Advisory lock guarding the venv create+install section. Sits right next to the
+# venv (same main repo root) so every fleet lane -- whichever worktree it runs
+# from -- contends on the SAME lock. See the CONCURRENCY note in the header.
+VENV_LOCK="${VENV}.lock"
+LOCK_HELD=false
+
 # Drift check: compare the pins in constraints-quality.txt against what is
 # installed in the shared venv. Prints offenders + a provision-venv.sh hint to
 # stderr. Returns 0 when in sync, 1 when drifted or the venv is missing.
@@ -133,7 +159,7 @@ drift_check() {
     done <<< "$freeze_raw"
 
     # Compare every pin against the installed set.
-    local offenders="" rline pname pver pnorm installed
+    local offenders="" rline pname pver pnorm installed frozen
     while IFS= read -r rline; do
         # Strip inline "# comment" (e.g. "pytest==9.0.3  # CVE-...").
         rline="${rline%%#*}"
@@ -144,7 +170,17 @@ drift_check() {
         pver="$(trim "${rline#*==}")"
         [[ "$pname" =~ ^[A-Za-z0-9._-]+$ ]] || continue
         pnorm="$(normalize_name "$pname")"
-        installed="$(printf '%s' "$freeze_norm" | grep -E "^${pnorm}==" | head -n1 || true)"
+        # Literal, anchored lookup of "<pnorm>==<ver>" in the installed set.
+        # pnorm is already PEP-503 normalized ([a-z0-9-], dots collapsed away),
+        # so the "${pnorm}==*" glob is a plain prefix match with no regex/glob
+        # metacharacters -- tidier and safer than interpolating into a regex.
+        installed=""
+        while IFS= read -r frozen; do
+            if [[ "$frozen" == "${pnorm}=="* ]]; then
+                installed="$frozen"
+                break
+            fi
+        done <<< "$freeze_norm"
         if [[ -z "$installed" ]]; then
             offenders+="  - ${pname} (pinned ${pver}, not installed)"$'\n'
         else
@@ -163,11 +199,69 @@ drift_check() {
     return 0
 }
 
-# Provision the shared venv: create it when absent, then install the pinned
-# toolchain only when the venv was just created or has drifted (idempotent --
-# a clean, matching venv exits 0 without invoking pip install).
-provision() {
+# True when the PID recorded in the lock is no longer running (a stale lock left
+# by a lane that died mid-provision). An empty PID means a live racer is still
+# writing it, so we wait rather than reclaim; a non-numeric PID is treated as
+# stale (garbage the current script never writes).
+lock_is_stale() {
+    local holder
+    holder="$(cat "$VENV_LOCK/pid" 2>/dev/null || true)"
+    [[ -z "$holder" ]] && return 1
+    [[ "$holder" =~ ^[0-9]+$ ]] || return 0
+    if kill -0 "$holder" 2>/dev/null; then
+        return 1
+    fi
+    return 0
+}
+
+# Acquire the advisory lock, waiting up to PROVISION_LOCK_TIMEOUT seconds for a
+# live holder to release it (reclaiming a stale one immediately). Returns 1 on
+# timeout without ever stealing a live lock.
+acquire_lock() {
+    local timeout="${PROVISION_LOCK_TIMEOUT:-300}" waited_ds=0 timeout_ds
+    timeout_ds=$((timeout * 10))
+    while ! mkdir "$VENV_LOCK" 2>/dev/null; do
+        if lock_is_stale; then
+            # Reclaim atomically: rename the stale dir to a unique name and only
+            # the rename WINNER removes it. A plain `rm -rf` here would be racy
+            # -- two lanes could both read the dead PID, both remove, and both
+            # then mkdir (one clobbering the other's fresh lock), so both would
+            # believe they hold it and run concurrent installs. `mv <dir>
+            # <unique>` is atomic: the loser's source is already gone, its mv
+            # fails, and it simply loops to re-contend on mkdir.
+            mv "$VENV_LOCK" "$VENV_LOCK.stale.$$" 2>/dev/null && rm -rf "$VENV_LOCK.stale.$$"
+            continue
+        fi
+        if ((waited_ds >= timeout_ds)); then
+            printf 'Timed out after %ss waiting for the venv lock at %s\n' \
+                "$timeout" "$VENV_LOCK" >&2
+            printf 'Another provisioning run holds it; remove it if it is stale.\n' >&2
+            return 1
+        fi
+        sleep 0.2
+        waited_ds=$((waited_ds + 2))
+    done
+    printf '%s\n' "$$" > "$VENV_LOCK/pid"
+    LOCK_HELD=true
+    return 0
+}
+
+# Release the lock if this process holds it (idempotent; safe as an EXIT trap).
+release_lock() {
+    if [[ "$LOCK_HELD" == true ]]; then
+        rm -rf "$VENV_LOCK"
+        LOCK_HELD=false
+    fi
+}
+
+# The mutating create+install section, run only while holding the lock.
+provision_locked() {
     local fresh=false drifted=false
+    # Re-check under the lock: a sibling lane may have already provisioned to
+    # matching constraints while we waited, so converge instead of thrashing.
+    if [[ -x "$VENV/bin/python" ]] && drift_check 2>/dev/null; then
+        return 0
+    fi
     if [[ ! -x "$VENV/bin/python" ]]; then
         python3 -m venv "$VENV"
         fresh=true
@@ -190,6 +284,25 @@ provision() {
                 -r requirements-dev.txt
         )
     fi
+}
+
+# Provision the shared venv: create it when absent, then install the pinned
+# toolchain only when the venv was just created or has drifted (idempotent --
+# a clean, matching venv exits 0 without invoking pip install). The mutating
+# work is serialized across fleet lanes by an advisory lock.
+provision() {
+    # Fast path (lock-free): a clean, matching venv needs no mutation, and the
+    # check is read-only, so most invocations avoid the lock entirely.
+    if [[ -x "$VENV/bin/python" ]] && drift_check 2>/dev/null; then
+        return 0
+    fi
+    acquire_lock || return 1
+    # Release the lock on ANY exit from here on, including a set -e abort inside
+    # provision_locked (e.g. pip install failing), so a crash can't wedge it.
+    trap release_lock EXIT
+    provision_locked
+    release_lock
+    trap - EXIT
 }
 
 case "$MODE" in
