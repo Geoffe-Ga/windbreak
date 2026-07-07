@@ -21,11 +21,14 @@ This package ships three surfaces:
 
 from hedgekit.order_gateway.client_order_id import client_order_id
 from hedgekit.order_gateway.gateway import (
+    GatewayHaltedError,
+    GatewayPositionSource,
     GatewayResult,
     GatewayStatusSource,
     OrderGateway,
     OrderSubmitter,
     PaperSubmitter,
+    ReduceOnlyCapableSubmitter,
     SubmissionAck,
     SubmitOutcome,
     build_parser,
@@ -36,8 +39,17 @@ from hedgekit.order_gateway.ledger_writer import (
     InMemoryGatewayLedgerWriter,
     LoggingGatewayLedgerWriter,
     OrderTransitionLedgered,
+    ReduceOnlyRefused,
+    ReduceOnlyViolation,
     SubmissionRefused,
     apply_and_ledger,
+)
+from hedgekit.order_gateway.reduce_only import (
+    PositionSnapshot,
+    closeable_centis,
+    held_for_ticker,
+    is_close_admissible,
+    is_net_short_after_fill,
 )
 from hedgekit.order_gateway.state_machine import (
     LEGAL_TRANSITIONS,
@@ -54,7 +66,9 @@ from hedgekit.order_gateway.tokens import (
 
 __all__ = [
     "LEGAL_TRANSITIONS",
+    "GatewayHaltedError",
     "GatewayLedgerWriter",
+    "GatewayPositionSource",
     "GatewayResult",
     "GatewayStatusSource",
     "IllegalTransitionError",
@@ -66,6 +80,10 @@ __all__ = [
     "OrderSubmitter",
     "OrderTransitionLedgered",
     "PaperSubmitter",
+    "PositionSnapshot",
+    "ReduceOnlyCapableSubmitter",
+    "ReduceOnlyRefused",
+    "ReduceOnlyViolation",
     "SubmissionAck",
     "SubmissionRefused",
     "SubmitOutcome",
@@ -73,7 +91,11 @@ __all__ = [
     "apply_and_ledger",
     "build_parser",
     "client_order_id",
+    "closeable_centis",
+    "held_for_ticker",
     "intent_matches_claims",
+    "is_close_admissible",
+    "is_net_short_after_fill",
     "main",
     "transition",
     "verify_and_consume",

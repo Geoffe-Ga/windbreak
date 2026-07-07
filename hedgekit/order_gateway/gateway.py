@@ -49,7 +49,7 @@ import threading
 import time
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from hedgekit.connector.paper import PaperOrderIntent
 from hedgekit.logging_setup import configure_logging
@@ -58,8 +58,16 @@ from hedgekit.order_gateway.client_order_id import client_order_id
 from hedgekit.order_gateway.ledger_writer import (
     GatewayLedgerWriter,
     LoggingGatewayLedgerWriter,
+    ReduceOnlyRefused,
+    ReduceOnlyViolation,
     SubmissionRefused,
     apply_and_ledger,
+)
+from hedgekit.order_gateway.reduce_only import (
+    PositionSnapshot,
+    held_for_ticker,
+    is_close_admissible,
+    is_net_short_after_fill,
 )
 from hedgekit.order_gateway.state_machine import OrderEvent, OrderState
 from hedgekit.order_gateway.tokens import VerifyResult, verify_and_consume
@@ -70,7 +78,7 @@ if TYPE_CHECKING:
     from types import FrameType
     from typing import Literal
 
-    from hedgekit.connector.models import ExchangeStatus
+    from hedgekit.connector.models import ExchangeStatus, Position
     from hedgekit.connector.paper import PaperExchange
     from hedgekit.riskkernel.checks import OrderIntent
     from hedgekit.tokens.verify import SignedApprovalToken, SingleUseRegistry
@@ -91,6 +99,12 @@ _DEFAULT_HEARTBEAT_INTERVAL = 5
 #: The two admissible market outcomes, each mapping to the paper exchange's
 #: ``Literal["yes", "no"]`` side. Any other outcome is unroutable.
 _ADMISSIBLE_OUTCOMES: frozenset[str] = frozenset({"yes", "no"})
+
+#: The trade actions that *close* an existing position and are therefore
+#: subject to reduce-only enforcement (issue #39). Defined locally rather than
+#: imported from :mod:`hedgekit.riskkernel.checks` so the Gateway owns its own
+#: close predicate and keeps the process boundary clean (SPEC S5.3).
+_CLOSING_ACTIONS: frozenset[str] = frozenset({"sell_to_close"})
 
 _LOGGER = logging.getLogger("hedgekit.order_gateway")
 
@@ -219,12 +233,16 @@ class SubmitOutcome(Enum):
             returned the cached ack without submitting again.
         REFUSED_EXCHANGE_STATUS: The exchange was not ``"open"`` (or was
             unreachable), so the intent was refused before verification.
+        REFUSED_REDUCE_ONLY: A close exceeded its closeable headroom (held net
+            of in-flight closes), so it was refused before verification (issue
+            #39).
         REJECTED_TOKEN: Token verification returned a non-``OK`` verdict.
     """
 
     ACKED = auto()
     IDEMPOTENT_REPLAY = auto()
     REFUSED_EXCHANGE_STATUS = auto()
+    REFUSED_REDUCE_ONLY = auto()
     REJECTED_TOKEN = auto()
 
 
@@ -242,6 +260,71 @@ class GatewayStatusSource(Protocol):
         ...
 
 
+class GatewayPositionSource(Protocol):
+    """The seam the Gateway reads live open positions through (issue #39).
+
+    Consulted only when reduce-only enforcement is on (a source is wired) and
+    only for a *closing* intent; a :class:`~hedgekit.connector.models.Position`
+    tuple feeds the reduce-only admission math in
+    :mod:`hedgekit.order_gateway.reduce_only`.
+
+    Timing contract (load-bearing, see
+    :func:`~hedgekit.order_gateway.reduce_only.is_net_short_after_fill`): the
+    returned ``held`` must *lag* the fill of a close currently being placed --
+    the in-process ``_inflight_closing`` tally, not this source, accounts for a
+    close between its placement and the source catching up. A source that
+    reflected a just-placed fill immediately would false-positive the post-fill
+    net-short check on every normal full close. Enforcement is off by default
+    (no source wired); durable, fill-reconciled position reads are issue #40's
+    job.
+    """
+
+    def get_positions(self) -> tuple[Position, ...]:
+        """Return the currently held open positions.
+
+        Returns:
+            The open positions, one (or more) row per held ticker.
+        """
+        ...
+
+
+@runtime_checkable
+class ReduceOnlyCapableSubmitter(Protocol):
+    """An :class:`OrderSubmitter` that can flag a close reduce-only venue-side.
+
+    Runtime-checkable so the Gateway can prefer :meth:`submit_reduce_only` for a
+    closing intent when the wired submitter supports it, falling back to plain
+    :meth:`OrderSubmitter.submit` otherwise. The Gateway's own local size check
+    runs regardless of which path is taken.
+    """
+
+    def submit_reduce_only(
+        self, intent: OrderIntent, token: SignedApprovalToken
+    ) -> SubmissionAck:
+        """Submit ``intent`` with the venue's reduce-only flag set.
+
+        Args:
+            intent: The verified closing intent to submit.
+            token: The approval token that authorized it.
+
+        Returns:
+            The :class:`SubmissionAck` receipt of the submission.
+        """
+        ...
+
+
+class GatewayHaltedError(Exception):
+    """Raised when a post-fill net-short invariant breach halts the Gateway.
+
+    A close that filled more than was held would leave the position net-short
+    (SPEC S11.5). The Gateway fails closed: it ledgers a
+    :class:`~hedgekit.order_gateway.ledger_writer.ReduceOnlyViolation`, latches a
+    halted flag, and raises this for the offending call and every subsequent
+    one. It is deliberately never caught on the money path, so the halt cannot
+    be silently suppressed.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class GatewayResult:
     """The Gateway's verdict for one processed intent.
@@ -257,9 +340,13 @@ class GatewayResult:
         outcome: The call's disposition (issue #38), or ``None`` on a bare
             pre-issue-#38 construction.
         refusal_reason: The exchange status (or ``"unknown"``) that caused a
-            ``REFUSED_EXCHANGE_STATUS`` outcome, else ``None``.
+            ``REFUSED_EXCHANGE_STATUS`` outcome, or ``"reduce_only"`` on a
+            ``REFUSED_REDUCE_ONLY`` outcome, else ``None``.
         client_order_id: The content-addressed id derived for the intent, or
             ``None`` on a bare pre-issue-#38 construction.
+        position_snapshot: The reduce-only justification snapshot on a
+            ``REFUSED_REDUCE_ONLY`` outcome (the held/in-flight/requested counts
+            the refusal was computed from), else ``None`` (issue #39).
     """
 
     verify_result: VerifyResult | None
@@ -268,6 +355,7 @@ class GatewayResult:
     outcome: SubmitOutcome | None = None
     refusal_reason: str | None = None
     client_order_id: str | None = None
+    position_snapshot: PositionSnapshot | None = None
 
 
 class _UnwiredSubmitter:
@@ -309,8 +397,13 @@ class OrderGateway:
     A ``None`` ``status_source`` turns exchange-status gating *off*, which is
     correct for the credential-free heartbeat CLI and the issue #37 tests;
     production wiring **must** supply a real source so a paused/closed exchange
-    refuses submission. The ``client_order_id -> ack`` cache is per-instance and
-    in-memory: it makes resubmission idempotent within one process lifetime, but
+    refuses submission. Likewise a ``None`` ``position_source`` turns reduce-only
+    enforcement *off* (issue #39, backward compatible); production wiring **must**
+    supply a real source so a ``SELL_TO_CLOSE`` can never grow a position past
+    flat, and a post-fill net-short halts the Gateway fail-closed
+    (:class:`GatewayHaltedError`). The ``client_order_id -> ack`` cache is
+    per-instance and in-memory: it makes resubmission idempotent within one
+    process lifetime, but
     restart durability is issue #40's job -- the content-addressed
     :func:`~hedgekit.order_gateway.client_order_id.client_order_id` is the
     enabler for that later crash-recovery join.
@@ -319,7 +412,10 @@ class OrderGateway:
     __slots__ = (
         "_acks",
         "_clock",
+        "_halted",
+        "_inflight_closing",
         "_ledger_writer",
+        "_position_source",
         "_registry",
         "_status_source",
         "_submitter",
@@ -335,6 +431,7 @@ class OrderGateway:
         clock: Callable[[], int] | None = None,
         ledger_writer: GatewayLedgerWriter | None = None,
         status_source: GatewayStatusSource | None = None,
+        position_source: GatewayPositionSource | None = None,
     ) -> None:
         """Initialize the Gateway.
 
@@ -352,6 +449,11 @@ class OrderGateway:
             status_source: The seam the exchange trading status is read through.
                 ``None`` (the default) turns status gating off; production
                 wiring must supply a real source.
+            position_source: The seam live positions are read through for
+                reduce-only enforcement (issue #39). ``None`` (the default)
+                turns reduce-only enforcement off (backward compatible with the
+                pre-issue-#39 surface); production wiring must supply a real
+                source so a close can never grow a position past flat.
         """
         self._submitter = submitter
         self._verification_key = verification_key
@@ -363,7 +465,10 @@ class OrderGateway:
             ledger_writer if ledger_writer is not None else LoggingGatewayLedgerWriter()
         )
         self._status_source = status_source
+        self._position_source = position_source
         self._acks: dict[str, SubmissionAck] = {}
+        self._inflight_closing: dict[str, ContractCentis] = {}
+        self._halted = False
 
     def process_intent(
         self, intent: OrderIntent, token: SignedApprovalToken
@@ -401,18 +506,38 @@ class OrderGateway:
         accompanying token has verified ``OK``, preserving the no-pre-auth-ack
         -disclosure guarantee.
 
+        Between the status gate and verification, a brand-new *closing* intent
+        also passes the reduce-only gate (issue #39, when a position source is
+        wired): an oversized close is refused -- likewise before the token is
+        verified or consumed -- so the exchange-status refusal still takes
+        precedence over reduce-only. If a prior call latched a post-fill
+        net-short halt, this call fails closed immediately.
+
         Args:
             intent: The order intent to process.
             token: The accompanying single-use approval token.
 
         Returns:
             The :class:`GatewayResult` verdict.
+
+        Raises:
+            GatewayHaltedError: If a prior post-fill net-short breach latched the
+                Gateway halted, or if this call itself breaches that invariant
+                (issue #39). Once halted, every subsequent call fails closed.
         """
+        if self._halted:
+            raise GatewayHaltedError(
+                "gateway halted after a prior reduce-only net-short violation"
+            )
         coid = client_order_id(intent)
         if self._status_source is not None and coid not in self._acks:
             status = self._status_source.get_exchange_status()
             if status is None or status.status != "open":
                 return self._refuse_status(coid, status)
+        if coid not in self._acks:
+            refusal = self._reduce_only_gate(intent, coid)
+            if refusal is not None:
+                return refusal
         verify_result = verify_and_consume(
             token,
             intent,
@@ -460,6 +585,178 @@ class OrderGateway:
             client_order_id=coid,
         )
 
+    def _inflight_for(self, ticker: str) -> int:
+        """Return the in-flight-closing total for ``ticker``, in centis.
+
+        Args:
+            ticker: The market ticker to read the in-flight-closing total for.
+
+        Returns:
+            The sum of closes already in flight for ``ticker``, or ``0`` when
+            none are.
+        """
+        current = self._inflight_closing.get(ticker)
+        return current.value if current is not None else 0
+
+    def _reduce_only_gate(self, intent: OrderIntent, coid: str) -> GatewayResult | None:
+        """Refuse a brand-new close that would exceed its closeable headroom.
+
+        A no-op (returns ``None``, and never reads the position source) unless
+        reduce-only enforcement is on (a source is wired) *and* the intent is a
+        close. Otherwise it reads live positions, computes the held quantity net
+        of in-flight closes, and refuses when the requested close overshoots --
+        *before* the token is verified or consumed, so a refusal never burns the
+        token's single use (mirroring :meth:`_refuse_status`).
+
+        Args:
+            intent: The intent being processed.
+            coid: The intent's content-addressed client-order-id.
+
+        Returns:
+            A ``REFUSED_REDUCE_ONLY`` :class:`GatewayResult` when the close is
+            inadmissible, else ``None`` to admit it to verification.
+        """
+        if self._position_source is None or intent.action not in _CLOSING_ACTIONS:
+            return None
+        positions = self._position_source.get_positions()
+        held = held_for_ticker(positions, intent.market_ticker)
+        inflight = self._inflight_for(intent.market_ticker)
+        if is_close_admissible(intent.size.value, held, inflight):
+            return None
+        snapshot = PositionSnapshot(
+            ticker=intent.market_ticker,
+            held_centis=held,
+            inflight_closing_centis=inflight,
+            requested_close_centis=intent.size.value,
+        )
+        return self._refuse_reduce_only(coid, snapshot)
+
+    def _refuse_reduce_only(
+        self, coid: str, snapshot: PositionSnapshot
+    ) -> GatewayResult:
+        """Ledger a reduce-only refusal and return the verdict.
+
+        Args:
+            coid: The intent's content-addressed client-order-id.
+            snapshot: The held/in-flight/requested justification the refusal was
+                computed from, ledgered verbatim and returned on the verdict.
+
+        Returns:
+            A ``REFUSED_REDUCE_ONLY`` :class:`GatewayResult` still in
+            ``INTENT_CREATED`` with no ack; the token is never consumed.
+        """
+        self._ledger_writer.record(
+            ReduceOnlyRefused(
+                component=_COMPONENT,
+                client_order_id=coid,
+                ticker=snapshot.ticker,
+                held_centis=snapshot.held_centis,
+                inflight_closing_centis=snapshot.inflight_closing_centis,
+                requested_close_centis=snapshot.requested_close_centis,
+                reason="reduce_only",
+            )
+        )
+        return GatewayResult(
+            verify_result=None,
+            state=OrderState.INTENT_CREATED,
+            ack=None,
+            outcome=SubmitOutcome.REFUSED_REDUCE_ONLY,
+            refusal_reason="reduce_only",
+            client_order_id=coid,
+            position_snapshot=snapshot,
+        )
+
+    def _place(
+        self, intent: OrderIntent, token: SignedApprovalToken, *, closing: bool
+    ) -> SubmissionAck:
+        """Submit ``intent``, preferring the reduce-only flag for a close.
+
+        Args:
+            intent: The verified intent to submit.
+            token: The approval token authorizing it.
+            closing: Whether ``intent`` closes a position; when the wired
+                submitter is reduce-only capable, a close is flagged
+                venue-side via :meth:`ReduceOnlyCapableSubmitter.submit_reduce_only`.
+
+        Returns:
+            The :class:`SubmissionAck` receipt.
+        """
+        if closing and isinstance(self._submitter, ReduceOnlyCapableSubmitter):
+            return self._submitter.submit_reduce_only(intent, token)
+        return self._submitter.submit(intent, token)
+
+    def _record_close_fill(
+        self, intent: OrderIntent, coid: str, ack: SubmissionAck
+    ) -> None:
+        """Book a just-placed close's in-flight tally and re-verify net-flat.
+
+        Adds the close's size to the ticker's in-flight-closing total (shrinking
+        the closeable remainder for the next concurrent close), then -- when a
+        position source is wired -- re-reads the held quantity and halts the
+        Gateway fail-closed if the venue overshot the position into a net-short
+        (SPEC S11.5).
+
+        Within-process limitation (issue #40): the in-flight tally is only ever
+        *incremented* -- it is never retired when a close settles or the position
+        source catches up -- and both it and the halt latch live only in memory.
+        The bias is fail-safe (a stale tally over-refuses legitimate closes and
+        never admits a net-short), but a long-lived process progressively
+        under-credits ``closeable_centis``, and a halted Gateway un-halts on
+        restart. Durable, fill-reconciled in-flight accounting and a persisted
+        halt latch are issue #40's crash-recovery work. This class assumes
+        strictly *sequential* :meth:`process_intent` calls (overlapping order
+        lifecycles, not concurrent threads); the read-then-write here is not
+        synchronized, so a real multi-threaded caller would need external
+        locking.
+
+        Args:
+            intent: The close that was just placed.
+            coid: The intent's content-addressed client-order-id.
+            ack: The submission receipt whose ``filled`` is re-verified.
+
+        Raises:
+            GatewayHaltedError: If the fill left the position net-short.
+        """
+        ticker = intent.market_ticker
+        self._inflight_closing[ticker] = ContractCentis(
+            self._inflight_for(ticker) + intent.size.value
+        )
+        if self._position_source is None:
+            return
+        held = held_for_ticker(self._position_source.get_positions(), ticker)
+        if is_net_short_after_fill(held, ack.filled.value):
+            self._halt_on_violation(intent, coid, ack, held)
+
+    def _halt_on_violation(
+        self, intent: OrderIntent, coid: str, ack: SubmissionAck, held: int
+    ) -> None:
+        """Ledger a net-short violation, latch the halt, and fail closed.
+
+        Args:
+            intent: The close whose fill breached the net-flat invariant.
+            coid: The intent's content-addressed client-order-id.
+            ack: The submission receipt carrying the overshooting fill.
+            held: The net held quantity re-read after the fill, in centis.
+
+        Raises:
+            GatewayHaltedError: Always -- the Gateway is now halted, fail-closed.
+        """
+        self._ledger_writer.record(
+            ReduceOnlyViolation(
+                component=_COMPONENT,
+                client_order_id=coid,
+                ticker=intent.market_ticker,
+                held_centis=held,
+                filled_centis=ack.filled.value,
+                net_centis=held - ack.filled.value,
+            )
+        )
+        self._halted = True
+        raise GatewayHaltedError(
+            "reduce-only net-short violation: close "
+            f"{coid} filled {ack.filled.value} against held {held}"
+        )
+
     def _replay(self, coid: str) -> GatewayResult:
         """Return the cached ack for an already-submitted intent, unchanged.
 
@@ -497,6 +794,11 @@ class OrderGateway:
         order resting on the exchange but absent from the cache, and a retry
         would double-submit.
 
+        A *closing* intent additionally books its size into the ticker's
+        in-flight-closing tally and re-verifies the post-fill position, after
+        the ack is cached, so the placed order is recorded even if the re-verify
+        then halts the Gateway (issue #39). An opening intent skips all of that.
+
         Args:
             intent: The order intent to submit.
             token: The approval token authorizing it.
@@ -504,6 +806,10 @@ class OrderGateway:
 
         Returns:
             An ``ACKED`` :class:`GatewayResult` carrying the submission receipt.
+
+        Raises:
+            GatewayHaltedError: If a closing intent's fill left the position
+                net-short, halting the Gateway fail-closed.
         """
         state = apply_and_ledger(
             self._ledger_writer,
@@ -517,7 +823,8 @@ class OrderGateway:
             OrderEvent.REQUEST_SUBMISSION,
             client_order_id=coid,
         )
-        ack = self._submitter.submit(intent, token)
+        closing = intent.action in _CLOSING_ACTIONS
+        ack = self._place(intent, token, closing=closing)
         self._acks[coid] = ack
         state = apply_and_ledger(
             self._ledger_writer, state, OrderEvent.SUBMIT, client_order_id=coid
@@ -525,6 +832,8 @@ class OrderGateway:
         state = apply_and_ledger(
             self._ledger_writer, state, OrderEvent.ACK, client_order_id=coid
         )
+        if closing:
+            self._record_close_fill(intent, coid, ack)
         return GatewayResult(
             verify_result=VerifyResult.OK,
             state=state,
