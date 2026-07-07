@@ -1,5 +1,5 @@
 """Shared `OrderIntent`/`EvaluationContext` builders for `tests/riskkernel/*`
-(issues #30/#31/#32, RED).
+(issues #30/#31/#32/#34, RED).
 
 `hedgekit/riskkernel/context.py` does not exist yet, so importing
 `EvaluationContext` and its four constituent dataclasses below fails
@@ -13,6 +13,18 @@ new `RiskLimits.verification_ttl_seconds: int`. `hedgekit/riskkernel/verificatio
 does not exist yet either, so the `VerificationOutcome`/`VerificationSnapshot`
 import below independently fails collection with `ModuleNotFoundError` --
 also the expected Gate 1 RED state for issue #32.
+
+Issue #34 (floor governance / human acknowledgement) adds a sixth required
+`EvaluationContext` field, `acknowledged_intent_ids: frozenset[str]` (mirroring
+`used_intent_ids`'s fail-loud-but-test-permissive treatment, defaulting to an
+empty `frozenset()` here), plus a new
+`RiskLimits.require_human_ack_above_micros: MoneyMicros | None` (defaulting to
+`None`, i.e. "no threshold configured", so `human_ack_satisfied` approves by
+default). Neither field exists on the real, not-yet-updated `context.py`
+dataclasses yet, so constructing `_DEFAULT_LIMITS` below fails collection with
+`TypeError: __init__() got an unexpected keyword argument
+'require_human_ack_above_micros'` -- the expected Gate 1 RED state for issue
+#34, independent of and in addition to the `ModuleNotFoundError`s above.
 
 Builder-placement choice: unlike the rest of this test suite (where each file
 duplicates its own small `make_intent`, e.g.
@@ -147,7 +159,10 @@ _DEFAULT_VERIFICATION_TTL_SECONDS = 3_600
 
 #: The permissive default `RiskLimits`: 100% caps, a wide price band, and
 #: generous ttls, so only the field a given test overrides can flip a real
-#: check's verdict.
+#: check's verdict. `require_human_ack_above_micros=None` (issue #34) means
+#: "no threshold configured" -- the permissive default, so `human_ack_satisfied`
+#: approves by default (a `None` threshold never requires an ack) unless a test
+#: deliberately configures one.
 _DEFAULT_LIMITS = RiskLimits(
     floor=MoneyMicros(0),
     instrument_whitelist=frozenset({DEFAULT_MARKET_TICKER}),
@@ -168,6 +183,7 @@ _DEFAULT_LIMITS = RiskLimits(
     clock_skew_max_seconds=3_600,
     rounding_buffer=MoneyMicros(0),
     verification_ttl_seconds=_DEFAULT_VERIFICATION_TTL_SECONDS,
+    require_human_ack_above_micros=None,
 )
 
 #: The permissive default `AccountState`: flat $1,000 equity, zero
@@ -256,12 +272,15 @@ _FEES_FIELDS = frozenset(f.name for f in dataclasses.fields(FeeBounds))
 #: ledger-uniqueness sets issue #31 adds (`used_intent_ids`,
 #: `used_idempotency_keys`), each defaulting to an empty `frozenset()` so
 #: every pre-issue-#31 test keeps passing `approval_token_uniqueness` /
-#: `idempotency_key_uniqueness` unless it deliberately overrides one, and the
+#: `idempotency_key_uniqueness` unless it deliberately overrides one, the
 #: issue #32 `verification` snapshot (defaulting to
 #: `_DEFAULT_VERIFICATION_SNAPSHOT`, a permissive CLEAN snapshot, so every
 #: pre-issue-#32 test keeps passing `balance_reconciliation` /
 #: `position_reconciliation` / `open_order_reconciliation` unless it
-#: deliberately overrides `verification`).
+#: deliberately overrides `verification`), and the issue #34
+#: `acknowledged_intent_ids` set (defaulting to an empty `frozenset()`, mirroring
+#: `used_intent_ids`'s fail-loud-but-test-permissive treatment) for the
+#: `human_ack_satisfied` check.
 _CONTEXT_FIELDS = frozenset(
     {
         "mode",
@@ -269,6 +288,7 @@ _CONTEXT_FIELDS = frozenset(
         "used_intent_ids",
         "used_idempotency_keys",
         "verification",
+        "acknowledged_intent_ids",
     }
 )
 
@@ -329,11 +349,13 @@ def make_context(**overrides: object) -> EvaluationContext:
     used_intent_ids = overrides.get("used_intent_ids", frozenset())
     used_idempotency_keys = overrides.get("used_idempotency_keys", frozenset())
     verification = overrides.get("verification", _DEFAULT_VERIFICATION_SNAPSHOT)
+    acknowledged_intent_ids = overrides.get("acknowledged_intent_ids", frozenset())
     assert isinstance(mode, Mode)
     assert isinstance(now_epoch_s, int)
     assert isinstance(used_intent_ids, frozenset)
     assert isinstance(used_idempotency_keys, frozenset)
     assert verification is None or isinstance(verification, VerificationSnapshot)
+    assert isinstance(acknowledged_intent_ids, frozenset)
     return EvaluationContext(
         mode=mode,
         limits=limits,
@@ -344,4 +366,5 @@ def make_context(**overrides: object) -> EvaluationContext:
         used_intent_ids=used_intent_ids,
         used_idempotency_keys=used_idempotency_keys,
         verification=verification,
+        acknowledged_intent_ids=acknowledged_intent_ids,
     )

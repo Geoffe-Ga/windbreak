@@ -1,4 +1,5 @@
-"""Failing-first tests for hedgekit.riskkernel.checks (issues #30, #31, #32, RED).
+"""Failing-first tests for hedgekit.riskkernel.checks (issues #30, #31, #32,
+#34, RED).
 
 Issue #30 gave 15 of the 24 SPEC S10.3 pre-trade checks their real logic
 (instrument whitelist, mode/ceiling, the floor invariant, fee-bound presence,
@@ -13,24 +14,34 @@ and `open_order_reconciliation` -- each reading a new
 `EvaluationContext.verification: VerificationSnapshot | None` (fail-closed via
 the existing `_is_stale` pattern on a missing/future/stale snapshot, plus,
 for `balance_reconciliation` only, a live-mode veto when
-`verification.semantics_fully_known` is `False`) -- so 20 of the 24 SPEC
-S10.3 checks are now real; the remaining 4 stay deliberate stubs that still
-veto, each naming the GitHub issue that will replace it.
+`verification.semantics_fully_known` is `False`). Issue #34 promotes one
+more -- `human_ack_satisfied` -- reading a new
+`RiskLimits.require_human_ack_above_micros: MoneyMicros | None` threshold
+against the order's own worst-case cost and a new
+`EvaluationContext.acknowledged_intent_ids: frozenset[str]` set: a `None`
+threshold (or a cost at or below a configured one) always approves; a cost
+strictly above a configured threshold approves only if the intent id is
+already acknowledged, and otherwise vetoes; an unprovable cost (missing fee
+bound) vetoes fail-closed, exactly like every other cost-consuming check --
+so 21 of the 24 SPEC S10.3 checks are now real; the remaining 3 stay
+deliberate stubs that still veto, each naming the GitHub issue that will
+replace it.
 
 `hedgekit/riskkernel/context.py` does not yet declare `used_intent_ids` /
-`used_idempotency_keys` / `verification`, and `hedgekit/riskkernel/verification.py`
+`used_idempotency_keys` / `verification` / `acknowledged_intent_ids` /
+`require_human_ack_above_micros`, and `hedgekit/riskkernel/verification.py`
 does not exist at all yet (this file's `conftest` import alone triggers the
 collection failure), so importing anything here fails collection with
 `ModuleNotFoundError`/`TypeError` -- the expected Gate 1 RED state for issues
-#31 and #32. Once `context.py`, `verification.py`, and the five real checks
-exist, this file pins: the exact boundary of every real check (the precise
-value that passes vs. the one unit past it that vetoes); that every `None`
-optional input (fee bounds, timestamps, depth, open position, verification
-snapshot) vetoes; that an unknown `action` vetoes every check that branches
-on open/close; the unchanged 24-name SPEC S10.3 order; that a
-fully-permissive context leaves *only* the 4 stub checks vetoing, each naming
-its blocking issue; the fail-closed error-conversion contract; and the frozen
-result types.
+#31, #32, and #34. Once `context.py`, `verification.py`, and the six real
+checks exist, this file pins: the exact boundary of every real check (the
+precise value that passes vs. the one unit past it that vetoes); that every
+`None` optional input (fee bounds, timestamps, depth, open position,
+verification snapshot, human-ack threshold) vetoes or approves as documented;
+that an unknown `action` vetoes every check that branches on open/close; the
+unchanged 24-name SPEC S10.3 order; that a fully-permissive context leaves
+*only* the 3 stub checks vetoing, each naming its blocking issue; the
+fail-closed error-conversion contract; and the frozen result types.
 
 This file supersedes and deletes `tests/riskkernel/test_checks_stub.py`:
 every behavior that file pinned (frozen `OrderIntent`/`CheckResult`/
@@ -101,11 +112,11 @@ EXPECTED_CHECK_NAMES: tuple[str, ...] = (
 
 _EXPECTED_CHECK_COUNT = 24
 
-#: The 20 checks now real after issues #30, #31, and #32, in SPEC S10.3 order.
-#: `approval_token_uniqueness` / `idempotency_key_uniqueness` are the two
-#: issue #31 promotes from stub to real logic; `balance_reconciliation` /
-#: `position_reconciliation` / `open_order_reconciliation` are the three
-#: issue #32 promotes.
+#: The 21 checks now real after issues #30, #31, #32, and #34, in SPEC S10.3
+#: order. `approval_token_uniqueness` / `idempotency_key_uniqueness` are the
+#: two issue #31 promotes from stub to real logic; `balance_reconciliation` /
+#: `position_reconciliation` / `open_order_reconciliation` are the three issue
+#: #32 promotes; `human_ack_satisfied` is the one issue #34 promotes.
 REAL_CHECK_NAMES: tuple[str, ...] = (
     "instrument_whitelist",
     "mode_permission_ceiling",
@@ -123,18 +134,18 @@ REAL_CHECK_NAMES: tuple[str, ...] = (
     "forecast_freshness",
     "price_band_compliance",
     "participation_cap_compliance",
+    "human_ack_satisfied",
     "approval_token_uniqueness",
     "idempotency_key_uniqueness",
     "clock_skew_limit",
     "reduce_only_provable",
 )
 
-#: The 4 checks that remain deliberate stubs after issue #32, each blocked on
+#: The 3 checks that remain deliberate stubs after issue #34, each blocked on
 #: a later issue -- `None` for `jurisdiction_product_eligibility`, which has
 #: no tracking issue yet (a follow-up to file, not invented here).
 _STUB_ISSUE_NUMBERS: dict[str, int | None] = {
     "jurisdiction_product_eligibility": None,
-    "human_ack_satisfied": 34,
     "exchange_status_ok": 110,
     "pipeline_heartbeat_ok": 110,
 }
@@ -205,8 +216,8 @@ def test_real_and_stub_name_sets_partition_the_24_spec_names_exactly() -> None:
     equal the full 24-name SPEC S10.3 set -- protects the taxonomy this whole
     file's pipeline-level tests assume.
     """
-    assert len(REAL_CHECK_NAMES) == 20
-    assert len(STUB_CHECK_NAMES) == 4
+    assert len(REAL_CHECK_NAMES) == 21
+    assert len(STUB_CHECK_NAMES) == 3
     assert set(REAL_CHECK_NAMES).isdisjoint(STUB_CHECK_NAMES)
     assert set(REAL_CHECK_NAMES) | set(STUB_CHECK_NAMES) == set(EXPECTED_CHECK_NAMES)
 
@@ -1073,6 +1084,93 @@ def test_participation_cap_compliance_vetoes_when_visible_depth_is_none() -> Non
     assert result.vetoed is True
 
 
+# --- human_ack_satisfied (issue #34) -----------------------------------------------
+
+
+def test_human_ack_satisfied_approves_in_non_live_modes_even_over_threshold() -> None:
+    """Outside LIVE_MICRO/LIVE, a cost over threshold never requires an ack
+    -- real capital is not at risk in RESEARCH or PAPER."""
+    context = make_context(
+        mode=Mode.PAPER, require_human_ack_above_micros=MoneyMicros(0)
+    )
+
+    result = _real_check("human_ack_satisfied")(make_intent(), context)
+
+    assert result.vetoed is False
+
+
+def test_human_ack_satisfied_approves_with_a_null_threshold_even_at_huge_cost() -> None:
+    """A `None` threshold means "no human-ack gate configured": it approves
+    regardless of cost."""
+    context = make_context(
+        require_human_ack_above_micros=None,
+        max_trading_fee=MoneyMicros(10**12),
+        max_settlement_fee=MoneyMicros(10**12),
+    )
+
+    result = _real_check("human_ack_satisfied")(make_intent(), context)
+
+    assert result.vetoed is False
+
+
+def test_human_ack_satisfied_passes_at_exact_threshold_equality() -> None:
+    """`cost == threshold` passes -- the threshold is inclusive. Default
+    intent cost is 5_000_000 micros."""
+    context = make_context(require_human_ack_above_micros=MoneyMicros(5_000_000))
+
+    result = _real_check("human_ack_satisfied")(make_intent(), context)
+
+    assert result.vetoed is False
+
+
+def test_human_ack_satisfied_vetoes_one_micro_over_threshold_without_an_ack() -> None:
+    """One micro past the threshold, with no acknowledgement on record,
+    vetoes with the exact SPEC reason."""
+    context = make_context(require_human_ack_above_micros=MoneyMicros(4_999_999))
+
+    result = _real_check("human_ack_satisfied")(make_intent(), context)
+
+    assert result.vetoed is True
+    assert result.reason == "human acknowledgement required"
+
+
+def test_human_ack_satisfied_approves_over_threshold_when_acknowledged() -> None:
+    """The same over-threshold cost passes once the intent id is present in
+    `acknowledged_intent_ids`."""
+    intent = make_intent(intent_id="acked-intent")
+    context = make_context(
+        require_human_ack_above_micros=MoneyMicros(4_999_999),
+        acknowledged_intent_ids=frozenset({"acked-intent"}),
+    )
+
+    result = _real_check("human_ack_satisfied")(intent, context)
+
+    assert result.vetoed is False
+
+
+@pytest.mark.parametrize(
+    "fees_override",
+    [
+        {"max_trading_fee": None},
+        {"max_settlement_fee": None},
+    ],
+    ids=["trading_fee_none", "settlement_fee_none"],
+)
+def test_human_ack_satisfied_vetoes_as_unprovable_when_a_fee_bound_is_none(
+    fees_override: dict[str, object],
+) -> None:
+    """A missing fee bound makes the cost unprovable, so this check fails
+    closed as `"unprovable"` instead of approving."""
+    context = make_context(
+        require_human_ack_above_micros=MoneyMicros(0), **fees_override
+    )
+
+    result = _real_check("human_ack_satisfied")(make_intent(), context)
+
+    assert result.vetoed is True
+    assert result.reason == "unprovable"
+
+
 # --- approval_token_uniqueness (issue #31) ----------------------------------------
 
 
@@ -1253,9 +1351,9 @@ def test_default_checks_names_match_spec_10_3_exactly_in_order() -> None:
 
 def test_default_checks_over_permissive_context_leaves_only_stubs_vetoing() -> None:
     """Given `make_intent()`/`make_context()` (tuned so every real check
-    passes), `evaluate_intent` is still vetoed -- but with exactly the 4 stub
+    passes), `evaluate_intent` is still vetoed -- but with exactly the 3 stub
     reasons, in SPEC S10.3 order, each naming its blocking issue (where one is
-    known). This is the test that proves which 20 checks are now real.
+    known). This is the test that proves which 21 checks are now real.
     """
     intent = make_intent()
     context = make_context()
@@ -1264,8 +1362,8 @@ def test_default_checks_over_permissive_context_leaves_only_stubs_vetoing() -> N
 
     assert decision.vetoed is True
     stub_positions = [name for name in EXPECTED_CHECK_NAMES if name in STUB_CHECK_NAMES]
-    assert len(stub_positions) == 4
-    assert len(decision.reasons) == 4
+    assert len(stub_positions) == 3
+    assert len(decision.reasons) == 3
     for reason, name in zip(decision.reasons, stub_positions, strict=True):
         issue_number = _STUB_ISSUE_NUMBERS[name]
         if issue_number is None:
