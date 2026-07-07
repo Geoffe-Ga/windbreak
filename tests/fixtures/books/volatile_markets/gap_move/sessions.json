@@ -1,0 +1,38 @@
+{
+  "KXFED-25SEP-CUT25": [
+    {
+      "book": {
+        "fetched_at": "2025-01-01T00:00:00.000000Z",
+        "yes_bids": [{"price": 4500, "quantity": 500}],
+        "yes_asks": [{"price": 4900, "quantity": 500}]
+      },
+      "trades": []
+    },
+    {
+      "book": {
+        "fetched_at": "2025-01-01T00:05:00.000000Z",
+        "yes_bids": [{"price": 4800, "quantity": 500}],
+        "yes_asks": [{"price": 4900, "quantity": 500}]
+      },
+      "trades": []
+    }
+  ],
+  "KXCPI-25AUG-T400": [
+    {
+      "book": {
+        "fetched_at": "2025-01-01T00:00:00.000000Z",
+        "yes_bids": [{"price": 4500, "quantity": 500}],
+        "yes_asks": [{"price": 4900, "quantity": 500}]
+      },
+      "trades": []
+    },
+    {
+      "book": {
+        "fetched_at": "2025-01-01T00:05:00.000000Z",
+        "yes_bids": [{"price": 4700, "quantity": 500}],
+        "yes_asks": [{"price": 4900, "quantity": 500}]
+      },
+      "trades": []
+    }
+  ]
+}

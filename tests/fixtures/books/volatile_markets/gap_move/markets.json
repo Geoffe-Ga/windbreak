@@ -1,0 +1,36 @@
+[
+  {
+    "exchange": "paper-exchange",
+    "ticker": "KXFED-25SEP-CUT25",
+    "event_ticker": "KXFED-25SEP-CUT25-EVT",
+    "title": "Fed cuts rates 25bps at the September 2025 FOMC meeting",
+    "resolution_criteria": "Test fixture; not a real resolution.",
+    "category": "test",
+    "close_time": "2025-09-17T00:00:00.000000Z",
+    "expected_resolution_time": null,
+    "market_type": "fully_collateralized_binary",
+    "price_tick_pips": 100,
+    "min_order_contract_centis": 100,
+    "fractional_trading_enabled": false,
+    "mutually_exclusive_group_id": null,
+    "jurisdiction_status": "eligible",
+    "raw_exchange_payload_hash": "sha256:gapmove1112223334445556667778"
+  },
+  {
+    "exchange": "paper-exchange",
+    "ticker": "KXCPI-25AUG-T400",
+    "event_ticker": "KXCPI-25AUG-T400-EVT",
+    "title": "August 2025 CPI print at or above 4.00% YoY",
+    "resolution_criteria": "Test fixture; not a real resolution.",
+    "category": "test",
+    "close_time": "2025-08-13T00:00:00.000000Z",
+    "expected_resolution_time": null,
+    "market_type": "fully_collateralized_binary",
+    "price_tick_pips": 100,
+    "min_order_contract_centis": 100,
+    "fractional_trading_enabled": false,
+    "mutually_exclusive_group_id": null,
+    "jurisdiction_status": "eligible",
+    "raw_exchange_payload_hash": "sha256:gapmoveboundary9988877766655544"
+  }
+]

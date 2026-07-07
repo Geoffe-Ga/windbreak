@@ -27,6 +27,21 @@ backward compatibility) and adds three crash-recovery event types
 (`ReconciliationHalted`, `ReconciliationHealed`, `RecoveryCompleted`), growing
 `EVENT_TYPES` to 16 entries. Each gets the same registry-round-trip coverage
 as every other concrete event type.
+
+Issue #41 (RED -- `MarketFreeze`/`ReturnToScreener` do not exist yet, so the
+import below fails collection with `ImportError: cannot import name
+'MarketFreeze' from 'hedgekit.ledger.events'`) adds two more Order Gateway
+event types for the adverse-selection sweeper, growing `EVENT_TYPES` to 18
+entries:
+
+    * `MarketFreeze` -- a strict beyond-N-ticks move on a resting order's
+      side-matched top of book freezes the whole ticker. `event_type` is the
+      literal class name `"MarketFreeze"`, never the issue sketch's
+      shouty-snake-case `"MARKET_FREEZE"` (every concrete `Event` subtype
+      derives `event_type` from `type(self).__name__`).
+    * `ReturnToScreener` -- the companion event marking a frozen ticker's
+      orders as returned to manual/algorithmic re-screening, `reason` always
+      `"market_freeze"`.
 """
 
 from __future__ import annotations
@@ -48,6 +63,7 @@ from hedgekit.ledger.events import (
     Event,
     KillEngaged,
     KillReArmed,
+    MarketFreeze,
     ModeHeartbeat,
     OrderTransitionLedgered,
     PromotionEvaluated,
@@ -56,6 +72,7 @@ from hedgekit.ledger.events import (
     RecoveryCompleted,
     ReduceOnlyRefused,
     ReduceOnlyViolation,
+    ReturnToScreener,
     SignificanceOverrideApplied,
     SubmissionRefused,
     canonical_json,
@@ -238,6 +255,8 @@ def test_event_types_registry_maps_type_name_to_class() -> None:
         "ReconciliationHalted": ReconciliationHalted,
         "ReconciliationHealed": ReconciliationHealed,
         "RecoveryCompleted": RecoveryCompleted,
+        "MarketFreeze": MarketFreeze,
+        "ReturnToScreener": ReturnToScreener,
     } == EVENT_TYPES
 
 
@@ -361,6 +380,67 @@ def test_event_types_registry_round_trips_recovery_completed() -> None:
     """A registry lookup plus persisted `data` reconstructs `RecoveryCompleted`."""
     original = RecoveryCompleted(
         component="order_gateway", orders_reconciled=3, halted=False
+    )
+    envelope = json.loads(original.envelope_json)
+
+    rebuilt_cls = EVENT_TYPES[original.event_type]
+    rebuilt = rebuilt_cls(component=envelope["component"], **envelope["data"])
+
+    assert rebuilt == original
+
+
+# --- Issue #41: registry round-trips for the two sweeper/freeze events -------
+
+
+def test_market_freeze_event_type_is_the_literal_class_name() -> None:
+    """`MarketFreeze.event_type` is `"MarketFreeze"`, never `"MARKET_FREEZE"`.
+
+    The issue's own sketch spells the *concept* in shouty-snake-case, but
+    every concrete `Event` subtype derives `event_type` from
+    `type(self).__name__` via `_derive_typed_event` -- nothing asks
+    `MarketFreeze` to special-case that.
+    """
+    event = MarketFreeze(
+        component="order_gateway",
+        ticker="KXFED-25SEP-CUT25",
+        trigger="cancel_on_move",
+        baseline_price_pips=4500,
+        observed_price_pips=4800,
+        threshold_ticks=2,
+        price_tick_pips=100,
+        epoch=1_700_000_005,
+    )
+
+    assert event.event_type == "MarketFreeze"
+
+
+def test_event_types_registry_round_trips_market_freeze() -> None:
+    """A registry lookup plus persisted `data` reconstructs `MarketFreeze`."""
+    original = MarketFreeze(
+        component="order_gateway",
+        ticker="KXFED-25SEP-CUT25",
+        trigger="cancel_on_move",
+        baseline_price_pips=4500,
+        observed_price_pips=4800,
+        threshold_ticks=2,
+        price_tick_pips=100,
+        epoch=1_700_000_005,
+    )
+    envelope = json.loads(original.envelope_json)
+
+    rebuilt_cls = EVENT_TYPES[original.event_type]
+    rebuilt = rebuilt_cls(component=envelope["component"], **envelope["data"])
+
+    assert rebuilt == original
+
+
+def test_event_types_registry_round_trips_return_to_screener() -> None:
+    """A registry lookup plus persisted `data` reconstructs `ReturnToScreener`."""
+    original = ReturnToScreener(
+        component="order_gateway",
+        ticker="KXFED-25SEP-CUT25",
+        reason="market_freeze",
+        epoch=1_700_000_005,
     )
     envelope = json.loads(original.envelope_json)
 

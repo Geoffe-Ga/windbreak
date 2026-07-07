@@ -613,6 +613,85 @@ class RecoveryCompleted(Event):
         _derive_typed_event(self, payload)
 
 
+@dataclass(frozen=True)
+class MarketFreeze(Event):
+    """Records a strict beyond-N-ticks move freezing a whole ticker (issue #41).
+
+    Emitted by the adverse-selection sweeper the instant a resting order's
+    side-matched top of book has gapped strictly beyond ``threshold_ticks``
+    ticks from that order's own captured baseline: the whole ticker is frozen
+    and every resting order on it is cancelled. Exactly one of these is ledgered
+    per frozen ticker per sweep, carrying the first breaching order's baseline
+    and the shared observed reference. ``event_type`` is the literal class name
+    ``"MarketFreeze"``, derived like every other concrete event via
+    :func:`_derive_typed_event` (never a shouty-snake-case variant).
+
+    Attributes:
+        ticker: The market ticker that was frozen.
+        trigger: The machine-readable trigger label (always ``"cancel_on_move"``).
+        baseline_price_pips: The first breaching order's captured limit, in pips.
+        observed_price_pips: The side-matched top of book at freeze time, in pips.
+        threshold_ticks: The policy's move threshold, in ticks.
+        price_tick_pips: The market's price tick, in pips (an int -- SPEC S6.1).
+        epoch: The wall-clock instant of the freeze, in whole epoch seconds.
+    """
+
+    ticker: str
+    trigger: str
+    baseline_price_pips: int
+    observed_price_pips: int
+    threshold_ticks: int
+    price_tick_pips: int
+    epoch: int
+    event_type: str = field(init=False)
+    payload_schema_version: int = field(init=False)
+    payload: dict[str, object] = field(init=False)
+
+    def __post_init__(self) -> None:
+        """Assemble the payload and derive the base ``Event`` fields."""
+        payload: dict[str, object] = {
+            "ticker": self.ticker,
+            "trigger": self.trigger,
+            "baseline_price_pips": self.baseline_price_pips,
+            "observed_price_pips": self.observed_price_pips,
+            "threshold_ticks": self.threshold_ticks,
+            "price_tick_pips": self.price_tick_pips,
+            "epoch": self.epoch,
+        }
+        _derive_typed_event(self, payload)
+
+
+@dataclass(frozen=True)
+class ReturnToScreener(Event):
+    """Records a frozen ticker's orders returned to re-screening (issue #41).
+
+    The companion to :class:`MarketFreeze`: emitted once per frozen ticker per
+    sweep, after every resting order on the ticker has been cancelled, marking
+    the ticker as handed back to manual/algorithmic re-screening.
+
+    Attributes:
+        ticker: The market ticker whose orders were returned to the screener.
+        reason: The machine-readable reason (always ``"market_freeze"``).
+        epoch: The wall-clock instant of the return, in whole epoch seconds.
+    """
+
+    ticker: str
+    reason: str
+    epoch: int
+    event_type: str = field(init=False)
+    payload_schema_version: int = field(init=False)
+    payload: dict[str, object] = field(init=False)
+
+    def __post_init__(self) -> None:
+        """Assemble the payload and derive the base ``Event`` fields."""
+        payload: dict[str, object] = {
+            "ticker": self.ticker,
+            "reason": self.reason,
+            "epoch": self.epoch,
+        }
+        _derive_typed_event(self, payload)
+
+
 #: Maps each event_type string to its class, so a persisted envelope can be
 #: reconstructed as ``EVENT_TYPES[event_type](component=..., **data)``.
 EVENT_TYPES: dict[str, type[Event]] = {
@@ -632,4 +711,6 @@ EVENT_TYPES: dict[str, type[Event]] = {
     "ReconciliationHalted": ReconciliationHalted,
     "ReconciliationHealed": ReconciliationHealed,
     "RecoveryCompleted": RecoveryCompleted,
+    "MarketFreeze": MarketFreeze,
+    "ReturnToScreener": ReturnToScreener,
 }
