@@ -12,12 +12,15 @@ This module wires the Gateway's runtime surface:
       submitting, walking the real :mod:`~hedgekit.order_gateway.state_machine`
       lifecycle only on a verified token, and holding the verification key in a
       private, never-exposed attribute (mirroring the signing side's no-leak
-      guarantee, issue #31). The real submission path (issue #38) refuses when
-      the exchange is not ``"open"`` (before verifying, consuming, or
-      submitting), derives a content-addressed
+      guarantee, issue #31). The real submission path (issue #38) refuses a
+      *brand-new* intent when the exchange is not ``"open"`` (before verifying,
+      consuming, or submitting), derives a content-addressed
       :func:`~hedgekit.order_gateway.client_order_id.client_order_id` per intent
       to make resubmission idempotent, and ledgers every state transition
-      *before* taking the next action. Limit-only submission is *structural*:
+      *before* taking the next action. An *already-acked* intent replays its
+      cached ack regardless of the exchange's current status (a pure replay
+      never touches the exchange), so the idempotency-cache lookup runs before
+      the status gate. Limit-only submission is *structural*:
       an :class:`~hedgekit.riskkernel.checks.OrderIntent` (and the paper
       exchange's :class:`~hedgekit.connector.paper.PaperOrderIntent`) always
       carries a :class:`~hedgekit.numeric.PricePips` price -- there is no
@@ -367,17 +370,36 @@ class OrderGateway:
     ) -> GatewayResult:
         """Process ``intent`` under ``token``, gating, verifying, then submitting.
 
-        The pipeline is strictly check-then-act. First, if a status source is
-        wired and the exchange is not ``"open"`` (or is unreachable), the intent
-        is refused *before* the token is verified or consumed and *before* the
-        submitter is ever called, ledgering one :class:`SubmissionRefused`.
-        Otherwise the token is verified (and its single use consumed); a
-        non-``OK`` verdict short-circuits with no submission. On an ``OK``
-        verdict a resubmission of an already-submitted intent (matched by
-        :func:`~hedgekit.order_gateway.client_order_id.client_order_id`) returns
-        the cached ack without submitting again; a first submission walks the
-        real ``APPROVE -> REQUEST_SUBMISSION -> (submit) -> SUBMIT -> ACK``
-        chain, ledgering each transition before the next action.
+        The pipeline is strictly check-then-act, and the idempotency cache is
+        consulted *before* the exchange-status gate so a pure replay (which
+        never touches the exchange) is never blocked by the exchange's current
+        status. Concretely:
+
+        1. A *brand-new* intent (one whose
+           :func:`~hedgekit.order_gateway.client_order_id.client_order_id` is
+           not already cached) is refused *before* the token is verified or
+           consumed -- and before the submitter is ever called -- when a status
+           source is wired and the exchange is not ``"open"`` (or is
+           unreachable), ledgering one :class:`SubmissionRefused`. A closed
+           exchange therefore never burns a brand-new intent's token.
+        2. An *already-acked* intent bypasses that status gate entirely: because
+           its order is already resting on the exchange, replaying its cached
+           ack requires no exchange interaction, so a later "did this go
+           through?" retry against a now-paused/closed/unreachable exchange
+           still returns the truthful cached ack rather than a misleading
+           ``REFUSED_EXCHANGE_STATUS``.
+        3. In both admitted cases the token is verified (and its single use
+           consumed) *before* any cached ack is disclosed: a non-``OK`` verdict
+           short-circuits with no submission and no ack disclosure. Only on an
+           ``OK`` verdict does a cached intent replay its ack; a first
+           submission walks the real
+           ``APPROVE -> REQUEST_SUBMISSION -> (submit) -> SUBMIT -> ACK`` chain,
+           ledgering each transition before the next action.
+
+        The cache is read for *membership only* before verification (to route
+        replay vs. refuse); the cached ack itself is never returned until the
+        accompanying token has verified ``OK``, preserving the no-pre-auth-ack
+        -disclosure guarantee.
 
         Args:
             intent: The order intent to process.
@@ -387,7 +409,7 @@ class OrderGateway:
             The :class:`GatewayResult` verdict.
         """
         coid = client_order_id(intent)
-        if self._status_source is not None:
+        if self._status_source is not None and coid not in self._acks:
             status = self._status_source.get_exchange_status()
             if status is None or status.status != "open":
                 return self._refuse_status(coid, status)

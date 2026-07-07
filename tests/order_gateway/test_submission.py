@@ -108,12 +108,13 @@ class _StubStatusSource:
             return None
         return ExchangeStatus(status=self._status, fetched_at=_FIXED_FETCHED_AT)
 
-    def set_status(self, status: Literal["open", "paused", "closed"]) -> None:
+    def set_status(self, status: Literal["open", "paused", "closed"] | None) -> None:
         """Flip the configured status reading.
 
         Args:
             status: The new status subsequent `get_exchange_status` calls
-                report.
+                report, or `None` to simulate the exchange becoming
+                unreachable.
         """
         self._status = status
 
@@ -296,6 +297,74 @@ def test_process_intent_refusal_does_not_consume_the_tokens_single_use(
     assert acked.ack is not None
     assert acked.ack.order_id == "paper-order-1"
     assert acked.ack.filled == ContractCentis(50)
+
+
+# --- Idempotent replay is independent of current exchange status --------------
+
+
+@pytest.mark.parametrize(
+    "later_status",
+    ["paused", "closed", None],
+    ids=["paused", "closed", "unreachable"],
+)
+def test_process_intent_replays_cached_ack_when_exchange_no_longer_open(
+    later_status: Literal["paused", "closed"] | None,
+    paper_exchange: PaperExchange,
+) -> None:
+    """An intent ACKED while the exchange was open replays idempotently once
+    the exchange stops being open. A pure replay never touches the exchange,
+    so a later resubmission under a fresh valid token must return
+    `IDEMPOTENT_REPLAY` with the real cached ack -- never a misleading
+    `REFUSED_EXCHANGE_STATUS` -- and must place no second order and ledger no
+    fresh `SubmissionRefused`. This pins the ordering fix: the idempotency-cache
+    lookup runs before the exchange-status gate, so a caller retrying to learn
+    "was my order placed?" against a now-paused/closed/unreachable exchange
+    gets the truthful cached ack for the order still resting on the exchange.
+    """
+    intent = make_intent()
+    first_token = issue_matching_token(intent, kernel_sequence_number=1)
+    submitter = _SpyPaperSubmitter(paper_exchange)
+    ledger_writer = InMemoryGatewayLedgerWriter()
+    status_source = _StubStatusSource("open")
+    gateway = OrderGateway(
+        submitter,
+        verification_key=KEY_MATERIAL,
+        registry=InMemorySingleUseRegistry(),
+        clock=lambda: DEFAULT_NOW_EPOCH_S,
+        ledger_writer=ledger_writer,
+        status_source=status_source,
+    )
+
+    acked = gateway.process_intent(intent, first_token)
+    assert acked.outcome is SubmitOutcome.ACKED
+    assert len(submitter.calls) == 1
+    assert len(paper_exchange.get_open_orders()) == 1
+
+    # The exchange stops being "open"; a plain resubmission ("did this go
+    # through?") must still replay the real cached ack, not refuse on status.
+    status_source.set_status(later_status)
+    fresh_token = issue_matching_token(intent, kernel_sequence_number=2)
+    replay = gateway.process_intent(intent, fresh_token)
+
+    assert replay.outcome is SubmitOutcome.IDEMPOTENT_REPLAY
+    assert replay.state is OrderState.ACKED
+    assert replay.verify_result is VerifyResult.OK
+    assert replay.ack == acked.ack
+    assert replay.refusal_reason is None
+    # No second exchange order and no extra submit call: the exchange is untouched.
+    assert len(submitter.calls) == 1
+    assert len(paper_exchange.get_open_orders()) == 1
+    # The replay ledgers no fresh refusal and no new transition beyond the
+    # first submission's four.
+    assert not any(
+        isinstance(event, SubmissionRefused) for event in ledger_writer.events
+    )
+    transitions = [
+        event
+        for event in ledger_writer.events
+        if isinstance(event, OrderTransitionLedgered)
+    ]
+    assert len(transitions) == 4
 
 
 # --- Rejected token verification: no transition events ------------------------
