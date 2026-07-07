@@ -12,7 +12,16 @@ This module wires the Gateway's runtime surface:
       submitting, walking the real :mod:`~hedgekit.order_gateway.state_machine`
       lifecycle only on a verified token, and holding the verification key in a
       private, never-exposed attribute (mirroring the signing side's no-leak
-      guarantee, issue #31).
+      guarantee, issue #31). The real submission path (issue #38) refuses when
+      the exchange is not ``"open"`` (before verifying, consuming, or
+      submitting), derives a content-addressed
+      :func:`~hedgekit.order_gateway.client_order_id.client_order_id` per intent
+      to make resubmission idempotent, and ledgers every state transition
+      *before* taking the next action. Limit-only submission is *structural*:
+      an :class:`~hedgekit.riskkernel.checks.OrderIntent` (and the paper
+      exchange's :class:`~hedgekit.connector.paper.PaperOrderIntent`) always
+      carries a :class:`~hedgekit.numeric.PricePips` price -- there is no
+      market-order variant to reject at runtime.
     * :func:`build_parser` / :func:`main`: a bounded ``--max-beats`` /
       ``--heartbeat-interval`` heartbeat CLI mirroring
       :mod:`hedgekit.riskkernel.process`'s conventions.
@@ -36,12 +45,20 @@ import signal
 import threading
 import time
 from dataclasses import dataclass
+from enum import Enum, auto
 from typing import TYPE_CHECKING, Protocol
 
 from hedgekit.connector.paper import PaperOrderIntent
 from hedgekit.logging_setup import configure_logging
 from hedgekit.numeric import ContractCentis
-from hedgekit.order_gateway.state_machine import OrderEvent, OrderState, transition
+from hedgekit.order_gateway.client_order_id import client_order_id
+from hedgekit.order_gateway.ledger_writer import (
+    GatewayLedgerWriter,
+    LoggingGatewayLedgerWriter,
+    SubmissionRefused,
+    apply_and_ledger,
+)
+from hedgekit.order_gateway.state_machine import OrderEvent, OrderState
 from hedgekit.order_gateway.tokens import VerifyResult, verify_and_consume
 from hedgekit.tokens.verify import InMemorySingleUseRegistry
 
@@ -50,6 +67,7 @@ if TYPE_CHECKING:
     from types import FrameType
     from typing import Literal
 
+    from hedgekit.connector.models import ExchangeStatus
     from hedgekit.connector.paper import PaperExchange
     from hedgekit.riskkernel.checks import OrderIntent
     from hedgekit.tokens.verify import SignedApprovalToken, SingleUseRegistry
@@ -189,21 +207,64 @@ class PaperSubmitter:
         return SubmissionAck(order_id=order_id, filled=filled)
 
 
+class SubmitOutcome(Enum):
+    """The disposition of one :meth:`OrderGateway.process_intent` call (issue #38).
+
+    Attributes:
+        ACKED: A first submission walked the full state chain to ``ACKED``.
+        IDEMPOTENT_REPLAY: A resubmission of an already-submitted intent
+            returned the cached ack without submitting again.
+        REFUSED_EXCHANGE_STATUS: The exchange was not ``"open"`` (or was
+            unreachable), so the intent was refused before verification.
+        REJECTED_TOKEN: Token verification returned a non-``OK`` verdict.
+    """
+
+    ACKED = auto()
+    IDEMPOTENT_REPLAY = auto()
+    REFUSED_EXCHANGE_STATUS = auto()
+    REJECTED_TOKEN = auto()
+
+
+class GatewayStatusSource(Protocol):
+    """The seam the Gateway reads the exchange's trading status through."""
+
+    def get_exchange_status(self) -> ExchangeStatus | None:
+        """Return the exchange's current trading status.
+
+        Returns:
+            The current :class:`~hedgekit.connector.models.ExchangeStatus`, or
+            ``None`` when the status is unknown (the exchange is unreachable),
+            which the Gateway treats as a refusal.
+        """
+        ...
+
+
 @dataclass(frozen=True, slots=True)
 class GatewayResult:
     """The Gateway's verdict for one processed intent.
 
     Attributes:
-        verify_result: The token-verification verdict.
+        verify_result: The token-verification verdict, or ``None`` when the
+            intent was refused before verification (exchange not open).
         state: The lifecycle state the order reached (``INTENT_CREATED`` when
-            verification failed and no submission occurred; ``ACKED`` on the
-            happy path).
-        ack: The submission receipt on the happy path, else ``None``.
+            verification failed or the exchange was not open and no submission
+            occurred; ``ACKED`` on the happy path or an idempotent replay).
+        ack: The submission receipt on the happy path or a replay, else
+            ``None``.
+        outcome: The call's disposition (issue #38), or ``None`` on a bare
+            pre-issue-#38 construction.
+        refusal_reason: The exchange status (or ``"unknown"``) that caused a
+            ``REFUSED_EXCHANGE_STATUS`` outcome, else ``None``.
+        client_order_id: The content-addressed id derived for the intent, or
+            ``None`` on a bare pre-issue-#38 construction.
     """
 
-    verify_result: VerifyResult
+    verify_result: VerifyResult | None
     state: OrderState
     ack: SubmissionAck | None
+    outcome: SubmitOutcome | None = None
+    refusal_reason: str | None = None
+    client_order_id: str | None = None
 
 
 class _UnwiredSubmitter:
@@ -241,9 +302,26 @@ class OrderGateway:
     :class:`~hedgekit.riskkernel.signing.SigningKeyHandle`'s no-leak guarantee
     (issue #31). ``__slots__`` keeps the instance ``__dict__``-free as defense in
     depth.
+
+    A ``None`` ``status_source`` turns exchange-status gating *off*, which is
+    correct for the credential-free heartbeat CLI and the issue #37 tests;
+    production wiring **must** supply a real source so a paused/closed exchange
+    refuses submission. The ``client_order_id -> ack`` cache is per-instance and
+    in-memory: it makes resubmission idempotent within one process lifetime, but
+    restart durability is issue #40's job -- the content-addressed
+    :func:`~hedgekit.order_gateway.client_order_id.client_order_id` is the
+    enabler for that later crash-recovery join.
     """
 
-    __slots__ = ("_clock", "_registry", "_submitter", "_verification_key")
+    __slots__ = (
+        "_acks",
+        "_clock",
+        "_ledger_writer",
+        "_registry",
+        "_status_source",
+        "_submitter",
+        "_verification_key",
+    )
 
     def __init__(
         self,
@@ -252,6 +330,8 @@ class OrderGateway:
         verification_key: bytes,
         registry: SingleUseRegistry | None = None,
         clock: Callable[[], int] | None = None,
+        ledger_writer: GatewayLedgerWriter | None = None,
+        status_source: GatewayStatusSource | None = None,
     ) -> None:
         """Initialize the Gateway.
 
@@ -264,6 +344,11 @@ class OrderGateway:
             clock: A zero-argument callable returning the current epoch second,
                 injected so verification is deterministic under test. Defaults to
                 :func:`_default_clock` (real wall clock).
+            ledger_writer: The seam every transition and refusal is recorded
+                through. Defaults to a fresh :class:`LoggingGatewayLedgerWriter`.
+            status_source: The seam the exchange trading status is read through.
+                ``None`` (the default) turns status gating off; production
+                wiring must supply a real source.
         """
         self._submitter = submitter
         self._verification_key = verification_key
@@ -271,19 +356,28 @@ class OrderGateway:
             registry if registry is not None else InMemorySingleUseRegistry()
         )
         self._clock = clock if clock is not None else _default_clock
+        self._ledger_writer: GatewayLedgerWriter = (
+            ledger_writer if ledger_writer is not None else LoggingGatewayLedgerWriter()
+        )
+        self._status_source = status_source
+        self._acks: dict[str, SubmissionAck] = {}
 
     def process_intent(
         self, intent: OrderIntent, token: SignedApprovalToken
     ) -> GatewayResult:
-        """Verify ``token`` authorizes ``intent``, submitting only if it does.
+        """Process ``intent`` under ``token``, gating, verifying, then submitting.
 
-        Verifies (and consumes the single use of) the token first. A non-``OK``
-        verdict short-circuits to a :class:`GatewayResult` still in
-        ``INTENT_CREATED`` with no ack -- the submitter is never called
-        (check-then-act, never act-then-check). An ``OK`` verdict walks the real
-        ``APPROVE -> REQUEST_SUBMISSION -> (submit) -> SUBMIT -> ACK`` chain
-        through :func:`~hedgekit.order_gateway.state_machine.transition` and
-        returns the ``ACKED`` result carrying the submission receipt.
+        The pipeline is strictly check-then-act. First, if a status source is
+        wired and the exchange is not ``"open"`` (or is unreachable), the intent
+        is refused *before* the token is verified or consumed and *before* the
+        submitter is ever called, ledgering one :class:`SubmissionRefused`.
+        Otherwise the token is verified (and its single use consumed); a
+        non-``OK`` verdict short-circuits with no submission. On an ``OK``
+        verdict a resubmission of an already-submitted intent (matched by
+        :func:`~hedgekit.order_gateway.client_order_id.client_order_id`) returns
+        the cached ack without submitting again; a first submission walks the
+        real ``APPROVE -> REQUEST_SUBMISSION -> (submit) -> SUBMIT -> ACK``
+        chain, ledgering each transition before the next action.
 
         Args:
             intent: The order intent to process.
@@ -292,6 +386,11 @@ class OrderGateway:
         Returns:
             The :class:`GatewayResult` verdict.
         """
+        coid = client_order_id(intent)
+        if self._status_source is not None:
+            status = self._status_source.get_exchange_status()
+            if status is None or status.status != "open":
+                return self._refuse_status(coid, status)
         verify_result = verify_and_consume(
             token,
             intent,
@@ -304,13 +403,113 @@ class OrderGateway:
                 verify_result=verify_result,
                 state=OrderState.INTENT_CREATED,
                 ack=None,
+                outcome=SubmitOutcome.REJECTED_TOKEN,
+                client_order_id=coid,
             )
-        state = transition(OrderState.INTENT_CREATED, OrderEvent.APPROVE)
-        state = transition(state, OrderEvent.REQUEST_SUBMISSION)
+        if coid in self._acks:
+            return self._replay(coid)
+        return self._submit_new(intent, token, coid)
+
+    def _refuse_status(self, coid: str, status: ExchangeStatus | None) -> GatewayResult:
+        """Ledger a refusal for a non-open exchange and return the verdict.
+
+        Args:
+            coid: The intent's content-addressed client-order-id.
+            status: The observed exchange status, or ``None`` when unreachable.
+
+        Returns:
+            A ``REFUSED_EXCHANGE_STATUS`` :class:`GatewayResult` still in
+            ``INTENT_CREATED`` with no ack; the token is never consumed.
+        """
+        reason = status.status if status is not None else "unknown"
+        self._ledger_writer.record(
+            SubmissionRefused(
+                component=_COMPONENT,
+                client_order_id=coid,
+                reason=reason,
+            )
+        )
+        return GatewayResult(
+            verify_result=None,
+            state=OrderState.INTENT_CREATED,
+            ack=None,
+            outcome=SubmitOutcome.REFUSED_EXCHANGE_STATUS,
+            refusal_reason=reason,
+            client_order_id=coid,
+        )
+
+    def _replay(self, coid: str) -> GatewayResult:
+        """Return the cached ack for an already-submitted intent, unchanged.
+
+        Args:
+            coid: The intent's content-addressed client-order-id, known to be
+                present in the ack cache.
+
+        Returns:
+            An ``IDEMPOTENT_REPLAY`` :class:`GatewayResult` carrying the cached
+            ack; the submitter is not called and no transition is ledgered.
+        """
+        return GatewayResult(
+            verify_result=VerifyResult.OK,
+            state=OrderState.ACKED,
+            ack=self._acks[coid],
+            outcome=SubmitOutcome.IDEMPOTENT_REPLAY,
+            client_order_id=coid,
+        )
+
+    def _submit_new(
+        self, intent: OrderIntent, token: SignedApprovalToken, coid: str
+    ) -> GatewayResult:
+        """Walk the full submission chain, ledgering before each next action.
+
+        The two *pre-submit* transitions are recorded before the action they
+        authorize: the ``REQUEST_SUBMISSION`` write lands before ``submit`` is
+        called, so a ledger failure there cannot leave a resting order behind
+        (the exchange is never touched). The ack is cached the instant
+        ``submit`` returns -- before the ``SUBMIT``/``ACK`` writes -- because
+        those two writes only *record* a placement that already happened and
+        authorize no further exchange action. Caching immediately makes a
+        *post-submit* ledger failure replay-safe: the order is real and cached,
+        so a retry short-circuits to ``IDEMPOTENT_REPLAY`` rather than placing a
+        duplicate. Caching only after the ``ACK`` write would instead leave an
+        order resting on the exchange but absent from the cache, and a retry
+        would double-submit.
+
+        Args:
+            intent: The order intent to submit.
+            token: The approval token authorizing it.
+            coid: The intent's content-addressed client-order-id.
+
+        Returns:
+            An ``ACKED`` :class:`GatewayResult` carrying the submission receipt.
+        """
+        state = apply_and_ledger(
+            self._ledger_writer,
+            OrderState.INTENT_CREATED,
+            OrderEvent.APPROVE,
+            client_order_id=coid,
+        )
+        state = apply_and_ledger(
+            self._ledger_writer,
+            state,
+            OrderEvent.REQUEST_SUBMISSION,
+            client_order_id=coid,
+        )
         ack = self._submitter.submit(intent, token)
-        state = transition(state, OrderEvent.SUBMIT)
-        state = transition(state, OrderEvent.ACK)
-        return GatewayResult(verify_result=verify_result, state=state, ack=ack)
+        self._acks[coid] = ack
+        state = apply_and_ledger(
+            self._ledger_writer, state, OrderEvent.SUBMIT, client_order_id=coid
+        )
+        state = apply_and_ledger(
+            self._ledger_writer, state, OrderEvent.ACK, client_order_id=coid
+        )
+        return GatewayResult(
+            verify_result=VerifyResult.OK,
+            state=state,
+            ack=ack,
+            outcome=SubmitOutcome.ACKED,
+            client_order_id=coid,
+        )
 
     def _emit_heartbeat(self, beat: int) -> None:
         """Log one Gateway heartbeat.
