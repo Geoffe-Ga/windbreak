@@ -19,14 +19,25 @@ This package ships three surfaces:
       its submission adapters, and the bounded-heartbeat CLI.
 """
 
+from hedgekit.order_gateway.client_order_id import client_order_id
 from hedgekit.order_gateway.gateway import (
     GatewayResult,
+    GatewayStatusSource,
     OrderGateway,
     OrderSubmitter,
     PaperSubmitter,
     SubmissionAck,
+    SubmitOutcome,
     build_parser,
     main,
+)
+from hedgekit.order_gateway.ledger_writer import (
+    GatewayLedgerWriter,
+    InMemoryGatewayLedgerWriter,
+    LoggingGatewayLedgerWriter,
+    OrderTransitionLedgered,
+    SubmissionRefused,
+    apply_and_ledger,
 )
 from hedgekit.order_gateway.state_machine import (
     LEGAL_TRANSITIONS,
@@ -43,16 +54,25 @@ from hedgekit.order_gateway.tokens import (
 
 __all__ = [
     "LEGAL_TRANSITIONS",
+    "GatewayLedgerWriter",
     "GatewayResult",
+    "GatewayStatusSource",
     "IllegalTransitionError",
+    "InMemoryGatewayLedgerWriter",
+    "LoggingGatewayLedgerWriter",
     "OrderEvent",
     "OrderGateway",
     "OrderState",
     "OrderSubmitter",
+    "OrderTransitionLedgered",
     "PaperSubmitter",
     "SubmissionAck",
+    "SubmissionRefused",
+    "SubmitOutcome",
     "VerifyResult",
+    "apply_and_ledger",
     "build_parser",
+    "client_order_id",
     "intent_matches_claims",
     "main",
     "transition",
