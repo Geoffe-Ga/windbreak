@@ -10,6 +10,13 @@ name: Ralph Fleet Tests
 # tests/test_ralph_recap_stats.py and covered by the main CI job's `pytest` +
 # mypy steps — see .claude/skills/discord-ralph-recap/.)
 #
+# test_provision_venv.sh (issue #133) covers scripts/provision-venv.sh — the
+# shared repo-local .venv provisioner every fleet worktree reuses — plus a
+# static grep-only guard over scripts/check-all.sh (must invoke
+# `provision-venv.sh --check`, prepend `.venv/bin` to PATH, and keep the venv
+# optional), so both files are in this workflow's path filters even though
+# check-all.sh isn't itself a scripts/ralph/ file.
+#
 # The scan/hopper workflow paths are triggers too: test_scan_workflows.sh guards
 # those files (startup permissions, repo-layout paths), and test_deslop_workflow.sh
 # guards deslop.yml + deslop-areas.json (root-only Python layout, real area
@@ -20,6 +27,8 @@ on:
   push:
     paths:
       - "scripts/ralph/**"
+      - "scripts/provision-venv.sh"
+      - "scripts/check-all.sh"
       - ".github/workflows/ralph-fleet-tests.yml"
       - ".github/workflows/_claude-scan.yml"
       - ".github/workflows/scan-*.yml"
@@ -29,6 +38,8 @@ on:
   pull_request:
     paths:
       - "scripts/ralph/**"
+      - "scripts/provision-venv.sh"
+      - "scripts/check-all.sh"
       - ".github/workflows/ralph-fleet-tests.yml"
       - ".github/workflows/_claude-scan.yml"
       - ".github/workflows/scan-*.yml"
@@ -54,5 +65,6 @@ jobs:
           bash scripts/ralph/test_pick_next.sh
           bash scripts/ralph/test_pr_ready.sh
           bash scripts/ralph/test_queue_depth.sh
+          bash scripts/ralph/test_provision_venv.sh
           bash scripts/ralph/test_scan_workflows.sh
           bash scripts/ralph/test_deslop_workflow.sh

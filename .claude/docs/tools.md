@@ -119,6 +119,47 @@ directive, issue #107) — run it on demand via `./scripts/mutation.sh` or
 
 **`./scripts/complexity.sh`** - Analyze code complexity
 
+**`./scripts/provision-venv.sh`** - Provision/refresh the shared pinned-toolchain `.venv`
+
+**Purpose**: pin the local quality toolchain to `constraints-quality.txt` so
+local Gate 1 (`check-all.sh`, especially `pip-audit`) runs against byte-identical
+package versions to CI, ending fleet-wide toolchain drift (issue #133).
+
+```bash
+# Provision or refresh the shared .venv (idempotent — a clean, matching
+# venv does nothing; only installs when fresh or drifted)
+bash scripts/provision-venv.sh
+
+# Print the resolved shared .venv absolute path
+bash scripts/provision-venv.sh --print-venv
+
+# Fast drift check only (never creates/installs): exits nonzero with a
+# "run provision-venv.sh" hint when the installed toolchain diverges from
+# constraints-quality.txt or the venv is missing
+bash scripts/provision-venv.sh --check
+
+# Help
+bash scripts/provision-venv.sh --help
+```
+
+**Shared-venv / worktree design**: there is exactly **one** `.venv`, at the
+**main repo root**, shared by every fleet worktree under
+`.ralph/worktrees/issue-N/`. A call from inside a linked worktree resolves to
+`<main-root>/.venv` via git's common `.git` dir, so the toolchain is
+provisioned **once** and reused by all lanes — never provisioned per-worktree.
+
+It installs `requirements.txt` + `requirements-dev.txt` under `-c
+constraints-quality.txt` and upgrades `pip`/`setuptools`/`wheel` to match CI.
+It deliberately does **not** install the project editable (`-e .`): each
+worktree must import its **own** checkout's `hedgekit/` package, so per-lane
+test isolation is preserved even though the toolchain venv is shared.
+
+`check-all.sh` auto-detects the shared `.venv` when present, runs a drift
+check against it, and PATH-prepends it so every sub-check (ruff, pylint,
+mypy, bandit, pip-audit, pytest, ...) uses the pinned versions; if the venv is
+absent it falls back to ambient tools with a note. The `.venv` directory is
+gitignored.
+
 ### Complete Workflow Example
 
 ```bash

@@ -55,6 +55,20 @@ done
 
 cd "$PROJECT_ROOT"
 
+# Shared pinned-toolchain venv (issue #133): resolve the single shared .venv at
+# the main repo root. When it exists, fail loudly on drift and prepend it to
+# PATH so pip-audit and every sub-check see the pinned toolchain. The venv is
+# OPTIONAL -- when absent we note it and fall through to ambient tools.
+VENV_DIR="$(bash "$SCRIPT_DIR/provision-venv.sh" --print-venv 2>/dev/null || true)"
+if [[ -n "$VENV_DIR" && -x "$VENV_DIR/bin/python" ]]; then
+    bash "$SCRIPT_DIR/provision-venv.sh" --check
+    export PATH="$VENV_DIR/bin:$PATH"  # .venv/bin first so the pinned toolchain wins
+else
+    echo "Note: shared .venv not found; run scripts/provision-venv.sh to pin the"
+    echo "      toolchain. Falling back to ambient tools for this run."
+    echo ""
+fi
+
 # Set verbosity
 VERBOSE_FLAG=""
 if $VERBOSE; then
