@@ -360,6 +360,259 @@ class KillReArmed(Event):
         _derive_typed_event(self, payload)
 
 
+@dataclass(frozen=True)
+class OrderTransitionLedgered(Event):
+    """Records one Order Gateway state-machine transition (issue #38).
+
+    Attributes:
+        client_order_id: The content-addressed id of the intent this transition
+            belongs to (see :func:`~hedgekit.order_gateway.client_order_id`).
+        from_state: The state the transition moved from (``OrderState.name``).
+        event: The event that drove the transition (``OrderEvent.name``).
+        to_state: The state the transition moved to (``OrderState.name``).
+    """
+
+    client_order_id: str
+    from_state: str
+    event: str
+    to_state: str
+    event_type: str = field(init=False)
+    payload_schema_version: int = field(init=False)
+    payload: dict[str, object] = field(init=False)
+
+    def __post_init__(self) -> None:
+        """Assemble the payload and derive the base ``Event`` fields."""
+        payload: dict[str, object] = {
+            "client_order_id": self.client_order_id,
+            "from_state": self.from_state,
+            "event": self.event,
+            "to_state": self.to_state,
+        }
+        _derive_typed_event(self, payload)
+
+
+@dataclass(frozen=True)
+class SubmissionRefused(Event):
+    """Records a submission refused before any transition or submit (issue #38).
+
+    Emitted when the Gateway declines an intent up front -- e.g. the exchange is
+    not open, or crash recovery has not yet completed -- so the token is never
+    verified or consumed and the submitter is never called.
+
+    Attributes:
+        client_order_id: The content-addressed id of the refused intent (see
+            :func:`~hedgekit.order_gateway.client_order_id`).
+        reason: A short human-readable reason for the refusal.
+    """
+
+    client_order_id: str
+    reason: str
+    event_type: str = field(init=False)
+    payload_schema_version: int = field(init=False)
+    payload: dict[str, object] = field(init=False)
+
+    def __post_init__(self) -> None:
+        """Assemble the payload and derive the base ``Event`` fields."""
+        payload: dict[str, object] = {
+            "client_order_id": self.client_order_id,
+            "reason": self.reason,
+        }
+        _derive_typed_event(self, payload)
+
+
+@dataclass(frozen=True)
+class ReduceOnlyRefused(Event):
+    """Records a close refused for exceeding its closeable headroom (issue #39).
+
+    Emitted when the Gateway declines a ``SELL_TO_CLOSE`` whose size exceeds the
+    held position net of in-flight closes -- *before* the token is verified or
+    consumed, so a refusal never burns the token's single use. The five count
+    fields pin the exact numbers the reduce-only verdict was computed from (see
+    :class:`~hedgekit.order_gateway.reduce_only.PositionSnapshot`).
+
+    Attributes:
+        client_order_id: The content-addressed id of the refused close (see
+            :func:`~hedgekit.order_gateway.client_order_id`).
+        ticker: The market ticker the close targeted.
+        held_centis: The net held position for ``ticker``, in contract-centis.
+        inflight_closing_centis: The sum of closes already in flight for
+            ``ticker``, in contract-centis.
+        requested_close_centis: The refused close's size, in contract-centis.
+        reason: A short machine-readable reason (always ``"reduce_only"``).
+    """
+
+    client_order_id: str
+    ticker: str
+    held_centis: int
+    inflight_closing_centis: int
+    requested_close_centis: int
+    reason: str
+    event_type: str = field(init=False)
+    payload_schema_version: int = field(init=False)
+    payload: dict[str, object] = field(init=False)
+
+    def __post_init__(self) -> None:
+        """Assemble the payload and derive the base ``Event`` fields."""
+        payload: dict[str, object] = {
+            "client_order_id": self.client_order_id,
+            "ticker": self.ticker,
+            "held_centis": self.held_centis,
+            "inflight_closing_centis": self.inflight_closing_centis,
+            "requested_close_centis": self.requested_close_centis,
+            "reason": self.reason,
+        }
+        _derive_typed_event(self, payload)
+
+
+@dataclass(frozen=True)
+class ReduceOnlyViolation(Event):
+    """Records a post-fill net-short breach that halts the Gateway (issue #39).
+
+    Emitted when a close filled more than was held, leaving the position
+    net-short (``net_centis < 0``). This is the fail-closed halt trigger (SPEC
+    S11.5): the Gateway records this event and then refuses all further work.
+    Crash recovery (issue #40) folds this durable fact and stays halted -- there
+    is no un-halt event.
+
+    Attributes:
+        client_order_id: The content-addressed id of the offending close (see
+            :func:`~hedgekit.order_gateway.client_order_id`).
+        ticker: The market ticker the close targeted.
+        held_centis: The net held position observed for ``ticker`` after the
+            fill, in contract-centis.
+        filled_centis: The quantity the venue reported filled, in
+            contract-centis.
+        net_centis: ``held_centis - filled_centis``, negative on a breach.
+    """
+
+    client_order_id: str
+    ticker: str
+    held_centis: int
+    filled_centis: int
+    net_centis: int
+    event_type: str = field(init=False)
+    payload_schema_version: int = field(init=False)
+    payload: dict[str, object] = field(init=False)
+
+    def __post_init__(self) -> None:
+        """Assemble the payload and derive the base ``Event`` fields."""
+        payload: dict[str, object] = {
+            "client_order_id": self.client_order_id,
+            "ticker": self.ticker,
+            "held_centis": self.held_centis,
+            "filled_centis": self.filled_centis,
+            "net_centis": self.net_centis,
+        }
+        _derive_typed_event(self, payload)
+
+
+@dataclass(frozen=True)
+class ReconciliationHalted(Event):
+    """Records a crash-recovery/reconciler mismatch that halts the Gateway (#40).
+
+    Emitted the fail-closed instant reconciliation cannot safely resolve the
+    venue against the durable ledger/WAL (SPEC S3.2/S11.4: when in doubt, halt).
+    ``reason`` is a closed set of exactly three members: ``"foreign_open_order"``
+    (a resting order with no durable trace), ``"vanished_order_no_fill"`` (a
+    tracked order gone with no corroborating fill), and ``"ambiguous_match"`` (a
+    placed order whose completing WAL-ack was never written, so it cannot be
+    correlated). Inapplicable id fields carry the ``""`` sentinel so the payload
+    round-trips through ``EVENT_TYPES[t](component=..., **data)`` without a
+    ``None``-typed field.
+
+    Attributes:
+        reason: The closed-set halt reason (see above).
+        ticker: The market ticker the offending order/fill was on, or ``""``.
+        venue_order_id: The venue's resting-order id involved, or ``""``.
+        client_order_id: The correlated content-addressed id, or ``""`` when the
+            mismatch could not be tied to a known intent.
+        detail: A short human-readable diagnostic describing the mismatch.
+    """
+
+    reason: str
+    ticker: str
+    venue_order_id: str
+    client_order_id: str
+    detail: str
+    event_type: str = field(init=False)
+    payload_schema_version: int = field(init=False)
+    payload: dict[str, object] = field(init=False)
+
+    def __post_init__(self) -> None:
+        """Assemble the payload and derive the base ``Event`` fields."""
+        payload: dict[str, object] = {
+            "reason": self.reason,
+            "ticker": self.ticker,
+            "venue_order_id": self.venue_order_id,
+            "client_order_id": self.client_order_id,
+            "detail": self.detail,
+        }
+        _derive_typed_event(self, payload)
+
+
+@dataclass(frozen=True)
+class ReconciliationHealed(Event):
+    """Records a benign reconciliation heal (issue #40).
+
+    Emitted when reconciliation confirms an out-of-band but *expected* effect --
+    a missed fill on a Gateway-placed order, or the safe disposition of an intent
+    that never reached the venue -- so the order's ledgered lifecycle can be
+    advanced without a halt.
+
+    Attributes:
+        client_order_id: The content-addressed id of the healed intent (see
+            :func:`~hedgekit.order_gateway.client_order_id`).
+        action: A short machine-readable label for the heal that was applied
+            (e.g. ``"fill_confirmed"``).
+        detail: A short human-readable diagnostic describing the heal.
+    """
+
+    client_order_id: str
+    action: str
+    detail: str
+    event_type: str = field(init=False)
+    payload_schema_version: int = field(init=False)
+    payload: dict[str, object] = field(init=False)
+
+    def __post_init__(self) -> None:
+        """Assemble the payload and derive the base ``Event`` fields."""
+        payload: dict[str, object] = {
+            "client_order_id": self.client_order_id,
+            "action": self.action,
+            "detail": self.detail,
+        }
+        _derive_typed_event(self, payload)
+
+
+@dataclass(frozen=True)
+class RecoveryCompleted(Event):
+    """Records that crash recovery finished reconciling the venue (issue #40).
+
+    The final record a clean ``OrderGateway.recover()`` writes, doubling as the
+    anchor for the next recovery's fills-since checkpoint. When ``halted`` is
+    ``True`` the Gateway completed recovery in a fail-closed state and never
+    accepts approvals.
+
+    Attributes:
+        orders_reconciled: The number of tracked orders reconciled this recovery.
+        halted: Whether recovery finished with the Gateway halted.
+    """
+
+    orders_reconciled: int
+    halted: bool
+    event_type: str = field(init=False)
+    payload_schema_version: int = field(init=False)
+    payload: dict[str, object] = field(init=False)
+
+    def __post_init__(self) -> None:
+        """Assemble the payload and derive the base ``Event`` fields."""
+        payload: dict[str, object] = {
+            "orders_reconciled": self.orders_reconciled,
+            "halted": self.halted,
+        }
+        _derive_typed_event(self, payload)
+
+
 #: Maps each event_type string to its class, so a persisted envelope can be
 #: reconstructed as ``EVENT_TYPES[event_type](component=..., **data)``.
 EVENT_TYPES: dict[str, type[Event]] = {
@@ -372,4 +625,11 @@ EVENT_TYPES: dict[str, type[Event]] = {
     "KillEngaged": KillEngaged,
     "CancelAllDirective": CancelAllDirective,
     "KillReArmed": KillReArmed,
+    "OrderTransitionLedgered": OrderTransitionLedgered,
+    "SubmissionRefused": SubmissionRefused,
+    "ReduceOnlyRefused": ReduceOnlyRefused,
+    "ReduceOnlyViolation": ReduceOnlyViolation,
+    "ReconciliationHalted": ReconciliationHalted,
+    "ReconciliationHealed": ReconciliationHealed,
+    "RecoveryCompleted": RecoveryCompleted,
 }

@@ -2,67 +2,46 @@
 
 The Order Gateway records its order-lifecycle transitions and its
 exchange-status refusals into the append-only ledger. This module supplies the
-seam and the two event types that flow through it:
+seam and re-exports the event types that flow through it:
 
     * :class:`GatewayLedgerWriter` -- the structural protocol the Gateway
       records through, with a :class:`LoggingGatewayLedgerWriter` stand-in (for
-      the credential-free CLI) and an :class:`InMemoryGatewayLedgerWriter` (for
-      tests), mirroring the Risk Kernel writer triad in
+      the credential-free CLI), an :class:`InMemoryGatewayLedgerWriter` (for
+      tests), and a persisting :class:`SqliteGatewayLedgerWriter` that appends
+      every event to a real :class:`~hedgekit.ledger.store.SqliteLedgerStore`,
+      mirroring the Risk Kernel writer triad in
       :mod:`hedgekit.riskkernel.process`.
     * :class:`OrderTransitionLedgered` / :class:`SubmissionRefused` /
-      :class:`ReduceOnlyRefused` / :class:`ReduceOnlyViolation` -- frozen
-      :class:`~hedgekit.ledger.events.Event` subclasses following the ledger's
-      ``field(init=False)`` + ``__post_init__`` derivation pattern. The two
-      reduce-only events (issue #39) record a refused oversized close and a
-      post-fill net-short halt, respectively.
+      :class:`ReduceOnlyRefused` / :class:`ReduceOnlyViolation` -- re-exported
+      from :mod:`hedgekit.ledger.events`, which owns the canonical event-schema
+      contract (issue #40 moved them there so recovery can reconstruct them from
+      the registry). Existing importers keep importing them from here unchanged.
     * :func:`apply_and_ledger` -- computes a state transition and records it
       *before* returning the target, structurally enforcing write-before-next-
       action: if the ledger write raises, the caller never receives the target
       and can never proceed to the next action (e.g. submitting the order).
-
-The schema version and component label are held locally here rather than
-imported from the ledger's private module internals, so this module owns its
-own event-schema contract.
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
-from hedgekit.ledger.events import Event
+from hedgekit.ledger.events import OrderTransitionLedgered as OrderTransitionLedgered
+from hedgekit.ledger.events import ReduceOnlyRefused as ReduceOnlyRefused
+from hedgekit.ledger.events import ReduceOnlyViolation as ReduceOnlyViolation
+from hedgekit.ledger.events import SubmissionRefused as SubmissionRefused
 from hedgekit.order_gateway.state_machine import transition
 
 if TYPE_CHECKING:
+    from hedgekit.ledger.events import Event
+    from hedgekit.ledger.store import LedgerStore
     from hedgekit.order_gateway.state_machine import OrderEvent, OrderState
 
 #: Component label stamped on every Gateway event this module builds.
 _COMPONENT = "order_gateway"
 
-#: Schema version stamped on every Gateway event payload. Bump when a payload's
-#: shape changes so old and new records remain distinguishable.
-_SCHEMA_VERSION = 1
-
 _LOGGER = logging.getLogger("hedgekit.order_gateway")
-
-
-def _derive_typed_event(event: Event, payload: dict[str, object]) -> None:
-    """Populate the derived ``Event`` fields on a frozen typed subclass.
-
-    Sets ``event_type`` to the concrete class name, ``payload_schema_version``
-    to this module's schema version, and ``payload`` to the assembled dict,
-    using ``object.__setattr__`` because the instances are frozen. Mirrors the
-    ledger's own :func:`hedgekit.ledger.events._derive_typed_event`, kept local
-    so this module does not reach into that module's private internals.
-
-    Args:
-        event: The freshly constructed typed event to populate.
-        payload: The type-specific payload assembled by the subclass.
-    """
-    object.__setattr__(event, "event_type", type(event).__name__)
-    object.__setattr__(event, "payload_schema_version", _SCHEMA_VERSION)
-    object.__setattr__(event, "payload", payload)
 
 
 class GatewayLedgerWriter(Protocol):
@@ -80,7 +59,7 @@ class GatewayLedgerWriter(Protocol):
 class LoggingGatewayLedgerWriter:
     """A :class:`GatewayLedgerWriter` that logs events instead of persisting.
 
-    Stands in until a real ledger provides a persisting writer; it emits on the
+    Stands in for the credential-free CLI heartbeat; it emits on the
     ``hedgekit.order_gateway`` logger with the event type in the message so
     operators can see each event.
     """
@@ -114,148 +93,32 @@ class InMemoryGatewayLedgerWriter:
         self.events.append(event)
 
 
-@dataclass(frozen=True)
-class OrderTransitionLedgered(Event):
-    """Records one Order Gateway state-machine transition (issue #38).
+class SqliteGatewayLedgerWriter:
+    """A :class:`GatewayLedgerWriter` persisting to a hash-chained ledger store.
 
-    Attributes:
-        client_order_id: The content-addressed id of the intent this transition
-            belongs to (see :func:`~hedgekit.order_gateway.client_order_id`).
-        from_state: The state the transition moved from (``OrderState.name``).
-        event: The event that drove the transition (``OrderEvent.name``).
-        to_state: The state the transition moved to (``OrderState.name``).
+    Appends each Gateway event to a
+    :class:`~hedgekit.ledger.store.SqliteLedgerStore` (or any
+    :class:`~hedgekit.ledger.store.LedgerStore`), so the Gateway's lifecycle and
+    recovery events become durable, tamper-evident records that a restarted
+    Gateway's :meth:`~hedgekit.order_gateway.gateway.OrderGateway.recover` can
+    fold back (issue #40).
     """
 
-    client_order_id: str
-    from_state: str
-    event: str
-    to_state: str
-    event_type: str = field(init=False)
-    payload_schema_version: int = field(init=False)
-    payload: dict[str, object] = field(init=False)
+    def __init__(self, store: LedgerStore) -> None:
+        """Bind the writer to a ledger store.
 
-    def __post_init__(self) -> None:
-        """Assemble the payload and derive the base ``Event`` fields."""
-        payload: dict[str, object] = {
-            "client_order_id": self.client_order_id,
-            "from_state": self.from_state,
-            "event": self.event,
-            "to_state": self.to_state,
-        }
-        _derive_typed_event(self, payload)
+        Args:
+            store: The append-only ledger store every event is persisted to.
+        """
+        self._store = store
 
+    def record(self, event: Event) -> None:
+        """Append a Gateway event to the ledger store.
 
-@dataclass(frozen=True)
-class SubmissionRefused(Event):
-    """Records a submission refused before any transition or submit (issue #38).
-
-    Emitted when the Gateway declines an intent up front -- e.g. the exchange is
-    not open -- so the token is never verified or consumed and the submitter is
-    never called.
-
-    Attributes:
-        client_order_id: The content-addressed id of the refused intent (see
-            :func:`~hedgekit.order_gateway.client_order_id`).
-        reason: A short human-readable reason for the refusal.
-    """
-
-    client_order_id: str
-    reason: str
-    event_type: str = field(init=False)
-    payload_schema_version: int = field(init=False)
-    payload: dict[str, object] = field(init=False)
-
-    def __post_init__(self) -> None:
-        """Assemble the payload and derive the base ``Event`` fields."""
-        payload: dict[str, object] = {
-            "client_order_id": self.client_order_id,
-            "reason": self.reason,
-        }
-        _derive_typed_event(self, payload)
-
-
-@dataclass(frozen=True)
-class ReduceOnlyRefused(Event):
-    """Records a close refused for exceeding its closeable headroom (issue #39).
-
-    Emitted when the Gateway declines a ``SELL_TO_CLOSE`` whose size exceeds the
-    held position net of in-flight closes -- *before* the token is verified or
-    consumed, so a refusal never burns the token's single use. The five count
-    fields pin the exact numbers the reduce-only verdict was computed from (see
-    :class:`~hedgekit.order_gateway.reduce_only.PositionSnapshot`).
-
-    Attributes:
-        client_order_id: The content-addressed id of the refused close (see
-            :func:`~hedgekit.order_gateway.client_order_id`).
-        ticker: The market ticker the close targeted.
-        held_centis: The net held position for ``ticker``, in contract-centis.
-        inflight_closing_centis: The sum of closes already in flight for
-            ``ticker``, in contract-centis.
-        requested_close_centis: The refused close's size, in contract-centis.
-        reason: A short machine-readable reason (always ``"reduce_only"``).
-    """
-
-    client_order_id: str
-    ticker: str
-    held_centis: int
-    inflight_closing_centis: int
-    requested_close_centis: int
-    reason: str
-    event_type: str = field(init=False)
-    payload_schema_version: int = field(init=False)
-    payload: dict[str, object] = field(init=False)
-
-    def __post_init__(self) -> None:
-        """Assemble the payload and derive the base ``Event`` fields."""
-        payload: dict[str, object] = {
-            "client_order_id": self.client_order_id,
-            "ticker": self.ticker,
-            "held_centis": self.held_centis,
-            "inflight_closing_centis": self.inflight_closing_centis,
-            "requested_close_centis": self.requested_close_centis,
-            "reason": self.reason,
-        }
-        _derive_typed_event(self, payload)
-
-
-@dataclass(frozen=True)
-class ReduceOnlyViolation(Event):
-    """Records a post-fill net-short breach that halts the Gateway (issue #39).
-
-    Emitted when a close filled more than was held, leaving the position
-    net-short (``net_centis < 0``). This is the fail-closed halt trigger (SPEC
-    S11.5): the Gateway records this event and then refuses all further work.
-
-    Attributes:
-        client_order_id: The content-addressed id of the offending close (see
-            :func:`~hedgekit.order_gateway.client_order_id`).
-        ticker: The market ticker the close targeted.
-        held_centis: The net held position observed for ``ticker`` after the
-            fill, in contract-centis.
-        filled_centis: The quantity the venue reported filled, in
-            contract-centis.
-        net_centis: ``held_centis - filled_centis``, negative on a breach.
-    """
-
-    client_order_id: str
-    ticker: str
-    held_centis: int
-    filled_centis: int
-    net_centis: int
-    event_type: str = field(init=False)
-    payload_schema_version: int = field(init=False)
-    payload: dict[str, object] = field(init=False)
-
-    def __post_init__(self) -> None:
-        """Assemble the payload and derive the base ``Event`` fields."""
-        payload: dict[str, object] = {
-            "client_order_id": self.client_order_id,
-            "ticker": self.ticker,
-            "held_centis": self.held_centis,
-            "filled_centis": self.filled_centis,
-            "net_centis": self.net_centis,
-        }
-        _derive_typed_event(self, payload)
+        Args:
+            event: The event to persist.
+        """
+        self._store.append(event)
 
 
 def apply_and_ledger(

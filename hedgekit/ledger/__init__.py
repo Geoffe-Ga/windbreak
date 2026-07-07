@@ -8,6 +8,13 @@ predecessor so :meth:`SqliteLedgerStore.verify_chain` can detect any
 single-column corruption. :func:`rebuild` folds a verified ledger into
 derived read models.
 
+The Order Gateway / crash-recovery event vocabulary (issue #38-#40) lives here
+too, so a persisted envelope can be reconstructed from :data:`EVENT_TYPES`
+regardless of which package produced it: :class:`OrderTransitionLedgered`,
+:class:`SubmissionRefused`, :class:`ReduceOnlyRefused`,
+:class:`ReduceOnlyViolation`, :class:`ReconciliationHalted`,
+:class:`ReconciliationHealed`, and :class:`RecoveryCompleted`.
+
 Example:
     >>> from pathlib import Path
     >>> store = SqliteLedgerStore(Path("ledger.db"))
@@ -27,6 +34,13 @@ from hedgekit.ledger.events import (
     ConfigLoaded,
     Event,
     ModeHeartbeat,
+    OrderTransitionLedgered,
+    ReconciliationHalted,
+    ReconciliationHealed,
+    RecoveryCompleted,
+    ReduceOnlyRefused,
+    ReduceOnlyViolation,
+    SubmissionRefused,
     canonical_json,
 )
 from hedgekit.ledger.rebuild import rebuild, rebuild_command
@@ -48,7 +62,14 @@ __all__ = [
     "LedgerRecord",
     "LedgerStore",
     "ModeHeartbeat",
+    "OrderTransitionLedgered",
+    "ReconciliationHalted",
+    "ReconciliationHealed",
+    "RecoveryCompleted",
+    "ReduceOnlyRefused",
+    "ReduceOnlyViolation",
     "SqliteLedgerStore",
+    "SubmissionRefused",
     "canonical_json",
     "compute_event_hash",
     "rebuild",
