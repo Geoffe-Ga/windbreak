@@ -107,5 +107,28 @@ if [[ "$count" =~ ^[0-9]+$ ]] && [[ "$count" -ge 1 ]]; then
   exit 0
 fi
 
+# --- STEP B failure path: workflow-validation-guard detection -----------------
+# claude-code-action@v1 SKIPS the review agent entirely (step exits success, no
+# verdict comment, empty execution_file) on any PR whose diff modifies the
+# workflow file that invokes it — its own "workflow-validation guard". On that
+# path the generic "rerun the Code Review workflow" message below is actively
+# misleading: no rerun can ever produce a verdict until the PR merges. Best-effort
+# detect the case here (never crashing STEP A's precedence, which already
+# exited above) and emit a guard-specific message instead.
+REVIEW_WORKFLOW_FILE=".github/workflows/code-review.yml"
+# `|| true` inside the substitution keeps a failing/absent gh from tripping
+# `set -e`; changed_files just ends up empty and we fall through to the generic
+# message. Reuses gh_args (<PR> + optional --repo).
+changed_files="$(gh pr diff "${gh_args[@]}" --name-only 2>/dev/null || true)"
+# Exact-line containment in pure bash (no pipeline: printf | grep can yield rc
+# 141 under pipefail and misclassify). Bracketing both sides with newlines makes
+# it an exact whole-line match, so docs/code-review.yml and
+# .github/workflows/code-review.yml.bak cannot false-positive.
+if [[ -n "$changed_files" && $'\n'"$changed_files"$'\n' == *$'\n'"$REVIEW_WORKFLOW_FILE"$'\n'* ]]; then
+  echo "assert-review-posted: the review action was SKIPPED BY DESIGN by claude-code-action's workflow validation guard because this PR modifies ${REVIEW_WORKFLOW_FILE}." >&2
+  echo "assert-review-posted: no rerun will ever produce a review until the PR is merged; this PR requires human review and admin merge." >&2
+  exit 1
+fi
+
 echo "assert-review-posted: no verdict-bearing comment created at/after ${started_at} — the review agent posted no verdict; rerun the Code Review workflow" >&2
 exit 1

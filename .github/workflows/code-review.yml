@@ -101,6 +101,17 @@ jobs:
       # run would look stale forever and permanently starve the lane. The
       # fleet-tests suite statically asserts that mode stays off.
       #
+      # WORKFLOW VALIDATION GUARD (by design): PRs that modify this workflow file
+      # cannot receive an automated review — claude-code-action's workflow
+      # validation guard (a workflow validation check on the merge ref) skips the
+      # agent on any PR whose merge ref changes the invoking workflow (the step
+      # still exits success with no verdict and an empty execution_file). The
+      # claude-review check therefore stays red BY
+      # DESIGN (no rerun can help until merge); assert-review-posted.sh detects
+      # the workflow-file diff and says so instead of the misleading generic
+      # rerun message. Such a PR requires operator review + admin merge. This
+      # self-approval-prevention posture is CORRECT, not a bug.
+      #
       # Every value flows into the run: body through env: — no inline ${{ }} in
       # the script — for injection-safety and actionlint/shellcheck cleanliness.
       # REVIEW_STARTED_AT was exported into $GITHUB_ENV by the "Record review

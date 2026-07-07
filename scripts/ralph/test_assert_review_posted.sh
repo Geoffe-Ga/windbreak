@@ -50,13 +50,21 @@ BIN="$WORK/bin"
 mkdir -p "$BIN"
 STDERR_FILE="$WORK/stderr.txt"
 
-# Arg-aware fake gh. Only `--json comments` is exercised by this script.
+# Arg-aware fake gh. Only `--json comments` is exercised by this script today.
 # When COMMENTS_JSON is set, the stub extracts the caller's own `--jq`
 # expression (if any) from "$@" and runs the REAL jq against it — the same
 # passthrough trick test_pr_ready.sh uses — so the production verdict regex
 # and freshness compare are genuinely exercised, never masked by a scalar
 # stub. If the caller passed no `--jq`, the raw payload is emitted instead so
 # a script that parses comments itself in bash still gets real data.
+#
+# `pr diff --name-only` branch (issue #135 follow-up, workflow-validation-guard
+# detection): mirrors the same env-var-injection convention. DIFF_FILES set ->
+# print it verbatim (tests inject multi-line lists via $'\n'); DIFF_RC set
+# (nonzero) -> exit with that code, simulating `gh pr diff` failing/unavailable;
+# neither set -> print nothing, so a script under test that hasn't been taught
+# to call `gh pr diff` at all is unaffected and every existing case stays on
+# the untouched default path.
 cat > "$BIN/gh" <<'STUB'
 #!/usr/bin/env bash
 args="$*"
@@ -75,6 +83,14 @@ case "$args" in
       fi
     else
       printf '{"comments":[]}\n'
+    fi
+    ;;
+  *"--name-only"*)
+    if [[ -n "${DIFF_RC:-}" ]]; then
+      exit "$DIFF_RC"
+    fi
+    if [[ -n "${DIFF_FILES:-}" ]]; then
+      printf '%s\n' "$DIFF_FILES"
     fi
     ;;
   *) echo '' ;;
@@ -208,6 +224,94 @@ JSON
   rc="$(COMMENTS_JSON="$FRESH_LGTM_COMMENTS" run_capture "$PR" "$STARTED" --execution-file "$MALFORMED_EXEC")"
   check "--execution-file malformed JSON falls through to comment check -> exit 0, no crash" "0" "$rc"
 
+  # --- 5b) workflow-validation guard detection ----------------------------------
+  # claude-code-action@v1 SKIPS the review agent entirely (step exits success,
+  # no verdict comment, empty execution_file) whenever the PR's diff touches the
+  # workflow file that invokes it (.github/workflows/code-review.yml) — its own
+  # "workflow-validation guard". Today STEP B's generic "no verdict-bearing
+  # comment ... rerun the Code Review workflow" message is misleading here:
+  # rerunning can never help until the PR merges. On the STEP B failure path
+  # ONLY, the script should best-effort `gh pr diff <PR> --name-only`; if the
+  # file list contains EXACTLY `.github/workflows/code-review.yml`, it must emit
+  # a PRIMARY guard message instead of the generic one (still exit 1).
+  WORKFLOW_TOUCHING_DIFF=$'scripts/ralph/assert-review-posted.sh\n.github/workflows/code-review.yml'
+
+  # 1) Guard fires: no comments at all + diff touches the workflow file.
+  rc="$(COMMENTS_JSON="$EMPTY_COMMENTS" DIFF_FILES="$WORKFLOW_TOUCHING_DIFF" \
+        run_capture "$PR" "$STARTED")"
+  check "workflow-validation guard: no comments + diff touches workflow -> exit 1" "1" "$rc"
+  check "  ...stderr mentions 'workflow validation'" "yes" \
+    "$(grep -qi 'workflow validation' "$STDERR_FILE" && echo yes || echo no)"
+  check "  ...stderr mentions 'no rerun'" "yes" \
+    "$(grep -qi 'no rerun' "$STDERR_FILE" && echo yes || echo no)"
+  check "  ...stderr mentions 'human review'" "yes" \
+    "$(grep -qi 'human review' "$STDERR_FILE" && echo yes || echo no)"
+  check "  ...stderr mentions 'admin merge'" "yes" \
+    "$(grep -qi 'admin merge' "$STDERR_FILE" && echo yes || echo no)"
+  check "  ...stderr does NOT contain the generic 'rerun the Code Review workflow' text" "no" \
+    "$(grep -qF 'rerun the Code Review workflow' "$STDERR_FILE" && echo yes || echo no)"
+
+  # 2) Guard fires even with a STALE verdict present too — proves the trigger is
+  #    "STEP B failed + diff touches the workflow file", not "zero comments".
+  rc="$(COMMENTS_JSON="$STALE_LGTM_COMMENTS" DIFF_FILES="$WORKFLOW_TOUCHING_DIFF" \
+        run_capture "$PR" "$STARTED")"
+  check "workflow-validation guard: stale verdict + diff touches workflow -> exit 1" "1" "$rc"
+  check "  ...stderr mentions 'workflow validation' (stale-verdict case)" "yes" \
+    "$(grep -qi 'workflow validation' "$STDERR_FILE" && echo yes || echo no)"
+
+  # 3) Generic preserved: STEP B fails but the diff does NOT touch the workflow.
+  rc="$(COMMENTS_JSON="$EMPTY_COMMENTS" DIFF_FILES='scripts/ralph/pr-ready.sh' \
+        run_capture "$PR" "$STARTED")"
+  check "no guard: diff touches an unrelated file -> exit 1 (generic message)" "1" "$rc"
+  check "  ...stderr keeps the generic 'rerun the Code Review workflow' text" "yes" \
+    "$(grep -qF 'rerun the Code Review workflow' "$STDERR_FILE" && echo yes || echo no)"
+  check "  ...stderr has no guard vocabulary" "no" \
+    "$(grep -qi 'workflow validation' "$STDERR_FILE" && echo yes || echo no)"
+
+  # 4) No substring false-positive: near-miss filenames must NOT trigger the guard.
+  rc="$(COMMENTS_JSON="$EMPTY_COMMENTS" DIFF_FILES='docs/code-review.yml' \
+        run_capture "$PR" "$STARTED")"
+  check "no guard: 'docs/code-review.yml' is not the workflow path -> generic message" "no" \
+    "$(grep -qi 'workflow validation' "$STDERR_FILE" && echo yes || echo no)"
+
+  rc="$(COMMENTS_JSON="$EMPTY_COMMENTS" \
+        DIFF_FILES='.github/workflows/code-review.yml.bak' \
+        run_capture "$PR" "$STARTED")"
+  check "no guard: '.github/workflows/code-review.yml.bak' is not an exact match -> generic message" "no" \
+    "$(grep -qi 'workflow validation' "$STDERR_FILE" && echo yes || echo no)"
+
+  # 5) Diff unset entirely + no comments -> generic message (implicit regression net).
+  rc="$(COMMENTS_JSON="$EMPTY_COMMENTS" run_capture "$PR" "$STARTED")"
+  check "no guard: DIFF_FILES unset -> exit 1 (generic message)" "1" "$rc"
+  check "  ...stderr keeps the generic 'rerun the Code Review workflow' text" "yes" \
+    "$(grep -qF 'rerun the Code Review workflow' "$STDERR_FILE" && echo yes || echo no)"
+  check "  ...stderr has no guard vocabulary" "no" \
+    "$(grep -qi 'workflow validation' "$STDERR_FILE" && echo yes || echo no)"
+
+  # 6) Diff query hard-fails (gh unavailable/errors) -> must degrade to the
+  #    generic message, never crash under `set -euo pipefail` (rc==1, not 2).
+  rc="$(COMMENTS_JSON="$EMPTY_COMMENTS" DIFF_RC=1 run_capture "$PR" "$STARTED")"
+  check "diff query hard-fails -> exit 1 (not 2, no crash)" "1" "$rc"
+  check "  ...stderr keeps the generic 'rerun the Code Review workflow' text" "yes" \
+    "$(grep -qF 'rerun the Code Review workflow' "$STDERR_FILE" && echo yes || echo no)"
+
+  # 7) No interference on success: detection only ever runs on the STEP B
+  #    FAILURE path — a fresh verdict comment still short-circuits to exit 0.
+  rc="$(COMMENTS_JSON="$FRESH_LGTM_COMMENTS" DIFF_FILES="$WORKFLOW_TOUCHING_DIFF" \
+        run_capture "$PR" "$STARTED")"
+  check "guard detection does not interfere with a successful verdict -> exit 0" "0" "$rc"
+
+  # 8) STEP A precedence intact: an execution-file is_error still wins and its
+  #    message is untouched by the guard, even when the diff touches the workflow.
+  rc="$(COMMENTS_JSON="$FRESH_LGTM_COMMENTS" DIFF_FILES="$WORKFLOW_TOUCHING_DIFF" \
+        run_capture "$PR" "$STARTED" --execution-file "$ERROR_EXEC")"
+  check "STEP A precedence: execution-file is_error still wins over guard detection -> exit 1" \
+    "1" "$rc"
+  check "  ...stderr still names 'review agent errored'" "yes" \
+    "$(grep -qiF 'review agent errored' "$STDERR_FILE" && echo yes || echo no)"
+  check "  ...stderr has no guard vocabulary (STEP A short-circuits before STEP B)" "no" \
+    "$(grep -qi 'workflow validation' "$STDERR_FILE" && echo yes || echo no)"
+
   # --- 10) cwd-independence guard -----------------------------------------------
   mkdir -p "$WORK/sub"
   a="$(COMMENTS_JSON="$FRESH_LGTM_COMMENTS" run_capture "$PR" "$STARTED")"
@@ -260,6 +364,17 @@ else
 fi
 check "GH token reaches the verification step via an env: mapping, not inline in run:" \
   "env-mapping" "$token_status"
+
+# --- 11b) static guard: workflow-validation-guard regression comment ----------
+# Pins the required regression-comment update in code-review.yml (mirroring the
+# section-11 grep-guard style): the workflow file must itself document the
+# workflow-validation-guard behavior (claude-code-action@v1 silently skipping
+# the review agent on PRs whose diff touches this very file) so future editors
+# don't reintroduce the misleading generic "rerun" message on that path.
+workflow_guard_hits=$(grep -ci -- 'workflow validation' "$CODE_REVIEW_YML" 2>/dev/null) || true
+if [[ "$workflow_guard_hits" -ge 1 ]]; then workflow_guard_documented=yes; else workflow_guard_documented=no; fi
+check "code-review.yml documents the workflow-validation guard" \
+  "yes" "$workflow_guard_documented"
 
 # --- 12) static guard: self-wiring into ralph-fleet-tests.yml -----------------
 run_list_hits=$(grep -cF -- 'test_assert_review_posted.sh' "$FLEET_TESTS_YML" 2>/dev/null) || true
