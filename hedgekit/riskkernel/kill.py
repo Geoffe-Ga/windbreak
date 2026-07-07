@@ -22,6 +22,15 @@ poll- or event-driven with no unbounded waits: the fleet drives them one beat
 at a time. :class:`KillIntegration` bundles the switch and its adapters into
 the single value the Risk Kernel process consumes.
 
+**Wiring status (issue #35, follow-up tracked in #144):** these adapters are
+fully built and tested here, but they are *not yet composed into the live
+``hedgekit run`` process* -- ``hedgekit/main.py`` never constructs a
+:class:`~hedgekit.riskkernel.process.RiskKernel` or a :class:`KillIntegration`,
+and ``process.main()`` does not yet pass ``kill_integration=``. Until that
+wiring lands, ``hedgekit kill`` writes a ``KILL`` file that no running kernel
+polls, so it does *not* halt a live deployment; the ``KILL`` file's presence is
+the durable signal a wired watcher *will* act on once composed.
+
 Everything on this path is float-free (SPEC S6.1): epoch seconds and kill
 sequence numbers are ``int`` only.
 """
@@ -280,9 +289,14 @@ class KillSwitch:
         """Drop an empty ``KILL`` file when a state directory is wired.
 
         The file's mere presence -- never its content -- is the durable kill
-        signal a restarted process or a peer watcher reads.
+        signal a restarted process or a peer watcher reads. The directory is
+        created (parents included) first: a non-CLI trigger (dashboard,
+        auto-reconciliation) can fire against a fresh ``state_dir`` before
+        ``hedgekit kill`` has ever run, and the fail-toward-dead file write must
+        never be defeated by a missing directory.
         """
         if self._state_dir is not None:
+            self._state_dir.mkdir(parents=True, exist_ok=True)
             self._state_dir.joinpath(KILL_FILENAME).write_text("", encoding="utf-8")
 
 

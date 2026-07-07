@@ -403,6 +403,24 @@ def test_kill_with_state_dir_wired_writes_a_kill_file(tmp_path: Path) -> None:
     assert (tmp_path / "KILL").exists()
 
 
+def test_kill_creates_missing_state_dir_before_writing_kill_file(
+    tmp_path: Path,
+) -> None:
+    """A non-CLI trigger against a not-yet-created `state_dir` still lands the
+    `KILL` file: `kill()` creates the directory (parents included) rather than
+    raising `FileNotFoundError`, so the fail-toward-dead file write can never be
+    defeated by a missing directory (reviewer finding, PR #134).
+    """
+    missing_state_dir = tmp_path / "not" / "yet" / "created"
+    assert not missing_state_dir.exists()
+    switch, _writer, machine, _sink = _build_switch(state_dir=missing_state_dir)
+
+    switch.kill(KillTrigger.AUTO_RECONCILIATION)
+
+    assert (missing_state_dir / "KILL").exists()
+    assert machine.mode is Mode.KILLED
+
+
 # --- Kill-effect surface: multiple active reservations ---------------------------
 
 
