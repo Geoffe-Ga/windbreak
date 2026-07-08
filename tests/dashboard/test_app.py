@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import dataclasses
 import http.server
+import json
 import threading
 import urllib.error
 import urllib.request
@@ -414,3 +415,336 @@ class TestStatusSourceFreshness:
         assert "PAPER" in second_body
         assert "2026-02-02T00:00:00Z" in second_body
         assert first_body != second_body
+
+
+# --- issue #57: dashboard ack surface (POST /ack, GET /acks) -------------------
+#
+# `create_server` does not yet accept `ack_granter`/`pending_acks_source`, so
+# every fixture/test below that passes one fails at call time with
+# `TypeError: create_server() got an unexpected keyword argument
+# 'ack_granter'` (or `'pending_acks_source'`) -- the expected Gate 1 RED state
+# for issue #57's dashboard ack surface, mirroring
+# `tests/dashboard/test_app_scheduler_routes.py`'s identical
+# not-yet-recognized-keyword pattern for issue #48's `read_models_source`.
+
+
+def _post(
+    address: tuple[str, int],
+    path: str,
+    *,
+    json_body: dict[str, object],
+    headers: dict[str, str] | None = None,
+) -> tuple[int, dict[str, str], str]:
+    """Perform a single bounded POST request against the dashboard server.
+
+    Args:
+        address: The `(host, port)` tuple the server is bound to.
+        path: The request path.
+        json_body: The JSON-encodable request body.
+        headers: Optional additional request headers (e.g. `Authorization`).
+
+    Returns:
+        A `(status_code, response_headers, body_text)` tuple. HTTP error
+        responses (4xx/5xx) are captured via `urllib.error.HTTPError` rather
+        than raised, so callers can assert on them directly.
+    """
+    host, port = address
+    url = f"http://{host}:{port}{path}"
+    body = json.dumps(json_body).encode("utf-8")
+    all_headers = {"Content-Type": "application/json", **(headers or {})}
+    request = urllib.request.Request(url, data=body, method="POST", headers=all_headers)
+    try:
+        with _HTTP_ONLY_OPENER.open(
+            request, timeout=_REQUEST_TIMEOUT_SECONDS
+        ) as response:
+            return (
+                response.status,
+                dict(response.headers),
+                response.read().decode("utf-8"),
+            )
+    except urllib.error.HTTPError as exc:
+        return exc.code, dict(exc.headers), exc.read().decode("utf-8")
+
+
+class TestDashboardAckRoutes:
+    """Failing-first tests for `POST /ack` and `GET /acks` (issue #57, RED).
+
+    Proposed shape (implementation specialist: confirm or rename):
+    `create_server` gains two new optional keyword-only parameters,
+    `ack_granter: Callable[[str], None] | None = None` and
+    `pending_acks_source: Callable[[], tuple[PendingHumanAck, ...]] | None =
+    None`. `POST /ack` reads a JSON body `{"approval_id": "..."}`; both new
+    routes share the existing bearer-token gate. With no `ack_granter`
+    wired, an authenticated `POST /ack` 404s (mirrors "unwired seam" rather
+    than the views' "render empty" precedent, since granting nothing is not
+    a meaningful default the way an empty read-model list is).
+    """
+
+    def test_post_ack_without_bearer_token_returns_401(self) -> None:
+        """`POST /ack` is gated behind the same bearer auth as every other route."""
+        from windbreak.dashboard.app import create_server
+
+        granted: list[str] = []
+        server = create_server(
+            token=TEST_TOKEN,
+            status_source=lambda: DashboardStatus(mode="RESEARCH", last_heartbeat=None),
+            port=0,
+            ack_granter=granted.append,
+        )
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            status, headers, _body = _post(
+                server.server_address, "/ack", json_body={"approval_id": "aa" * 16}
+            )
+            assert status == 401
+            assert "WWW-Authenticate" in headers
+            assert granted == []
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+            server.server_close()
+
+    def test_post_ack_with_no_ack_granter_wired_returns_404(self) -> None:
+        """With no `ack_granter` seam wired, an authenticated `POST /ack` 404s."""
+        from windbreak.dashboard.app import create_server
+
+        server = create_server(
+            token=TEST_TOKEN,
+            status_source=lambda: DashboardStatus(mode="RESEARCH", last_heartbeat=None),
+            port=0,
+        )
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            status, _headers, _body = _post(
+                server.server_address,
+                "/ack",
+                json_body={"approval_id": "aa" * 16},
+                headers=_bearer(TEST_TOKEN),
+            )
+            assert status == 404
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+            server.server_close()
+
+    def test_post_ack_authorized_and_wired_grants_the_named_approval(self) -> None:
+        """An authenticated `POST /ack` with `ack_granter` wired calls it with
+        the posted `approval_id` and returns success.
+        """
+        from windbreak.dashboard.app import create_server
+
+        granted: list[str] = []
+        server = create_server(
+            token=TEST_TOKEN,
+            status_source=lambda: DashboardStatus(mode="RESEARCH", last_heartbeat=None),
+            port=0,
+            ack_granter=granted.append,
+        )
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            approval_id = "bb" * 16
+            status, _headers, _body = _post(
+                server.server_address,
+                "/ack",
+                json_body={"approval_id": approval_id},
+                headers=_bearer(TEST_TOKEN),
+            )
+            assert status == 200
+            assert granted == [approval_id]
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+            server.server_close()
+
+    def test_post_ack_with_a_non_hex_approval_id_returns_400_and_grants_nothing(
+        self,
+    ) -> None:
+        """A posted id that is not 32 lowercase hex is rejected before the granter.
+
+        The granter is the seam that may drop a drop-box file keyed on the id, so
+        a traversal-shaped or otherwise ill-formed value must never reach it; the
+        handler fails closed with a 400 and calls the granter zero times.
+        """
+        from windbreak.dashboard.app import create_server
+
+        granted: list[str] = []
+        server = create_server(
+            token=TEST_TOKEN,
+            status_source=lambda: DashboardStatus(mode="RESEARCH", last_heartbeat=None),
+            port=0,
+            ack_granter=granted.append,
+        )
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            status, _headers, _body = _post(
+                server.server_address,
+                "/ack",
+                json_body={"approval_id": "../../etc/passwd"},
+                headers=_bearer(TEST_TOKEN),
+            )
+            assert status == 400
+            assert granted == []
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+            server.server_close()
+
+    def test_post_ack_with_a_body_missing_the_approval_id_key_returns_400(
+        self,
+    ) -> None:
+        """A well-formed JSON body without an ``approval_id`` fails closed as 400."""
+        from windbreak.dashboard.app import create_server
+
+        granted: list[str] = []
+        server = create_server(
+            token=TEST_TOKEN,
+            status_source=lambda: DashboardStatus(mode="RESEARCH", last_heartbeat=None),
+            port=0,
+            ack_granter=granted.append,
+        )
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            status, _headers, _body = _post(
+                server.server_address,
+                "/ack",
+                json_body={"not_the_key": "value"},
+                headers=_bearer(TEST_TOKEN),
+            )
+            assert status == 400
+            assert granted == []
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+            server.server_close()
+
+    def test_post_ack_with_an_oversized_body_returns_400_and_grants_nothing(
+        self,
+    ) -> None:
+        """A body larger than the small size cap is rejected before it is read.
+
+        A valid ``POST /ack`` body is a tiny JSON object; anything larger is
+        refused with a 400 rather than read into memory, so an authenticated
+        client cannot force an unbounded read.
+        """
+        from windbreak.dashboard.app import create_server
+
+        granted: list[str] = []
+        server = create_server(
+            token=TEST_TOKEN,
+            status_source=lambda: DashboardStatus(mode="RESEARCH", last_heartbeat=None),
+            port=0,
+            ack_granter=granted.append,
+        )
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            status, _headers, _body = _post(
+                server.server_address,
+                "/ack",
+                json_body={"approval_id": "a" * 1024},
+                headers=_bearer(TEST_TOKEN),
+            )
+            assert status == 400
+            assert granted == []
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+            server.server_close()
+
+    def test_post_ack_with_a_non_json_body_returns_400_and_grants_nothing(
+        self,
+    ) -> None:
+        """An undecodable / non-JSON body fails closed as a 400, granting nothing."""
+        from windbreak.dashboard.app import create_server
+
+        granted: list[str] = []
+        server = create_server(
+            token=TEST_TOKEN,
+            status_source=lambda: DashboardStatus(mode="RESEARCH", last_heartbeat=None),
+            port=0,
+            ack_granter=granted.append,
+        )
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            host, port = server.server_address
+            request = urllib.request.Request(
+                f"http://{host}:{port}/ack",
+                data=b"this-is-not-json",
+                method="POST",
+                headers={"Content-Type": "application/json", **_bearer(TEST_TOKEN)},
+            )
+            try:
+                with _HTTP_ONLY_OPENER.open(
+                    request, timeout=_REQUEST_TIMEOUT_SECONDS
+                ) as response:
+                    status = response.status
+            except urllib.error.HTTPError as exc:
+                status = exc.code
+            assert status == 400
+            assert granted == []
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+            server.server_close()
+
+    def test_get_acks_without_bearer_token_returns_401(self) -> None:
+        """`GET /acks` is gated behind the same bearer auth as every other route."""
+        from windbreak.dashboard.app import create_server
+
+        server = create_server(
+            token=TEST_TOKEN,
+            status_source=lambda: DashboardStatus(mode="RESEARCH", last_heartbeat=None),
+            port=0,
+            pending_acks_source=lambda: (),
+        )
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            status, headers, _body = _get(server.server_address, "/acks")
+            assert status == 401
+            assert "WWW-Authenticate" in headers
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+            server.server_close()
+
+    def test_get_acks_renders_pending_acks_from_the_injected_source(self) -> None:
+        """`GET /acks`, authenticated, renders the pending acks the injected
+        source currently returns.
+        """
+        from windbreak.dashboard.app import create_server
+        from windbreak.numeric.types import MoneyMicros
+        from windbreak.riskkernel.human_ack import PendingHumanAck
+
+        pending = PendingHumanAck(
+            approval_id="cc" * 16,
+            intent_id="intent-needing-ack",
+            worst_case_cost=MoneyMicros(5_000_000),
+            requested_at=1_700_000_000,
+            expires_at=1_700_003_600,
+        )
+        server = create_server(
+            token=TEST_TOKEN,
+            status_source=lambda: DashboardStatus(mode="RESEARCH", last_heartbeat=None),
+            port=0,
+            pending_acks_source=lambda: (pending,),
+        )
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            status, _headers, body = _get(
+                server.server_address, "/acks", headers=_bearer(TEST_TOKEN)
+            )
+            assert status == 200
+            assert "intent-needing-ack" in body
+            assert pending.approval_id in body
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+            server.server_close()

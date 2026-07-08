@@ -16,16 +16,23 @@ from typing import TYPE_CHECKING, Any, cast
 import pytest
 
 from windbreak.connector.kalshi.client import (
+    KALSHI_API_BASE,
     KalshiApiError,
     KalshiClient,
     KalshiResponse,
     _RedirectFreeSession,
 )
+from windbreak.net.allowlist import OutboundAllowlist
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
     import requests
+
+#: Allowlist admitting the non-canonical fake host every construction below
+#: uses, now that ``KalshiClient`` enforces its base URL host at construction
+#: (issue #57).
+_EXAMPLE_ALLOWLIST = OutboundAllowlist(frozenset({"example.kalshi.test"}))
 
 
 class _FakeResponse:
@@ -94,7 +101,10 @@ def test_get_joins_quoted_segments_onto_base_url() -> None:
     clean_orderbook = {"orderbook": {"yes": [], "no": []}}
     session = _RecordingSession(_FakeResponse(200, clean_orderbook))
     client = KalshiClient(
-        base_url="https://example.kalshi.test", timeout=7, session=session
+        base_url="https://example.kalshi.test",
+        allowlist=_EXAMPLE_ALLOWLIST,
+        timeout=7,
+        session=session,
     )
 
     client.get("markets", "AB/CD E", "orderbook")
@@ -112,7 +122,10 @@ def test_get_forwards_params_and_int_timeout() -> None:
     # forwarding, so a valid empty page keeps its intent intact.
     session = _RecordingSession(_FakeResponse(200, {"markets": [], "cursor": ""}))
     client = KalshiClient(
-        base_url="https://example.kalshi.test", timeout=9, session=session
+        base_url="https://example.kalshi.test",
+        allowlist=_EXAMPLE_ALLOWLIST,
+        timeout=9,
+        session=session,
     )
 
     client.get("markets", params={"cursor": "abc"})
@@ -139,7 +152,10 @@ def test_non_2xx_status_raises_kalshi_api_error_naming_the_status(
     """
     session = _RecordingSession(_FakeResponse(status_code, {"error": "nope"}))
     client = KalshiClient(
-        base_url="https://example.kalshi.test", session=session, resilience=None
+        base_url="https://example.kalshi.test",
+        allowlist=_EXAMPLE_ALLOWLIST,
+        session=session,
+        resilience=None,
     )
 
     with pytest.raises(KalshiApiError, match=str(status_code)):
@@ -153,7 +169,11 @@ def test_status_299_is_accepted_as_success() -> None:
     so a ``<=``-to-``<`` mutation on the upper bound is caught.
     """
     session = _RecordingSession(_FakeResponse(299, {"markets": []}, headers={}))
-    client = KalshiClient(base_url="https://example.kalshi.test", session=session)
+    client = KalshiClient(
+        base_url="https://example.kalshi.test",
+        allowlist=_EXAMPLE_ALLOWLIST,
+        session=session,
+    )
 
     assert client.get("markets").payload == {"markets": []}
 
@@ -164,7 +184,11 @@ def test_2xx_returns_kalshi_response_with_payload_and_parsed_date() -> None:
     session = _RecordingSession(
         _FakeResponse(200, {"markets": []}, headers={"Date": format_datetime(fixed)})
     )
-    client = KalshiClient(base_url="https://example.kalshi.test", session=session)
+    client = KalshiClient(
+        base_url="https://example.kalshi.test",
+        allowlist=_EXAMPLE_ALLOWLIST,
+        session=session,
+    )
 
     response = client.get("markets")
 
@@ -176,7 +200,11 @@ def test_2xx_returns_kalshi_response_with_payload_and_parsed_date() -> None:
 def test_2xx_without_date_header_has_none_server_date() -> None:
     """A missing `Date` header yields `server_date is None`, not an error."""
     session = _RecordingSession(_FakeResponse(200, {"markets": []}, headers={}))
-    client = KalshiClient(base_url="https://example.kalshi.test", session=session)
+    client = KalshiClient(
+        base_url="https://example.kalshi.test",
+        allowlist=_EXAMPLE_ALLOWLIST,
+        session=session,
+    )
 
     response = client.get("markets")
 
@@ -226,6 +254,98 @@ def test_real_transport_forbids_redirect_following() -> None:
 
 def test_client_without_injected_session_uses_redirect_free_transport() -> None:
     """Constructing without a session wraps `requests` in the redirect-free seam."""
-    client = KalshiClient(base_url="https://example.kalshi.test")
+    client = KalshiClient(
+        base_url="https://example.kalshi.test", allowlist=_EXAMPLE_ALLOWLIST
+    )
 
     assert isinstance(client._session, _RedirectFreeSession)
+
+
+# --- issue #57: outbound-network allowlist enforced at construction ------------
+#
+# `KalshiClient.__init__` does not yet accept an `allowlist` keyword, so any
+# construction call below that passes one currently fails with
+# `TypeError: __init__() got an unexpected keyword argument 'allowlist'`.
+# `test_construction_with_a_non_canonical_base_url_and_no_allowlist_raises`
+# fails for a different, independent reason: today's `KalshiClient` performs
+# no host-allowlist check at all, so a non-canonical `base_url` currently
+# constructs successfully, and the test's `pytest.raises(ValueError)` context
+# reports `DID NOT RAISE` -- both are the expected Gate 1 RED state for issue
+# #57's construction-boundary enforcement.
+#
+# NOTE (flagged for implementation to confirm): pre-issue-#57, every other
+# test in this file freely constructs `KalshiClient(base_url="https://
+# example.kalshi.test", ...)` -- a *non-canonical* host -- with no
+# `allowlist` at all. Once construction-time allowlist enforcement lands as
+# specified below, every one of those pre-existing calls will also need an
+# explicit `allowlist` (or a canonical `base_url`) to keep constructing; this
+# file does not attempt that migration itself (out of scope for a
+# test-authorship pass), but the implementation specialist should expect a
+# wide blast radius across this file's existing (currently-green) tests.
+
+
+class _NeverCalledSession:
+    """A `Session` double whose `.get` fails the test if ever invoked.
+
+    Used to prove `KalshiClient` never reaches the network when construction
+    itself is rejected by the outbound allowlist.
+    """
+
+    def get(
+        self,
+        url: str,
+        *,
+        params: Mapping[str, str] | None,
+        timeout: int,
+    ) -> _FakeResponse:
+        """Fail the test: construction must reject before any network call.
+
+        Args:
+            url: The request URL (unused; this must never be reached).
+            params: Query parameters (unused).
+            timeout: The request timeout (unused).
+        """
+        del url, params, timeout
+        raise AssertionError(
+            "KalshiClient must reject a disallowed base_url at construction, "
+            "before ever calling session.get"
+        )
+
+
+def test_construction_with_a_non_canonical_base_url_and_no_allowlist_raises() -> None:
+    """A `base_url` other than the canonical `KALSHI_API_BASE`, with no
+    explicit `allowlist` supplied, is rejected at construction -- before any
+    network call -- rather than silently trusting an arbitrary host.
+    """
+    with pytest.raises(ValueError):
+        KalshiClient(
+            base_url="https://not-the-real-kalshi.example.com/trade-api/v2",
+            session=_NeverCalledSession(),
+        )
+
+
+def test_construction_with_an_explicit_allowlist_omitting_the_host_raises() -> None:
+    """An explicit `allowlist` that does not include the requested
+    `base_url`'s host also rejects construction, and the session's `.get` is
+    never called.
+    """
+    from windbreak.net.allowlist import OutboundAllowlist
+
+    allowlist = OutboundAllowlist(frozenset({"some-other-host.example.com"}))
+
+    with pytest.raises(ValueError):
+        KalshiClient(
+            base_url="https://not-the-real-kalshi.example.com/trade-api/v2",
+            session=_NeverCalledSession(),
+            allowlist=allowlist,
+        )
+
+
+def test_stock_construction_against_the_canonical_base_url_still_works() -> None:
+    """`KalshiClient(session=<spy>)` against the default `KALSHI_API_BASE`
+    still constructs with no explicit `allowlist` -- the canonical host is
+    always implicitly permitted.
+    """
+    client = KalshiClient(session=_NeverCalledSession())
+
+    assert client._base_url == KALSHI_API_BASE

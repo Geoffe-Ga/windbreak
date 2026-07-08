@@ -12,6 +12,7 @@ import argparse
 import logging
 import math
 import os
+import re
 import signal
 import threading
 from dataclasses import dataclass, field
@@ -28,6 +29,7 @@ from windbreak.config import (
 )
 from windbreak.ledger import rebuild_command
 from windbreak.logging_setup import configure_logging
+from windbreak.riskkernel.ack_flow import ACKS_DIRNAME
 from windbreak.riskkernel.kill import KILL_FILENAME, REARM_FILENAME
 
 if TYPE_CHECKING:
@@ -73,7 +75,32 @@ _REASON_SIGNAL = "signal"
 #: Log-friendly source label for a configuration built from built-in defaults.
 _DEFAULTS_SOURCE_LABEL = "<defaults>"
 
+#: An approval id is exactly 32 lowercase hex characters -- the shape
+#: ``HumanAckQueue`` mints via ``secrets.token_hex(16)`` -- so the ``ack`` verb
+#: rejects any other token as a usage error before writing a bogus drop-box file.
+_APPROVAL_ID_PATTERN = re.compile(r"[0-9a-f]{32}")
+
 _LOGGER = logging.getLogger("windbreak")
+
+
+def _approval_id(raw: str) -> str:
+    """Parse a 32-hex-character approval id for use as an argparse ``type``.
+
+    Args:
+        raw: The raw command-line token.
+
+    Returns:
+        The validated approval id, unchanged.
+
+    Raises:
+        argparse.ArgumentTypeError: If ``raw`` is not exactly 32 lowercase hex
+            characters.
+    """
+    if _APPROVAL_ID_PATTERN.fullmatch(raw) is None:
+        raise argparse.ArgumentTypeError(
+            "approval id must be exactly 32 lowercase hex characters"
+        )
+    return raw
 
 
 @dataclass
@@ -239,6 +266,26 @@ def _add_kill_arguments(kill_parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_ack_arguments(ack_parser: argparse.ArgumentParser) -> None:
+    """Register the ``ack`` subcommand's options on its subparser.
+
+    Args:
+        ack_parser: The ``ack`` subparser to populate with options.
+    """
+    ack_parser.add_argument(
+        "--approval-id",
+        type=_approval_id,
+        required=True,
+        help="The 32-hex-character approval id to acknowledge.",
+    )
+    ack_parser.add_argument(
+        "--state-dir",
+        type=Path,
+        required=True,
+        help="Directory whose acks/ drop-box the ack file is written into.",
+    )
+
+
 def _add_rearm_arguments(rearm_parser: argparse.ArgumentParser) -> None:
     """Register the ``rearm`` subcommand's options on its subparser.
 
@@ -293,7 +340,8 @@ def build_parser() -> argparse.ArgumentParser:
         ``--heartbeat-interval``, ``--max-beats``, ``--process``,
         ``--snapshot-fixture-dir``, and ``--config``; a ``rebuild`` subcommand
         exposing ``--ledger-path`` and ``--output-dir``; ``kill`` and ``rearm``
-        subcommands exposing ``--state-dir``; and a developer-only
+        subcommands exposing ``--state-dir``; an ``ack`` subcommand exposing
+        ``--approval-id`` and ``--state-dir``; and a developer-only
         ``alert-test`` subcommand hidden from ``--help``.
     """
     parser = argparse.ArgumentParser(
@@ -315,6 +363,12 @@ def build_parser() -> argparse.ArgumentParser:
     _add_kill_arguments(
         subparsers.add_parser(
             "kill", help="Engage the kill switch (write a KILL file)."
+        )
+    )
+    _add_ack_arguments(
+        subparsers.add_parser(
+            "ack",
+            help="Grant a human acknowledgement (write an acks/<id> file).",
         )
     )
     _add_rearm_arguments(
@@ -535,6 +589,28 @@ def _run_kill(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_ack(args: argparse.Namespace) -> int:
+    """Grant a human acknowledgement by dropping a file into ``acks/``.
+
+    Writes an empty file at ``<state-dir>/acks/<approval-id>`` -- the
+    presence-driven signal :class:`windbreak.riskkernel.ack_flow.AckFileWatcher`
+    polls for, mirroring ``windbreak kill``'s ``KILL``-file convention. The
+    approval id is already validated (32 hex chars) by the argparse ``type``, so
+    a malformed id is rejected before this runs and no file is ever written. No
+    network, no credentials.
+
+    Args:
+        args: Parsed ``ack`` arguments carrying ``approval_id`` and ``state_dir``.
+
+    Returns:
+        The process exit code (always 0).
+    """
+    acks_dir = args.state_dir / ACKS_DIRNAME
+    acks_dir.mkdir(parents=True, exist_ok=True)
+    (acks_dir / args.approval_id).write_text("", encoding="utf-8")
+    return 0
+
+
 def _run_rearm(args: argparse.Namespace) -> int:
     """Write the typed re-arm phrase *verbatim* to a ``REARM`` file.
 
@@ -737,6 +813,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return rebuild_command(args)
     if args.command == "kill":
         return _run_kill(args)
+    if args.command == "ack":
+        return _run_ack(args)
     if args.command == "rearm":
         return _run_rearm(args)
     if args.command == "alert-test":

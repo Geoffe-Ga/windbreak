@@ -269,6 +269,75 @@ def test_build_parser_new_paper_loop_flags_default_to_none() -> None:
     assert args.report_dir is None
 
 
+# --- issue #57: `windbreak ack --approval-id <32-hex>` -------------------------
+#
+# `build_parser()` does not yet register an `ack` subcommand, so every
+# `parse_args`/`main` call below currently fails with `SystemExit(2)`
+# ("invalid choice: 'ack'") -- the expected Gate 1 RED state for issue #57's
+# ack CLI verb (the dashboard/watcher-facing counterpart to `windbreak kill`).
+# Approval ids below are obviously-fake, low-entropy repeated hex pairs (never
+# a realistic high-entropy secret), mirroring `windbreak/riskkernel/human_ack.py`'s
+# own 32-hex-character `secrets.token_hex(16)` shape.
+
+
+def test_build_parser_parses_ack_with_a_valid_approval_id_and_state_dir() -> None:
+    """`ack --approval-id <32-hex> --state-dir DIR` parses cleanly."""
+    approval_id = "ab" * 16
+    args = build_parser().parse_args(
+        ["ack", "--approval-id", approval_id, "--state-dir", "/tmp/state"]
+    )
+
+    assert args.command == "ack"
+    assert args.approval_id == approval_id
+
+
+def test_build_parser_rejects_a_malformed_approval_id() -> None:
+    """An approval id that is not exactly 32 lowercase hex characters is a
+    usage error (`SystemExit(2)`), not a silently-accepted value.
+    """
+    parser = build_parser()
+
+    with pytest.raises(SystemExit) as exc_info:
+        parser.parse_args(
+            ["ack", "--approval-id", "not-hex-at-all", "--state-dir", "/tmp/state"]
+        )
+
+    assert exc_info.value.code == 2
+
+
+def test_main_ack_subcommand_writes_the_ack_file_and_exits_zero(
+    tmp_path: Path,
+) -> None:
+    """`windbreak ack --approval-id ID --state-dir DIR` writes an empty file
+    at `DIR/acks/ID` and exits 0 -- the presence-driven signal
+    `windbreak.riskkernel.ack_flow.AckFileWatcher` polls for, mirroring
+    `windbreak kill`'s `KILL`-file convention.
+    """
+    approval_id = "cd" * 16
+
+    exit_code = main(
+        ["ack", "--approval-id", approval_id, "--state-dir", str(tmp_path)]
+    )
+
+    assert exit_code == 0
+    ack_file = tmp_path / "acks" / approval_id
+    assert ack_file.exists()
+    assert ack_file.read_text(encoding="utf-8") == ""
+
+
+def test_main_ack_subcommand_with_a_malformed_id_writes_no_file(
+    tmp_path: Path,
+) -> None:
+    """A malformed `--approval-id` is rejected before any file is ever
+    written -- a usage error, not a silently-created bogus ack file.
+    """
+    with pytest.raises(SystemExit) as exc_info:
+        main(["ack", "--approval-id", "ZZ-not-hex", "--state-dir", str(tmp_path)])
+
+    assert exc_info.value.code == 2
+    assert not (tmp_path / "acks").exists()
+
+
 def test_main_run_with_only_ledger_path_flag_never_creates_a_ledger(
     tmp_path: Path,
 ) -> None:

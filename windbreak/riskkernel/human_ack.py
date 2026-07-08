@@ -251,6 +251,29 @@ class HumanAckQueue:
                     record.pending.intent_id, reason=_LAPSED_RELEASE_REASON
                 )
 
+    def pending_acks(self, now: int) -> tuple[PendingHumanAck, ...]:
+        """Return every still-pending acknowledgement request.
+
+        A read-only accessor for the dashboard's ``GET /acks`` view (issue #57):
+        it reports the requests still awaiting an operator grant, in issue
+        order. A granted or lapsed request is excluded.
+
+        Args:
+            now: The current epoch second (unused: pending status is tracked
+                explicitly by :meth:`expire_due`, not recomputed from ``now``,
+                so a request stays pending until it is granted or expired).
+
+        Returns:
+            A tuple of the :class:`PendingHumanAck` records whose status is
+            still ``PENDING``.
+        """
+        del now  # Pending status is explicit; `now` cannot reclassify a record.
+        return tuple(
+            record.pending
+            for record in self._records.values()
+            if record.status is _AckStatus.PENDING
+        )
+
     def acknowledged_intent_ids(self, now: int) -> frozenset[str]:
         """Return the intent ids with a granted acknowledgement.
 

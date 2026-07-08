@@ -51,6 +51,7 @@ import pytest
 from windbreak.connector.kalshi.adapter import KalshiConnector
 from windbreak.connector.kalshi.client import KalshiClient
 from windbreak.connector.snapshot import InMemoryEventLedgerWriter
+from windbreak.net.allowlist import OutboundAllowlist
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -73,6 +74,10 @@ _FIXED_SERVER_DATE = datetime(2024, 12, 1, 0, 0, 0, tzinfo=UTC)
 #: The base URL every fake-backed `KalshiClient` in this suite is built
 #: against; never dialed for real (SPEC S7.1: CI runs offline).
 _FAKE_BASE_URL = "https://fake-kalshi.test"
+
+#: Allowlist admitting the fake host, now that ``KalshiClient`` enforces its
+#: base URL host at construction (issue #57).
+_FAKE_ALLOWLIST = OutboundAllowlist(frozenset({"fake-kalshi.test"}))
 
 
 def _read_fixture(name: str) -> Any:
@@ -249,7 +254,12 @@ def fake_kalshi_session() -> FakeKalshiSession:
 @pytest.fixture
 def fake_kalshi_client(fake_kalshi_session: FakeKalshiSession) -> KalshiClient:
     """Provide a `KalshiClient` wired to the fake session (no network)."""
-    return KalshiClient(base_url=_FAKE_BASE_URL, timeout=5, session=fake_kalshi_session)
+    return KalshiClient(
+        base_url=_FAKE_BASE_URL,
+        allowlist=_FAKE_ALLOWLIST,
+        timeout=5,
+        session=fake_kalshi_session,
+    )
 
 
 @pytest.fixture
@@ -272,7 +282,9 @@ def kalshi_connector_missing_date_header(
     venue's response carries no `Date` header at all.
     """
     session = FakeKalshiSession(include_date_header=False)
-    client = KalshiClient(base_url=_FAKE_BASE_URL, timeout=5, session=session)
+    client = KalshiClient(
+        base_url=_FAKE_BASE_URL, allowlist=_FAKE_ALLOWLIST, timeout=5, session=session
+    )
     return KalshiConnector(client, ledger, clock=clock)
 
 
@@ -287,7 +299,10 @@ def kalshi_malformed_fee_connector(
     rather than misinterpret the schedule.
     """
     client = KalshiClient(
-        base_url=_FAKE_BASE_URL, timeout=5, session=_MalformedSeriesSession()
+        base_url=_FAKE_BASE_URL,
+        allowlist=_FAKE_ALLOWLIST,
+        timeout=5,
+        session=_MalformedSeriesSession(),
     )
     return KalshiConnector(client, ledger, clock=clock)
 

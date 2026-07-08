@@ -44,6 +44,7 @@ from windbreak.connector.validation import (
     SchemaValidator,
     kalshi_default_schema_registry,
 )
+from windbreak.net.allowlist import OutboundAllowlist
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -56,6 +57,10 @@ if TYPE_CHECKING:
 _FIXTURE_DIR = Path(__file__).resolve().parents[2] / "fixtures" / "exchange" / "kalshi"
 
 _FAKE_BASE_URL = "https://fake-kalshi.test"
+
+#: Allowlist admitting the fake host, now that ``KalshiClient`` enforces its
+#: base URL host at construction (issue #57).
+_FAKE_ALLOWLIST = OutboundAllowlist(frozenset({"fake-kalshi.test"}))
 
 
 def _read_fixture(relative_name: str) -> Any:
@@ -252,7 +257,11 @@ def test_get_recovers_after_two_5xx_then_a_200(
         wall_clock=clock,
     )
     client = KalshiClient(
-        base_url=_FAKE_BASE_URL, timeout=5, session=session, resilience=resilience
+        base_url=_FAKE_BASE_URL,
+        allowlist=_FAKE_ALLOWLIST,
+        timeout=5,
+        session=session,
+        resilience=resilience,
     )
 
     response = client.get("markets", "KXFED-24DEC", "orderbook")
@@ -282,7 +291,11 @@ def test_persistent_5xx_exhausts_retries_and_eventually_trips_the_breaker(
         wall_clock=clock,
     )
     client = KalshiClient(
-        base_url=_FAKE_BASE_URL, timeout=5, session=session, resilience=resilience
+        base_url=_FAKE_BASE_URL,
+        allowlist=_FAKE_ALLOWLIST,
+        timeout=5,
+        session=session,
+        resilience=resilience,
     )
 
     with pytest.raises(KalshiApiError):
@@ -324,7 +337,11 @@ def test_get_recovers_after_a_429_then_a_200(
         wall_clock=clock,
     )
     client = KalshiClient(
-        base_url=_FAKE_BASE_URL, timeout=5, session=session, resilience=resilience
+        base_url=_FAKE_BASE_URL,
+        allowlist=_FAKE_ALLOWLIST,
+        timeout=5,
+        session=session,
+        resilience=resilience,
     )
 
     response = client.get("markets", "KXFED-24DEC", "orderbook")
@@ -366,7 +383,11 @@ def test_get_recovers_after_a_malformed_body_then_a_200(
         wall_clock=clock,
     )
     client = KalshiClient(
-        base_url=_FAKE_BASE_URL, timeout=5, session=session, resilience=resilience
+        base_url=_FAKE_BASE_URL,
+        allowlist=_FAKE_ALLOWLIST,
+        timeout=5,
+        session=session,
+        resilience=resilience,
     )
 
     response = client.get("markets", "KXFED-24DEC", "orderbook")
@@ -400,7 +421,11 @@ def test_persistent_malformed_body_exhausts_retries_and_surfaces(
         wall_clock=clock,
     )
     client = KalshiClient(
-        base_url=_FAKE_BASE_URL, timeout=5, session=session, resilience=resilience
+        base_url=_FAKE_BASE_URL,
+        allowlist=_FAKE_ALLOWLIST,
+        timeout=5,
+        session=session,
+        resilience=resilience,
     )
 
     with pytest.raises(ValueError, match="truncated body"):
@@ -438,6 +463,7 @@ def test_default_client_trips_the_breaker_under_a_5xx_storm(
     )
     client = KalshiClient(
         base_url=_FAKE_BASE_URL,
+        allowlist=_FAKE_ALLOWLIST,
         timeout=5,
         session=session,
         resilience_policy=policy,
@@ -488,7 +514,11 @@ def test_default_client_token_bucket_gates_real_client_requests(
         wall_clock=clock,
     )
     client = KalshiClient(
-        base_url=_FAKE_BASE_URL, timeout=5, session=session, resilience=caller
+        base_url=_FAKE_BASE_URL,
+        allowlist=_FAKE_ALLOWLIST,
+        timeout=5,
+        session=session,
+        resilience=caller,
     )
 
     client.get("markets", "KXFED-24DEC", "orderbook")  # consumes the sole token
@@ -526,6 +556,7 @@ def test_money_field_drift_halts_and_bypasses_the_retry_loop_entirely(
     )
     client = KalshiClient(
         base_url=_FAKE_BASE_URL,
+        allowlist=_FAKE_ALLOWLIST,
         timeout=5,
         session=session,
         resilience=resilience,
@@ -553,7 +584,9 @@ def test_cosmetic_field_drift_only_warns_and_the_call_still_succeeds(
     caplog.set_level(logging.WARNING)
     drift_payload = _read_fixture("faults/orderbook_drift_cosmetic.json")
     session = _SingleRouteSession(200, drift_payload)
-    client = KalshiClient(base_url=_FAKE_BASE_URL, timeout=5, session=session)
+    client = KalshiClient(
+        base_url=_FAKE_BASE_URL, allowlist=_FAKE_ALLOWLIST, timeout=5, session=session
+    )
 
     response = client.get("markets", "KXFED-24DEC", "orderbook")
 
@@ -600,7 +633,9 @@ def test_get_order_book_raises_maintenance_halt_when_not_open(
     session = _MaintenanceSession(
         exchange_active=exchange_active, trading_active=trading_active
     )
-    client = KalshiClient(base_url=_FAKE_BASE_URL, timeout=5, session=session)
+    client = KalshiClient(
+        base_url=_FAKE_BASE_URL, allowlist=_FAKE_ALLOWLIST, timeout=5, session=session
+    )
     connector = KalshiConnector(client, ledger, clock=clock)
 
     with pytest.raises(MaintenanceHaltError):
@@ -625,7 +660,9 @@ def test_list_markets_raises_maintenance_halt_when_not_open(
     session = _MaintenanceSession(
         exchange_active=exchange_active, trading_active=trading_active
     )
-    client = KalshiClient(base_url=_FAKE_BASE_URL, timeout=5, session=session)
+    client = KalshiClient(
+        base_url=_FAKE_BASE_URL, allowlist=_FAKE_ALLOWLIST, timeout=5, session=session
+    )
     connector = KalshiConnector(client, ledger, clock=clock)
 
     with pytest.raises(MaintenanceHaltError):
@@ -655,7 +692,9 @@ def test_get_market_raises_maintenance_halt_when_not_open(
     session = _MaintenanceSession(
         exchange_active=exchange_active, trading_active=trading_active
     )
-    client = KalshiClient(base_url=_FAKE_BASE_URL, timeout=5, session=session)
+    client = KalshiClient(
+        base_url=_FAKE_BASE_URL, allowlist=_FAKE_ALLOWLIST, timeout=5, session=session
+    )
     connector = KalshiConnector(client, ledger, clock=clock)
 
     with pytest.raises(MaintenanceHaltError):
@@ -671,7 +710,9 @@ def test_get_market_proceeds_normally_when_exchange_is_open(
 ) -> None:
     """An `"open"` exchange status lets `get_market` fetch normally (or 404)."""
     session = _MaintenanceSession(exchange_active=True, trading_active=True)
-    client = KalshiClient(base_url=_FAKE_BASE_URL, timeout=5, session=session)
+    client = KalshiClient(
+        base_url=_FAKE_BASE_URL, allowlist=_FAKE_ALLOWLIST, timeout=5, session=session
+    )
     connector = KalshiConnector(client, ledger, clock=clock)
 
     # The clean `/markets` route serves an empty page, so the ticker is absent
@@ -689,7 +730,9 @@ def test_get_order_book_proceeds_normally_when_exchange_is_open(
 ) -> None:
     """An `"open"` exchange status never triggers `MaintenanceHaltError`."""
     session = _MaintenanceSession(exchange_active=True, trading_active=True)
-    client = KalshiClient(base_url=_FAKE_BASE_URL, timeout=5, session=session)
+    client = KalshiClient(
+        base_url=_FAKE_BASE_URL, allowlist=_FAKE_ALLOWLIST, timeout=5, session=session
+    )
     connector = KalshiConnector(client, ledger, clock=clock)
 
     book = connector.get_order_book("KXFED-24DEC")
@@ -703,7 +746,9 @@ def test_list_markets_proceeds_normally_when_exchange_is_open(
 ) -> None:
     """An `"open"` exchange status never blocks `list_markets`."""
     session = _MaintenanceSession(exchange_active=True, trading_active=True)
-    client = KalshiClient(base_url=_FAKE_BASE_URL, timeout=5, session=session)
+    client = KalshiClient(
+        base_url=_FAKE_BASE_URL, allowlist=_FAKE_ALLOWLIST, timeout=5, session=session
+    )
     connector = KalshiConnector(client, ledger, clock=clock)
 
     assert connector.list_markets() == ()

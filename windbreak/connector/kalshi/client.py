@@ -30,7 +30,7 @@ from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Final, Protocol, cast
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import requests
 
@@ -43,6 +43,7 @@ from windbreak.connector.validation import (
     SchemaValidator,
     kalshi_default_schema_registry,
 )
+from windbreak.net.allowlist import EgressDeniedError, OutboundAllowlist
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -51,6 +52,13 @@ if TYPE_CHECKING:
 
 #: The current-generation Kalshi public API base (SPEC S7.1).
 KALSHI_API_BASE: Final = "https://api.elections.kalshi.com/trade-api/v2"
+
+#: The single host implicitly permitted when no explicit ``allowlist`` is
+#: supplied: exactly the canonical :data:`KALSHI_API_BASE` host, so the stock
+#: constructor works while any other base URL demands an explicit allowlist.
+_CANONICAL_ALLOWLIST_HOSTS: Final = frozenset(
+    {urlsplit(KALSHI_API_BASE).hostname or ""}
+)
 
 #: Default per-request timeout, in whole seconds (int: this is the money path).
 DEFAULT_TIMEOUT_SECONDS: Final = 10
@@ -229,11 +237,14 @@ class KalshiClient:
         resilience: ResilientCaller | None | _Unset = _DEFAULT_RESILIENCE,
         resilience_policy: ResiliencePolicy | None = None,
         validator: SchemaValidator | None = None,
+        allowlist: OutboundAllowlist | None = None,
     ) -> None:
-        """Initialize the client, validating the base URL scheme.
+        """Initialize the client, validating the base URL scheme and host.
 
         Args:
-            base_url: The API base URL; must begin with ``https://``.
+            base_url: The API base URL; must begin with ``https://`` and its host
+                must be on ``allowlist`` (or, when ``allowlist`` is ``None``, be
+                the canonical :data:`KALSHI_API_BASE` host).
             timeout: Per-request timeout, in whole seconds.
             session: An injected ``requests``-like session; a real
                 :class:`requests.Session` is created lazily when None.
@@ -253,14 +264,21 @@ class KalshiClient:
                 defaults to an on-by-default validator built from
                 :func:`kalshi_default_schema_registry`, so schema drift fails
                 closed for every endpoint unless a caller opts into another.
+            allowlist: The outbound-network allowlist ``base_url``'s host must be
+                on. ``None`` (the default) builds an allowlist of exactly the
+                canonical :data:`KALSHI_API_BASE` host, so the stock constructor
+                works but any other base URL must supply an explicit allowlist.
 
         Raises:
-            ValueError: If ``base_url`` does not begin with ``https://``.
+            ValueError: If ``base_url`` does not begin with ``https://``, or its
+                host is not permitted by ``allowlist`` -- rejected at
+                construction, before any session or network call.
         """
         if not base_url.startswith(_HTTPS_PREFIX):
             raise ValueError(
                 f"base_url must begin with {_HTTPS_PREFIX!r}, got {base_url!r}"
             )
+        self._require_allowed_host(base_url, allowlist)
         self._base_url = base_url
         self._timeout = timeout
         self._session: Session = (
@@ -279,6 +297,38 @@ class KalshiClient:
                 LoggingEventLedgerWriter(),
                 wall_clock=_default_wall_clock,
             )
+
+    @staticmethod
+    def _require_allowed_host(
+        base_url: str, allowlist: OutboundAllowlist | None
+    ) -> None:
+        """Reject a base URL whose host is off the outbound allowlist.
+
+        Runs the structural egress check at construction, translating the
+        allowlist's :class:`~windbreak.net.allowlist.EgressDeniedError` into the
+        ``ValueError`` construction contract this client already raises for a
+        bad scheme -- so a disallowed host fails closed *before* any session or
+        network call.
+
+        Args:
+            base_url: The API base URL whose host is checked.
+            allowlist: The explicit allowlist, or ``None`` to permit exactly the
+                canonical :data:`KALSHI_API_BASE` host.
+
+        Raises:
+            ValueError: If ``base_url``'s host is not permitted.
+        """
+        effective = (
+            allowlist
+            if allowlist is not None
+            else OutboundAllowlist(_CANONICAL_ALLOWLIST_HOSTS)
+        )
+        try:
+            effective.require(base_url)
+        except EgressDeniedError as exc:
+            raise ValueError(
+                f"base_url host is not on the outbound allowlist: {base_url!r}"
+            ) from exc
 
     def _build_url(self, segments: tuple[str, ...]) -> str:
         """Join percent-encoded path segments onto the base URL.

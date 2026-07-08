@@ -140,8 +140,9 @@ ignore = []
 
 [tool.ruff.lint.pep8-naming]
 # ``http.server.BaseHTTPRequestHandler`` dispatches to ``do_<COMMAND>`` methods
-# by name, so ``do_GET`` is mandated by the stdlib contract, not a style choice.
-extend-ignore-names = ["do_GET"]
+# by name, so ``do_GET``/``do_POST`` are mandated by the stdlib contract, not a
+# style choice.
+extend-ignore-names = ["do_GET", "do_POST"]
 
 [tool.bandit]
 exclude_dirs = ["tests", "venv", "virtualenv"]

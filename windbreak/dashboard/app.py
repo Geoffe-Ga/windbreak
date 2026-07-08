@@ -17,7 +17,9 @@ from __future__ import annotations
 import hmac
 import html
 import http.server
+import json
 import logging
+import re
 from dataclasses import dataclass
 from http import HTTPStatus
 from typing import TYPE_CHECKING, cast
@@ -32,6 +34,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from windbreak.dashboard.views import DashboardReadModels
+    from windbreak.riskkernel.human_ack import PendingHumanAck
 
 _LOGGER = logging.getLogger("windbreak.dashboard")
 
@@ -48,6 +51,12 @@ _POSITIONS_PATH = "/positions"
 _EQUITY_PATH = "/equity"
 _DECISIONS_PATH = "/decisions"
 
+#: The human-acknowledgement surface paths (issue #57): ``POST /ack`` grants a
+#: named pending acknowledgement, ``GET /acks`` renders the pending ones. Both
+#: sit behind the same bearer gate as every other route.
+_ACK_PATH = "/ack"
+_ACKS_PATH = "/acks"
+
 #: The Authorization scheme the bearer token must be presented under.
 _BEARER_PREFIX = "Bearer "
 
@@ -59,6 +68,27 @@ _UNAUTHORIZED_BODY = "401 Unauthorized: a valid bearer token is required.\n"
 
 #: Plain-text body returned for any path other than the root.
 _NOT_FOUND_BODY = "404 Not Found.\n"
+
+#: Plain-text body returned for a successful ``POST /ack``.
+_ACK_GRANTED_BODY = "200 OK: acknowledgement granted.\n"
+
+#: Plain-text body returned for a malformed or ill-shaped ``POST /ack`` body.
+_BAD_REQUEST_BODY = "400 Bad Request: a 32-hex approval_id is required.\n"
+
+#: An approval id is exactly 32 lowercase hex characters -- the shape
+#: ``HumanAckQueue`` mints via ``secrets.token_hex(16)``. The POST handler
+#: validates the posted id against this before ever invoking the granter, so a
+#: traversal-shaped or otherwise bogus value can never reach a drop-box writer
+#: (defense in depth: mirrors ``main._approval_id``'s CLI-side guard).
+_APPROVAL_ID_PATTERN = re.compile(r"[0-9a-f]{32}")
+
+#: The largest ``POST /ack`` body accepted, in bytes. A valid body is a tiny
+#: JSON object naming a 32-char id, so this cap fails an oversized (or absent
+#: ``Content-Length``) body closed rather than reading it into memory.
+_MAX_ACK_BODY_BYTES = 256
+
+#: Rendered inside the ``/acks`` page when no acknowledgement is pending.
+_NO_PENDING_ACKS = "<p>no pending acknowledgements</p>\n"
 
 #: HTML skeleton for the authenticated status page. ``mode`` and ``heartbeat``
 #: are HTML-escaped before substitution to prevent injection from a future
@@ -86,6 +116,42 @@ _VIEW_TEMPLATE = (
     "</body>\n"
     "</html>\n"
 )
+
+#: HTML skeleton for the pending-acknowledgements page. ``rows`` is already
+#: fully escaped by :func:`_render_pending_acks`.
+_ACKS_TEMPLATE = (
+    "<!DOCTYPE html>\n"
+    '<html lang="en">\n'
+    '<head><meta charset="utf-8"><title>windbreak acks</title></head>\n'
+    "<body>\n"
+    "<h1>pending acknowledgements</h1>\n"
+    "{rows}"
+    "</body>\n"
+    "</html>\n"
+)
+
+
+def _render_pending_acks(pending: tuple[PendingHumanAck, ...]) -> str:
+    """Render pending acknowledgements as an escaped HTML list.
+
+    Args:
+        pending: The pending acknowledgements to render (possibly empty).
+
+    Returns:
+        An HTML fragment: a ``<ul>`` of one ``<li>`` per pending acknowledgement
+        (approval id, intent id, worst-case cost, and expiry, all HTML-escaped),
+        or a "no pending acknowledgements" placeholder when empty.
+    """
+    if not pending:
+        return _NO_PENDING_ACKS
+    items = "".join(
+        f"<li>approval {html.escape(ack.approval_id)}: "
+        f"intent {html.escape(ack.intent_id)}, "
+        f"worst-case {ack.worst_case_cost.value} micros, "
+        f"expires {ack.expires_at}</li>\n"
+        for ack in pending
+    )
+    return f"<ul>\n{items}</ul>\n"
 
 
 @dataclass(frozen=True)
@@ -142,6 +208,8 @@ class _DashboardServer(http.server.ThreadingHTTPServer):
         token: str,
         status_source: Callable[[], DashboardStatus],
         read_models_source: Callable[[], DashboardReadModels] | None = None,
+        ack_granter: Callable[[str], None] | None = None,
+        pending_acks_source: Callable[[], tuple[PendingHumanAck, ...]] | None = None,
     ) -> None:
         """Bind the server and stash its auth token and data sources.
 
@@ -155,11 +223,19 @@ class _DashboardServer(http.server.ThreadingHTTPServer):
                 read models, invoked fresh on each authenticated view request, or
                 ``None`` (the default) to render every view's "no data yet"
                 placeholder.
+            ack_granter: One-arg callable granting the posted approval id on a
+                ``POST /ack``, or ``None`` (the default) so that route 404s as
+                an unwired seam.
+            pending_acks_source: Zero-arg callable returning the current pending
+                acknowledgements for ``GET /acks``, or ``None`` (the default) to
+                render the empty placeholder.
         """
         super().__init__(server_address, handler_class)
         self.token = token
         self.status_source = status_source
         self.read_models_source = read_models_source
+        self.ack_granter = ack_granter
+        self.pending_acks_source = pending_acks_source
 
 
 class _DashboardHandler(http.server.BaseHTTPRequestHandler):
@@ -192,7 +268,25 @@ class _DashboardHandler(http.server.BaseHTTPRequestHandler):
         if view is not None:
             self._authorized_or(lambda: self._send_view(view))
             return
+        if self.path == _ACKS_PATH:
+            self._authorized_or(self._send_acks)
+            return
         self._send(HTTPStatus.NOT_FOUND, _NOT_FOUND_BODY, "text/plain")
+
+    def do_POST(self) -> None:
+        """Route ``POST`` requests: ``/ack`` grants; every other path is a 404.
+
+        ``POST /ack`` shares the same timing-safe bearer gate as every other
+        route, so an unauthenticated post is a 401 (the ``ack_granter`` is never
+        reached). With no ``ack_granter`` wired the route 404s as an unwired
+        seam. Named ``do_POST`` because
+        :class:`http.server.BaseHTTPRequestHandler` dispatches by
+        ``"do_" + command``.
+        """
+        if self.path != _ACK_PATH:
+            self._send(HTTPStatus.NOT_FOUND, _NOT_FOUND_BODY, "text/plain")
+            return
+        self._authorized_or(self._grant_ack)
 
     def _authorized_or(self, send_ok: Callable[[], None]) -> None:
         """Run ``send_ok`` when the request is authorized, else send a 401.
@@ -264,6 +358,71 @@ class _DashboardHandler(http.server.BaseHTTPRequestHandler):
         body = _VIEW_TEMPLATE.format(title=view.title, body=view.render(rows))
         self._send(HTTPStatus.OK, body, "text/html")
 
+    def _grant_ack(self) -> None:
+        """Grant the approval id from a ``POST /ack`` body, or 404 if unwired.
+
+        With no ``ack_granter`` seam wired, the route 404s (granting nothing is
+        not a meaningful default the way an empty read-model list is). Otherwise
+        the JSON body's ``approval_id`` is handed to the granter and a 200 is
+        returned; the granter is the seam that actually drops the ack file or
+        calls the queue, so this handler stays free of kernel imports.
+        """
+        granter = self._dashboard_server.ack_granter
+        if granter is None:
+            self._send(HTTPStatus.NOT_FOUND, _NOT_FOUND_BODY, "text/plain")
+            return
+        approval_id = self._read_ack_approval_id()
+        if approval_id is None:
+            self._send(HTTPStatus.BAD_REQUEST, _BAD_REQUEST_BODY, "text/plain")
+            return
+        granter(approval_id)
+        self._send(HTTPStatus.OK, _ACK_GRANTED_BODY, "text/plain")
+
+    def _read_ack_approval_id(self) -> str | None:
+        """Read and validate the ``approval_id`` from the JSON request body.
+
+        Every failure mode -- a missing/non-numeric/zero/oversized
+        ``Content-Length``, an undecodable or non-JSON body, a non-object
+        payload, a missing or non-string ``approval_id``, or an id that is not
+        exactly 32 lowercase hex characters -- returns ``None`` so the caller
+        fails closed with a 400 and never hands a bogus value to the granter.
+        The size cap bounds the read so an authenticated client cannot force an
+        unbounded body into memory.
+
+        Returns:
+            The validated 32-hex ``approval_id``, or ``None`` when the body is
+            malformed, oversized, or ill-shaped.
+        """
+        raw_length = self.headers.get("Content-Length", "")
+        if not raw_length.isdigit():
+            return None
+        length = int(raw_length)
+        if not 0 < length <= _MAX_ACK_BODY_BYTES:
+            return None
+        try:
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        approval_id = payload.get("approval_id")
+        if not isinstance(approval_id, str) or (
+            _APPROVAL_ID_PATTERN.fullmatch(approval_id) is None
+        ):
+            return None
+        return approval_id
+
+    def _send_acks(self) -> None:
+        """Render the current pending acknowledgements (read fresh) as a 200.
+
+        With no ``pending_acks_source`` wired the page renders the empty
+        placeholder, mirroring the read-model views' "no data yet" precedent.
+        """
+        source = self._dashboard_server.pending_acks_source
+        pending: tuple[PendingHumanAck, ...] = () if source is None else source()
+        body = _ACKS_TEMPLATE.format(rows=_render_pending_acks(pending))
+        self._send(HTTPStatus.OK, body, "text/html")
+
     def _send(
         self,
         status: HTTPStatus,
@@ -314,6 +473,8 @@ def create_server(
     status_source: Callable[[], DashboardStatus],
     port: int,
     read_models_source: Callable[[], DashboardReadModels] | None = None,
+    ack_granter: Callable[[str], None] | None = None,
+    pending_acks_source: Callable[[], tuple[PendingHumanAck, ...]] | None = None,
 ) -> http.server.ThreadingHTTPServer:
     """Build a loopback-bound dashboard server guarded by a bearer token.
 
@@ -331,6 +492,13 @@ def create_server(
             on each authenticated view request. ``None`` (the default) renders
             every view's "no data yet" placeholder, so the three view routes
             still 200 rather than 404 before any PAPER data exists (issue #48).
+        ack_granter: One-arg callable granting the approval id posted to
+            ``POST /ack``. ``None`` (the default) 404s that route as an unwired
+            seam (issue #57).
+        pending_acks_source: Zero-arg callable returning the current pending
+            acknowledgements rendered by ``GET /acks``, invoked fresh on each
+            authenticated request. ``None`` (the default) renders the empty
+            placeholder (issue #57).
 
     Returns:
         A :class:`http.server.ThreadingHTTPServer` bound to
@@ -347,4 +515,6 @@ def create_server(
         token=token,
         status_source=status_source,
         read_models_source=read_models_source,
+        ack_granter=ack_granter,
+        pending_acks_source=pending_acks_source,
     )
