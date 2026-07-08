@@ -1,0 +1,87 @@
+{
+  "description": "Issue #52 temporal-integrity leakage fixture: pins the enforce_temporal_integrity gate end-to-end through run_evaluation. Deployment (mode_transitions) fires at sequence_number 10. Three disjoint tickers LEAK-A/B/C each settle exactly once (no reversals): LEAK-A settlement@30=yes, LEAK-B settlement@31=no, LEAK-C settlement@32=yes -- so resolution_sequences_from_events(settlement_events) == {LEAK-A: 30, LEAK-B: 31, LEAK-C: 32}. The static `resolutions` block carries the same three outcomes; LEAK-D deliberately has neither a settlement event nor a resolutions entry, making it UNRESOLVED. Five forecasts, in order: (1) fc-clean-1 on LEAK-A, created_sequence=11 (after deployment 10, before resolution 30) -- ADMITTED. (2) fc-clean-2 on LEAK-B, created_sequence=12 (after deployment, before resolution 31) -- ADMITTED. (3) fc-backdated on LEAK-C, created_sequence=32 -- a TIE with LEAK-C's resolution sequence (32 >= 32), so BACKDATED (created_sequence at or after the market's own resolution can never be an honest forecast). (4) fc-predeploy on LEAK-A, created_sequence=10 -- a TIE with the deployment sequence (10 <= 10), so PRE_DEPLOYMENT, even though LEAK-A's market IS resolved (resolution_sequence 30 is still recorded on the ledger entry; PRE_DEPLOYMENT is checked before BACKDATED and wins). (5) fc-unresolved on LEAK-D, created_sequence=13 -- LEAK-D has no resolution_sequence at all, so UNRESOLVED (resolution_sequence is None on its ledger entry). Expected admitted set = {fc-clean-1, fc-clean-2} only. Hand-computed admitted mean Brier, in ppm: fc-clean-1 is p=900_000 ppm on a YES market, term = (900_000 - 1_000_000)^2 = 100_000^2 = 10_000_000_000; fc-clean-2 is p=100_000 ppm on a NO market, term = (100_000 - 0)^2 = 100_000^2 = 10_000_000_000; sum = 20_000_000_000; mean_ppm = sum // (2 * 1_000_000) = 10_000. (Contrast: if fc-backdated leaked in, its term would be (1_000_000 - 1_000_000)^2 = 0, added to a 3-forecast mean = 20_000_000_000 // (3 * 1_000_000) = 6_667 -- a different, wrong, and silently-plausible-looking answer, which is exactly why the leak must be caught rather than merely bounded.) Expected rejection ledger, in fixture order: (fc-backdated, BACKDATED, created=32, resolution=32, deployment=10), (fc-predeploy, PRE_DEPLOYMENT, created=10, deployment=10, resolution=30), (fc-unresolved, UNRESOLVED, created=13, resolution=None, deployment=10). No float literal appears anywhere in this file.",
+  "mode_transitions": [
+    {
+      "sequence_number": 10,
+      "event_type": "mode_transition",
+      "mode": "paper"
+    }
+  ],
+  "settlement_events": [
+    {
+      "sequence_number": 30,
+      "event_type": "settlement",
+      "market_ticker": "LEAK-A",
+      "outcome": "yes"
+    },
+    {
+      "sequence_number": 31,
+      "event_type": "settlement",
+      "market_ticker": "LEAK-B",
+      "outcome": "no"
+    },
+    {
+      "sequence_number": 32,
+      "event_type": "settlement",
+      "market_ticker": "LEAK-C",
+      "outcome": "yes"
+    }
+  ],
+  "resolutions": [
+    { "market_ticker": "LEAK-A", "outcome": "yes" },
+    { "market_ticker": "LEAK-B", "outcome": "no" },
+    { "market_ticker": "LEAK-C", "outcome": "yes" }
+  ],
+  "forecasts": [
+    {
+      "forecast_id": "fc-clean-1",
+      "market_ticker": "LEAK-A",
+      "probability_ppm": 900000,
+      "eligible_for_live": true,
+      "abstention_reason": null,
+      "traded": true,
+      "baseline_executable_price_pips": 8800,
+      "created_sequence": 11
+    },
+    {
+      "forecast_id": "fc-clean-2",
+      "market_ticker": "LEAK-B",
+      "probability_ppm": 100000,
+      "eligible_for_live": false,
+      "abstention_reason": "low_liquidity",
+      "traded": false,
+      "baseline_executable_price_pips": 1500,
+      "created_sequence": 12
+    },
+    {
+      "forecast_id": "fc-backdated",
+      "market_ticker": "LEAK-C",
+      "probability_ppm": 1000000,
+      "eligible_for_live": true,
+      "abstention_reason": null,
+      "traded": true,
+      "baseline_executable_price_pips": 9900,
+      "created_sequence": 32
+    },
+    {
+      "forecast_id": "fc-predeploy",
+      "market_ticker": "LEAK-A",
+      "probability_ppm": 800000,
+      "eligible_for_live": true,
+      "abstention_reason": null,
+      "traded": true,
+      "baseline_executable_price_pips": 8800,
+      "created_sequence": 10
+    },
+    {
+      "forecast_id": "fc-unresolved",
+      "market_ticker": "LEAK-D",
+      "probability_ppm": 700000,
+      "eligible_for_live": true,
+      "abstention_reason": null,
+      "traded": true,
+      "baseline_executable_price_pips": 5000,
+      "created_sequence": 13
+    }
+  ]
+}
