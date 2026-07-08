@@ -16,8 +16,8 @@ RESEARCH/LIVE trading path.
 
 from __future__ import annotations
 
+from hedgekit.riskkernel.reservations import ApprovalOutcome
 from hedgekit.scheduler.loop import (
-    ApprovalOutcome,
     ApprovalSeam,
     KernelApproval,
     PaperTickDeps,
