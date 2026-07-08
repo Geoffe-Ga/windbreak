@@ -1100,13 +1100,22 @@ class OrderGateway:
         tally, and completes each adopted order's ledgered lifecycle to
         ``ACKED``.
 
+        Ack rehydration is idempotent per client-order-id: a duplicated WAL ack
+        (an at-least-once redelivery / duplicated durable append) is tolerated
+        and rehydrated exactly once. The first ack for a coid completes its
+        ledger chain to ``ACKED`` from the once-folded snapshot and caches it in
+        ``self._acks``; any subsequent ack for that same coid is skipped so it
+        cannot re-read the now-stale snapshot and re-ledger a second
+        ``SUBMIT``/``ACK`` pair (which would corrupt the transition history and,
+        for a ``sell_to_close``, double-count ``_inflight_closing``).
+
         Args:
             records: The durable ledger records.
             wal_records: The write-ahead log records.
             open_orders: The venue's currently resting orders.
 
         Returns:
-            The number of acked orders rehydrated.
+            The number of distinct acked orders rehydrated.
         """
         open_ids = frozenset(order.id for order in open_orders)
         intents: dict[str, OrderIntent] = {}
@@ -1116,7 +1125,7 @@ class OrderGateway:
         ledger_states = fold_ledger_states(records)
         reconciled = 0
         for rec in wal_records:
-            if rec.kind != "ack":
+            if rec.kind != "ack" or rec.client_order_id in self._acks:
                 continue
             self._rehydrate_ack(rec, intents, open_ids, ledger_states)
             reconciled += 1
