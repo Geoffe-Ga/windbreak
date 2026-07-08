@@ -430,6 +430,29 @@ def test_token_issuer_issue_round_trips_through_verify_token_with_the_same_key()
     assert result.valid is True
 
 
+def test_token_issuer_from_key_material_signs_identically_to_handle_ctor() -> None:
+    """`TokenIssuer.from_key_material(key)` builds the handle internally so it
+    signs identically to `TokenIssuer(SigningKeyHandle(key))` -- the boundary-safe
+    factory the PAPER scheduler uses to mint tokens without importing
+    `hedgekit.riskkernel.signing` itself (issue #48).
+    """
+    claims = make_claims()
+
+    handle_token = TokenIssuer(SigningKeyHandle(_KEY_MATERIAL)).issue(claims)
+    factory_token = TokenIssuer.from_key_material(_KEY_MATERIAL).issue(claims)
+
+    assert factory_token.signature_hex == handle_token.signature_hex
+    assert factory_token.claims == claims
+
+
+def test_token_issuer_from_key_material_rejects_short_key_material() -> None:
+    """The factory propagates `SigningKeyHandle`'s >=32-byte guard, so a too-short
+    key is rejected at construction rather than minting a weakly-keyed token.
+    """
+    with pytest.raises(ValueError, match="32"):
+        TokenIssuer.from_key_material(b"x" * 31)
+
+
 def test_default_token_ttl_seconds_is_60() -> None:
     """`DEFAULT_TOKEN_TTL_SECONDS` is exactly 60 (SPEC-pinned constant)."""
     assert DEFAULT_TOKEN_TTL_SECONDS == 60

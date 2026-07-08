@@ -161,6 +161,43 @@ def _add_run_arguments(run_parser: argparse.ArgumentParser) -> None:
         default=None,
         help="Path to a SPEC §16 YAML config (default: built-in §16 defaults).",
     )
+    _add_paper_loop_arguments(run_parser)
+
+
+def _add_paper_loop_arguments(run_parser: argparse.ArgumentParser) -> None:
+    """Register the four always-on PAPER-loop composition flags (issue #48).
+
+    PAPER activates only when the mode ceiling permits PAPER *and* all four flags
+    are supplied; each defaults to ``None`` so omitting any one leaves the loop in
+    its byte-identical RESEARCH-only behavior.
+
+    Args:
+        run_parser: The ``run`` subparser to populate with the PAPER flags.
+    """
+    run_parser.add_argument(
+        "--paper-books-dir",
+        type=Path,
+        default=None,
+        help="Paper-exchange fixture directory (default: PAPER loop off).",
+    )
+    run_parser.add_argument(
+        "--cassette-path",
+        type=Path,
+        default=None,
+        help="Recorded LLM cassette for the offline forecast replay transport.",
+    )
+    run_parser.add_argument(
+        "--ledger-path",
+        type=Path,
+        default=None,
+        help="Path to the PAPER loop's hash-chained ledger database.",
+    )
+    run_parser.add_argument(
+        "--report-dir",
+        type=Path,
+        default=None,
+        help="Directory the weekly PAPER report stub is written into.",
+    )
 
 
 def _add_rebuild_arguments(rebuild_parser: argparse.ArgumentParser) -> None:
@@ -447,6 +484,95 @@ def _build_snapshot_on_beat(fixture_dir: str) -> Callable[[int], None]:
     return _on_beat
 
 
+def _paper_activated(config: HedgekitConfig, args: argparse.Namespace) -> bool:
+    """Return whether the always-on PAPER loop should be wired this run (#48).
+
+    PAPER activates only when the configured mode ceiling permits PAPER *and*
+    every one of the four PAPER flags is supplied. A ``research`` ceiling -- even
+    with all four flags -- never activates it (the tracer invariant), and neither
+    do partial flags. The ceiling is parsed from the SPEC S16 token, whose four
+    ladder values are the only valid ceilings; a non-``RESEARCH`` ceiling permits
+    PAPER.
+
+    Args:
+        config: The loaded configuration whose ``mode_ceiling`` gates activation.
+        args: The parsed ``run`` arguments carrying the four PAPER flags.
+
+    Returns:
+        ``True`` only when PAPER is permitted and all four flags are supplied.
+    """
+    from hedgekit.riskkernel.modes import Mode
+
+    flags = (
+        args.paper_books_dir,
+        args.cassette_path,
+        args.ledger_path,
+        args.report_dir,
+    )
+    if any(flag is None for flag in flags):
+        return False
+    return Mode.from_config(config.mode_ceiling) is not Mode.RESEARCH
+
+
+def _build_paper_on_beat(
+    args: argparse.Namespace, config: HedgekitConfig
+) -> Callable[[int], None]:
+    """Build a per-beat hook that runs one always-on PAPER tick (issue #48).
+
+    The scheduler imports are local so the RESEARCH heartbeat path never imports
+    ``hedgekit.scheduler`` (nor, transitively, the paper order-submission client)
+    unless PAPER is actually activated. The dependency bundle -- which opens the
+    ledger database -- is built once here, so no ledger is ever created on a run
+    that does not activate PAPER.
+
+    Args:
+        args: The parsed ``run`` arguments carrying the four PAPER flags.
+        config: The loaded PAPER-ceilinged configuration.
+
+    Returns:
+        A callable that, given the beat sequence, runs one PAPER tick.
+    """
+    from hedgekit.scheduler.loop import build_paper_deps, run_single_tick
+
+    deps = build_paper_deps(
+        books_dir=args.paper_books_dir,
+        cassette_path=args.cassette_path,
+        ledger_path=args.ledger_path,
+        report_dir=args.report_dir,
+        config=config,
+    )
+
+    def _on_beat(seq: int) -> None:
+        """Run one PAPER tick for the given beat sequence."""
+        run_single_tick(deps, beat=seq)
+
+    return _on_beat
+
+
+def _resolve_on_beat(
+    args: argparse.Namespace, config: HedgekitConfig
+) -> Callable[[int], None] | None:
+    """Resolve the per-beat hook: the PAPER tick, a snapshot pass, or none.
+
+    PAPER activation (issue #48) takes precedence when permitted and fully
+    flagged; otherwise the pre-existing snapshot hook is wired when a fixture
+    directory is given; otherwise there is no hook and the loop is a bare
+    RESEARCH heartbeat.
+
+    Args:
+        args: The parsed ``run`` arguments.
+        config: The loaded configuration.
+
+    Returns:
+        The resolved per-beat hook, or ``None`` for a bare heartbeat.
+    """
+    if _paper_activated(config, args):
+        return _build_paper_on_beat(args, config)
+    if args.snapshot_fixture_dir is not None:
+        return _build_snapshot_on_beat(args.snapshot_fixture_dir)
+    return None
+
+
 def _run_heartbeat(args: argparse.Namespace) -> int:
     """Load the requested config, log it, then drive the heartbeat loop.
 
@@ -482,11 +608,7 @@ def _run_heartbeat(args: argparse.Namespace) -> int:
     )
     state = ShutdownState()
     _install_signal_handlers(state)
-    on_beat = (
-        _build_snapshot_on_beat(args.snapshot_fixture_dir)
-        if args.snapshot_fixture_dir is not None
-        else None
-    )
+    on_beat = _resolve_on_beat(args, config)
     run_loop(
         args.heartbeat_interval,
         max_beats=args.max_beats,

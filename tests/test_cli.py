@@ -9,10 +9,14 @@ after a bounded number of beats.
 from __future__ import annotations
 
 import json
+from typing import TYPE_CHECKING
 
 import pytest
 
 from hedgekit.main import build_parser, main
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_build_parser_parses_run_with_defaults() -> None:
@@ -218,3 +222,77 @@ def test_alert_test_subcommand_message_can_be_overridden() -> None:
     args = build_parser().parse_args(["alert-test", "veto", "--message", "custom body"])
 
     assert args.message == "custom body"
+
+
+# --- issue #48: the four new `run` flags gating the always-on PAPER loop ------
+#
+# `build_parser()` does not yet register `--paper-books-dir`/`--cassette-path`/
+# `--ledger-path`/`--report-dir`, so every `parse_args` call below that passes
+# one currently fails with `SystemExit(2)` (argparse "unrecognized arguments"),
+# the expected Gate 1 RED state for issue #48 -- a legitimate "absent behavior"
+# failure, not a broken fixture.
+
+
+def test_build_parser_parses_new_paper_loop_flags() -> None:
+    """`run` accepts the four new PAPER-loop composition flags, as paths."""
+    from pathlib import Path
+
+    args = build_parser().parse_args(
+        [
+            "run",
+            "--paper-books-dir",
+            "/tmp/books",
+            "--cassette-path",
+            "/tmp/cassette.json",
+            "--ledger-path",
+            "/tmp/ledger.db",
+            "--report-dir",
+            "/tmp/reports",
+        ]
+    )
+
+    assert args.paper_books_dir == Path("/tmp/books")
+    assert args.cassette_path == Path("/tmp/cassette.json")
+    assert args.ledger_path == Path("/tmp/ledger.db")
+    assert args.report_dir == Path("/tmp/reports")
+
+
+def test_build_parser_new_paper_loop_flags_default_to_none() -> None:
+    """Omitting all four PAPER-loop flags leaves them `None` -- PAPER activates
+    only when every one of them is supplied (issue #48).
+    """
+    args = build_parser().parse_args(["run"])
+
+    assert args.paper_books_dir is None
+    assert args.cassette_path is None
+    assert args.ledger_path is None
+    assert args.report_dir is None
+
+
+def test_main_run_with_only_ledger_path_flag_never_creates_a_ledger(
+    tmp_path: Path,
+) -> None:
+    """Supplying only `--ledger-path` (not the other three PAPER flags) never
+    activates the PAPER loop: no ledger file is ever created, and the
+    RESEARCH heartbeat is unaffected.
+
+    Uses the built-in `HedgekitConfig` default (`mode_ceiling: "paper"`, SPEC
+    §16) with no `--config` at all, so this pins that *flags alone* -- not
+    just the mode ceiling -- gate PAPER activation.
+    """
+    ledger_path = tmp_path / "ledger.db"
+
+    exit_code = main(
+        [
+            "run",
+            "--heartbeat-interval",
+            "0",
+            "--max-beats",
+            "1",
+            "--ledger-path",
+            str(ledger_path),
+        ]
+    )
+
+    assert exit_code == 0
+    assert not ledger_path.exists()
