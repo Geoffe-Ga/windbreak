@@ -80,6 +80,19 @@ class UndefinedBrier(enum.Enum):
 #: The sentinel a :class:`CohortBrier` carries for an empty/unresolved cohort.
 UNDEFINED = UndefinedBrier.UNDEFINED
 
+
+class EmptyCohortError(ValueError):
+    """Raised when a scalar cohort metric is asked to score an empty cohort.
+
+    A dedicated :class:`ValueError` subclass (rather than a bare ``ValueError``)
+    lets a caller catch *only* the "cohort has no resolved records" case and
+    degrade it to the :data:`UNDEFINED` sentinel, while any other ``ValueError``
+    from genuinely invalid inputs still propagates distinctly. It is a
+    ``ValueError`` subclass so existing ``pytest.raises(ValueError)`` callers and
+    the documented ``Raises: ValueError`` contract remain satisfied.
+    """
+
+
 #: A cohort Brier value: a ppm-scaled ``int`` mean, or the :data:`UNDEFINED`
 #: sentinel when the cohort has no resolved records.
 CohortBrierValue = int | UndefinedBrier
@@ -304,12 +317,13 @@ def _cohort_mean_brier(
         The cohort's mean Brier score, in ppm.
 
     Raises:
-        ValueError: If the cohort has no resolved records; the message names the
-            cohort and the ``resolved`` requirement.
+        EmptyCohortError: If the cohort has no resolved records; the message
+            names the cohort and the ``resolved`` requirement. It subclasses
+            ``ValueError`` so plain ``ValueError`` callers still catch it.
     """
     forecasts = _windowed_cohort_forecasts(inputs, cohort, window)
     if _resolved_count(forecasts, inputs) == 0:
-        raise ValueError(
+        raise EmptyCohortError(
             f"cohort {cohort.value!r} has no resolved records; "
             "the traded-vs-skipped delta is undefined"
         )
@@ -332,8 +346,11 @@ def traded_vs_skipped_brier_delta(
         The signed delta, in ppm.
 
     Raises:
-        ValueError: If either the ``TRADED`` or ``SKIPPED`` cohort has no
-            resolved records.
+        EmptyCohortError: If either the ``TRADED`` or ``SKIPPED`` cohort has no
+            resolved records. Callers that need to render rather than crash on
+            this ordinary early-deployment state (e.g. the registry adapter)
+            catch it and surface the :data:`UNDEFINED` sentinel; it subclasses
+            ``ValueError`` so plain ``ValueError`` handlers still catch it.
     """
     skipped = _cohort_mean_brier(inputs, Cohort.SKIPPED, window)
     traded = _cohort_mean_brier(inputs, Cohort.TRADED, window)

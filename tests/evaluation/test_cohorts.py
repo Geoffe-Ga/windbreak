@@ -583,3 +583,96 @@ def test_run_evaluation_cohort_lines_are_labeled_latest_before_close() -> None:
         assert f"cohort {cohort.value} [latest_before_close]" in text
 
     assert "traded_vs_skipped_brier_delta [latest_before_close] = 0" in text
+
+
+# ---------------------------------------------------------------------------
+# 6. run_evaluation degrades gracefully when the window has zero TRADED or
+#    zero SKIPPED forecasts: the traded_vs_skipped_brier_delta metric renders
+#    the UNDEFINED sentinel instead of crashing the entire three-track report.
+#    (Regression for the unhandled ValueError; see PR #178 review.)
+# ---------------------------------------------------------------------------
+
+
+def _fixture_with_all_traded(tmp_path: Path, *, traded: bool) -> Path:
+    """Write a copy of the synthetic fixture with every forecast's `traded` set.
+
+    Forcing every forecast to the same `traded` value collapses one of the two
+    mutually-exclusive `TRADED` / `SKIPPED` cohorts to zero resolved records --
+    the exact input shape that made `traded_vs_skipped_brier_delta` raise before
+    the graceful-degradation fix. Only the `traded` flag is rewritten; every
+    resolution, snapshot, and temporal coordinate is left untouched so the
+    fixture still admits all ten forecasts through the temporal gate.
+
+    Args:
+        tmp_path: The pytest-provided temporary directory to write into.
+        traded: The `traded` value to stamp onto every forecast (`True` empties
+            `SKIPPED`, `False` empties `TRADED`).
+
+    Returns:
+        The path to the written single-cohort fixture.
+    """
+    payload: dict[str, Any] = json.loads(SYNTHETIC_FIXTURE.read_text(encoding="utf-8"))
+    for forecast in payload["forecasts"]:
+        forecast["traded"] = traded
+    destination = tmp_path / f"single_cohort_traded_{traded}.json"
+    destination.write_text(json.dumps(payload), encoding="utf-8")
+    return destination
+
+
+def test_run_evaluation_renders_undefined_when_skipped_cohort_is_empty(
+    tmp_path: Path,
+) -> None:
+    """Every forecast traded -> the `SKIPPED` cohort is empty in the window.
+
+    `run_evaluation` must still assemble the full three-track report and render
+    the `traded_vs_skipped_brier_delta` line as the `UNDEFINED` sentinel rather
+    than propagating a `ValueError` out of report generation.
+    """
+    fixture_path = _fixture_with_all_traded(tmp_path, traded=True)
+
+    report = run_evaluation(fixture_path=fixture_path)
+    text = report.render_text()
+
+    assert "traded_vs_skipped_brier_delta [latest_before_close] = UNDEFINED" in text
+
+
+def test_run_evaluation_renders_undefined_when_traded_cohort_is_empty(
+    tmp_path: Path,
+) -> None:
+    """Every forecast skipped -> the `TRADED` cohort is empty in the window.
+
+    `run_evaluation` must still assemble the full three-track report and render
+    the `traded_vs_skipped_brier_delta` line as the `UNDEFINED` sentinel rather
+    than propagating a `ValueError` out of report generation.
+    """
+    fixture_path = _fixture_with_all_traded(tmp_path, traded=False)
+
+    report = run_evaluation(fixture_path=fixture_path)
+    text = report.render_text()
+
+    assert "traded_vs_skipped_brier_delta [latest_before_close] = UNDEFINED" in text
+
+
+def test_registry_adapter_propagates_non_empty_cohort_value_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The graceful-degradation catch is scoped to `EmptyCohortError` alone.
+
+    A `ValueError` that is *not* an `EmptyCohortError` (i.e. a genuinely invalid
+    input, not the ordinary empty-cohort state) must propagate out of the
+    registry adapter rather than being silently converted to the `UNDEFINED`
+    sentinel -- otherwise a real bug would masquerade as an undefined metric.
+    """
+    from hedgekit.evaluation import registry
+
+    def _raise_generic(inputs: object, *, window: object) -> int:
+        raise ValueError("not an empty-cohort error")
+
+    monkeypatch.setattr(
+        registry.cohorts, "traded_vs_skipped_brier_delta", _raise_generic
+    )
+
+    with pytest.raises(ValueError, match="not an empty-cohort error"):
+        registry._compute_traded_vs_skipped_brier_delta(
+            EvaluationInputs(forecasts=(), resolutions={})
+        )

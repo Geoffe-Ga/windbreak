@@ -24,6 +24,15 @@ One metric remains a deliberate stub whose ``compute`` returns the
 value, never ``None`` and never a stray ``int``) so the renderer prints the
 literal ``NOT_IMPLEMENTED`` rather than omitting the row: the execution-track
 ``fill_vs_model_slippage``.
+
+A fully-implemented metric can still be *undefined* for a given input rather
+than unimplemented: ``traded_vs_skipped_brier_delta`` is undefined whenever the
+window holds zero ``TRADED`` or zero ``SKIPPED`` forecasts (an ordinary
+early-deployment state), so its adapter catches
+:class:`~hedgekit.evaluation.cohorts.EmptyCohortError` and returns the distinct
+:data:`~hedgekit.evaluation.cohorts.UNDEFINED` sentinel -- keeping "not yet
+built" (``NOT_IMPLEMENTED``) and "built but undefined here" (``UNDEFINED``)
+nominally separate, and never letting the empty-cohort case crash the report.
 """
 
 from __future__ import annotations
@@ -84,9 +93,13 @@ class NotImplementedSentinel(enum.Enum):
 #: The sentinel value returned by every not-yet-implemented metric ``compute``.
 NOT_IMPLEMENTED: Final = NotImplementedSentinel.NOT_IMPLEMENTED
 
-#: A computed metric value: a ppm-scaled ``int`` measurement, or the
-#: :data:`NOT_IMPLEMENTED` sentinel when the metric's arithmetic is still a stub.
-MetricValue = int | NotImplementedSentinel
+#: A computed metric value: a ppm-scaled ``int`` measurement, the
+#: :data:`NOT_IMPLEMENTED` sentinel when the metric's arithmetic is still a stub,
+#: or the :data:`~hedgekit.evaluation.cohorts.UNDEFINED` sentinel when a metric
+#: is implemented but genuinely undefined for the given inputs (e.g. an empty
+#: cohort). All three are nominally distinct enums, so ``value is <sentinel>`` is
+#: an unambiguous test and the renderer prints the literal sentinel name.
+MetricValue = int | NotImplementedSentinel | cohorts.UndefinedBrier
 
 
 @dataclass(frozen=True, slots=True)
@@ -352,9 +365,19 @@ def _compute_traded_vs_skipped_brier_delta(inputs: EvaluationInputs) -> MetricVa
     Returns:
         ``mean_brier(SKIPPED) - mean_brier(TRADED)`` in ppm, delegated to
         :func:`hedgekit.evaluation.cohorts.traded_vs_skipped_brier_delta`; a
-        negative value flags that skipped forecasts outperformed traded ones.
+        negative value flags that skipped forecasts outperformed traded ones. If
+        either cohort has no resolved records in the window -- an ordinary
+        early-deployment state (nothing traded yet, or nothing skipped) -- the
+        delta is genuinely undefined, so the
+        :data:`~hedgekit.evaluation.cohorts.UNDEFINED` sentinel is returned
+        rather than letting the exception crash the whole report. The catch is
+        scoped to :class:`~hedgekit.evaluation.cohorts.EmptyCohortError` alone,
+        so any other invalid-input ``ValueError`` still propagates.
     """
-    return cohorts.traded_vs_skipped_brier_delta(inputs, window=_FORECAST_WINDOW)
+    try:
+        return cohorts.traded_vs_skipped_brier_delta(inputs, window=_FORECAST_WINDOW)
+    except cohorts.EmptyCohortError:
+        return cohorts.UNDEFINED
 
 
 def _compute_fill_vs_model_slippage(inputs: EvaluationInputs) -> MetricValue:

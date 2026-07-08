@@ -197,10 +197,12 @@ def _format_value(value: MetricValue) -> str:
         value: The computed metric value.
 
     Returns:
-        The literal ``NOT_IMPLEMENTED`` for the sentinel, else the integer's
-        decimal string.
+        The literal ``NOT_IMPLEMENTED`` for the not-yet-built stub sentinel, the
+        literal ``UNDEFINED`` for a metric that is built but genuinely undefined
+        for these inputs (e.g. an empty cohort), else the integer's decimal
+        string.
     """
-    if isinstance(value, NotImplementedSentinel):
+    if isinstance(value, (NotImplementedSentinel, UndefinedBrier)):
         return value.name
     return str(value)
 
