@@ -28,7 +28,6 @@ from typing import TYPE_CHECKING
 
 from hedgekit.ledger.events import canonical_json
 from hedgekit.numeric import ContractCentis, MoneyMicros, ProbabilityPpm
-from hedgekit.riskkernel.checks import OrderIntent
 from hedgekit.selector.edge import (
     EdgeFigures,
     InsufficientDepth,
@@ -37,6 +36,11 @@ from hedgekit.selector.edge import (
     compute_executable_edge,
 )
 from hedgekit.selector.entry import evaluate_entry_conditions
+from hedgekit.selector.execution_style import (
+    ExecutionStyleDecision,
+    decide_execution_style,
+)
+from hedgekit.selector.exits import CloseTrigger, build_close_intent
 from hedgekit.selector.serialization import serialize_decision
 from hedgekit.selector.sizing import (
     clip_to_caps,
@@ -50,11 +54,13 @@ from hedgekit.selector.types import (
     RiskConfigInput,
     SelectorDecision,
     SelectorInputs,
+    SelectorOrderIntent,
     SlippageModelInput,
 )
 
 if TYPE_CHECKING:
     from hedgekit.connector.models import OrderBookSnapshot
+    from hedgekit.numeric import PricePips
     from hedgekit.selector.entry import EntryCheck
     from hedgekit.selector.sizing import CapClipResult
 
@@ -79,14 +85,19 @@ _SIZED_SUFFIX = "sized"
 _PPM_PER_PIP = 100
 
 __all__ = [
+    "CloseTrigger",
+    "ExecutionStyleDecision",
     "FeeModelInput",
     "NormalizedOrderIntent",
     "PositionReadModelInput",
     "RiskConfigInput",
     "SelectorDecision",
     "SelectorInputs",
+    "SelectorOrderIntent",
     "SlippageModelInput",
+    "build_close_intent",
     "clip_to_caps",
+    "decide_execution_style",
     "dispersion_scale",
     "kelly_size",
     "select",
@@ -139,39 +150,75 @@ def _idempotency_key(
     return hashlib.sha256(canonical_json(fields).encode("utf-8")).hexdigest()
 
 
+def _price_and_notional(
+    inputs: SelectorInputs,
+    figures: EdgeFigures,
+    size: ContractCentis,
+    style_decision: ExecutionStyleDecision,
+) -> tuple[PricePips, MoneyMicros]:
+    """Return the emitted price and notional cap for the chosen style (S9.5/S9.7).
+
+    A ``rest_inside_spread`` decision (recognized by its non-``None``
+    ``resting_price_pips``) prices at that passive rest price and caps the
+    notional at the rest cost plus its worst-case fee. A ``cross`` decision keeps
+    the pre-issue-#46 behavior byte-for-byte: it prices at the marginal
+    (deepest-walked) level and caps at the executable fill cost plus fee.
+
+    Args:
+        inputs: The selector inputs (for the fee model).
+        figures: The executable-edge figures for the fill priced at ``size``.
+        size: The final, cap-clipped size to emit, in contract-centis.
+        style_decision: The execution-style decision selecting price/notional.
+
+    Returns:
+        The ``(price, max_notional)`` pair to stamp on the emitted intent.
+    """
+    rest_price = style_decision.resting_price_pips
+    if rest_price is not None:
+        rest_fee_micros = _fee_micros(inputs.fee_model, rest_price.value, size.value)
+        rest_notional = MoneyMicros(rest_price.value * size.value + rest_fee_micros)
+        return rest_price, rest_notional
+    fee_micros = _fee_micros(
+        inputs.fee_model, figures.executable_price_pips.value, size.value
+    )
+    cross_notional = MoneyMicros(figures.executable_cost_micros.value + fee_micros)
+    return figures.marginal_price_pips, cross_notional
+
+
 def _build_intent(
-    inputs: SelectorInputs, figures: EdgeFigures, size: ContractCentis
-) -> OrderIntent:
+    inputs: SelectorInputs,
+    figures: EdgeFigures,
+    size: ContractCentis,
+    style_decision: ExecutionStyleDecision,
+) -> SelectorOrderIntent:
     """Build the single normalized intent for an all-pass, sized evaluation (S9.5).
 
-    Prices at the marginal (deepest-walked) level of the fill re-priced at the
-    final Kelly-clipped ``size``, and caps the notional at that fill's executable
-    cost plus its worst-case fee. The ``:sized`` intent-id suffix and the
-    size-hashed idempotency key reflect the real dispersion-scaled Kelly size
+    Prices and caps the notional per the chosen execution style
+    (:func:`_price_and_notional`), then stamps the style and its resting
+    parameters (issue #46) onto the intent. The ``:sized`` intent-id suffix and
+    the size-hashed idempotency key reflect the real dispersion-scaled Kelly size
     (issue #45), not the pre-sizing probe.
 
     Args:
         inputs: The selector inputs the intent is derived from.
         figures: The executable-edge figures for the fill priced at ``size``.
         size: The final, cap-clipped size to emit, in contract-centis.
+        style_decision: The execution-style decision (cross vs. rest) to stamp.
 
     Returns:
-        The normalized :class:`~hedgekit.riskkernel.checks.OrderIntent` to emit.
+        The normalized :class:`~hedgekit.selector.types.SelectorOrderIntent`.
     """
     forecast = inputs.forecast
-    price = figures.marginal_price_pips
-    fee_micros = _fee_micros(
-        inputs.fee_model, figures.executable_price_pips.value, size.value
-    )
+    price, max_notional = _price_and_notional(inputs, figures, size, style_decision)
     intent_id = f"{forecast.forecast_id}:{_OUTCOME_YES}:{_ACTION_BUY}:{_SIZED_SUFFIX}"
-    return OrderIntent(
+    return SelectorOrderIntent(
         intent_id=intent_id,
         market_ticker=forecast.market_ticker,
         outcome=_OUTCOME_YES,
         action=_ACTION_BUY,
         price=price,
         size=size,
-        max_notional=MoneyMicros(figures.executable_cost_micros.value + fee_micros),
+        max_notional=max_notional,
         implied_probability=ProbabilityPpm(forecast.probability_ppm),
         idempotency_key=_idempotency_key(
             forecast.forecast_id,
@@ -179,6 +226,9 @@ def _build_intent(
             price.value,
             size.value,
         ),
+        execution_style=style_decision.style,
+        resting_ttl_seconds=style_decision.resting_ttl_seconds,
+        cancel_on_move_ticks=style_decision.cancel_on_move_ticks,
     )
 
 
@@ -306,7 +356,8 @@ def _size_and_emit(
         detail = f"net_edge_ppm={net} min_net_edge_ppm={risk.min_net_edge_ppm}"
         reason = f"fail:net_edge_at_final_size: {detail}"
         return _decision(inputs, (), (*reasons, reason))
-    intent = _build_intent(inputs, final, clip.size)
+    style_decision = decide_execution_style(inputs, clip.size)
+    intent = _build_intent(inputs, final, clip.size, style_decision)
     return _decision(inputs, (intent,), (*reasons, sizing_reason))
 
 

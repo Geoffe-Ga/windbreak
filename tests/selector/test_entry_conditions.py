@@ -616,6 +616,173 @@ def test_price_within_bands_fails_above_the_maximum_open_price() -> None:
     assert _failed_names(inputs) == {"price_within_bands"}
 
 
+# --- price_within_bands: boundary passes + greppable failure tokens (#46) ---
+
+
+def test_price_within_bands_passes_at_the_inclusive_minimum_boundary() -> None:
+    """A 500-pip executable price (exactly the default floor) passes
+    `price_within_bands` -- the lower bound is inclusive, not only the
+    already-tested 400-pip failure one pip further out.
+
+    Reusing the baseline forecast/fee/slippage unchanged (probability
+    600_000, taker 10_000 ppm, slippage buffer 2_000 ppm):
+        cost = 500*100 = 50_000 micros (exact); executable_price_ppm = 50_000
+        gross_edge_ppm = 600_000 - 50_000 = 550_000
+        trading fee: numerator=10_000*100*500*9_500=4_750_000_000_000,
+          cents=ceil(0.0475)=1 -> 10_000 micros; fee_ppm=10_000 (exact)
+        fee_adjusted=540_000; slippage_adjusted=538_000; net_edge=538_000
+          (>= 30_000 -> net_edge_min passes)
+        ci [100_000,200_000] does not straddle 50_000 (50_000 < 100_000)
+    """
+    inputs = _baseline_inputs(
+        order_book=_baseline_order_book(
+            yes_asks=(
+                OrderBookLevel(price=PricePips(500), quantity=ContractCentis(1_000)),
+            )
+        )
+    )
+
+    figures = _figures_for(inputs)
+    assert figures.executable_price_pips == PricePips(500)
+    checks = evaluate_entry_conditions(inputs, figures)
+    assert tuple(check.name for check in checks) == _EXPECTED_CHECK_NAMES
+    assert all(check.passed for check in checks)
+
+
+def test_price_within_bands_passes_at_the_inclusive_maximum_boundary() -> None:
+    """A 9_500-pip executable price (exactly the default ceiling) passes
+    `price_within_bands` -- the mirror of the minimum-boundary test above,
+    reusing the existing 9_600-pip failure scenario's probability/fee/
+    slippage shape (probability 995_000, zero fee/slippage) one pip inside
+    the ceiling instead of one pip outside it.
+
+    cost = 9_500*100 = 950_000 micros (exact); executable_price_ppm = 950_000
+    gross_edge_ppm = 995_000 - 950_000 = 45_000 = net_edge_ppm (zero fee/
+      slippage/research)
+    net_edge_ppm(45_000) >= min_net_edge_ppm(30_000) -> net_edge_min passes
+    ci [100_000,200_000] does not straddle 950_000
+    """
+    inputs = _baseline_inputs(
+        forecast=_baseline_forecast(probability_ppm=995_000),
+        order_book=_baseline_order_book(
+            yes_asks=(
+                OrderBookLevel(price=PricePips(9_500), quantity=ContractCentis(1_000)),
+            )
+        ),
+        fee_model=_baseline_fee_model(
+            model=FeeModel(
+                schedule_id="entry-test-fee-zero",
+                maker_fee_ppm=0,
+                taker_fee_ppm=0,
+                settlement_fee_ppm=0,
+            )
+        ),
+        slippage_model=_baseline_slippage_model(per_contract_buffer_ppm=0),
+    )
+
+    figures = _figures_for(inputs)
+    assert figures.executable_price_pips == PricePips(9_500)
+    checks = evaluate_entry_conditions(inputs, figures)
+    assert tuple(check.name for check in checks) == _EXPECTED_CHECK_NAMES
+    assert all(check.passed for check in checks)
+
+
+def test_price_within_bands_fails_one_pip_below_floor_with_a_greppable_detail() -> None:
+    """A 499-pip executable price (one pip below the default 500-pip floor)
+    fails only `price_within_bands`, and its `detail` now leads with the
+    greppable token `price_below_min_open_band` (issue #46) rather than a
+    bare `executable_price_pips=...` reconstruction.
+
+    cost = 499*100 = 49_900 micros (exact); executable_price_ppm = 49_900
+    gross_edge_ppm = 600_000 - 49_900 = 550_100
+    trading fee: numerator=10_000*100*499*9_501=4_740_999_000_000,
+      cents=ceil(0.04740999)=1 -> 10_000 micros; fee_ppm=10_000 (exact)
+    fee_adjusted=540_100; slippage_adjusted=538_100; net_edge=538_100
+      (>= 30_000 -> only price_within_bands fails)
+    """
+    inputs = _baseline_inputs(
+        order_book=_baseline_order_book(
+            yes_asks=(
+                OrderBookLevel(price=PricePips(499), quantity=ContractCentis(1_000)),
+            )
+        )
+    )
+
+    figures = _figures_for(inputs)
+    assert figures.executable_price_pips == PricePips(499)
+    checks = evaluate_entry_conditions(inputs, figures)
+    by_name = {check.name: check for check in checks}
+
+    assert _failed_names(inputs) == {"price_within_bands"}
+    assert by_name["price_within_bands"].detail.startswith("price_below_min_open_band")
+
+
+def test_price_within_bands_fails_one_pip_above_ceiling_with_a_greppable_detail() -> (
+    None
+):
+    """A 9_501-pip executable price (one pip above the default 9_500-pip
+    ceiling) fails only `price_within_bands`, and its `detail` now contains
+    the greppable token `price_above_max_open_band` (issue #46), mirroring
+    the below-floor test above.
+
+    cost = 9_501*100 = 950_100 micros (exact); executable_price_ppm=950_100
+    gross_edge_ppm = 995_000 - 950_100 = 44_900 = net_edge_ppm (zero fee/
+      slippage/research)
+    net_edge_ppm(44_900) >= min_net_edge_ppm(30_000) -> only
+      price_within_bands fails
+    """
+    inputs = _baseline_inputs(
+        forecast=_baseline_forecast(probability_ppm=995_000),
+        order_book=_baseline_order_book(
+            yes_asks=(
+                OrderBookLevel(price=PricePips(9_501), quantity=ContractCentis(1_000)),
+            )
+        ),
+        fee_model=_baseline_fee_model(
+            model=FeeModel(
+                schedule_id="entry-test-fee-zero",
+                maker_fee_ppm=0,
+                taker_fee_ppm=0,
+                settlement_fee_ppm=0,
+            )
+        ),
+        slippage_model=_baseline_slippage_model(per_contract_buffer_ppm=0),
+    )
+
+    figures = _figures_for(inputs)
+    assert figures.executable_price_pips == PricePips(9_501)
+    checks = evaluate_entry_conditions(inputs, figures)
+    by_name = {check.name: check for check in checks}
+
+    assert _failed_names(inputs) == {"price_within_bands"}
+    assert "price_above_max_open_band" in by_name["price_within_bands"].detail
+
+
+def test_select_renders_a_greppable_fail_reason_for_a_below_band_price() -> None:
+    """`select`'s rendered reason for the below-floor scenario above starts
+    with the pinned, greppable `fail:price_within_bands: price_below_min_
+    open_band` prefix -- not just `evaluate_entry_conditions`'s own detail,
+    but the exact string a downstream ledger reader greps for.
+    """
+    inputs = _baseline_inputs(
+        order_book=_baseline_order_book(
+            yes_asks=(
+                OrderBookLevel(price=PricePips(499), quantity=ContractCentis(1_000)),
+            )
+        )
+    )
+
+    decision = select(inputs)
+
+    assert decision.intents == ()
+    matching = [
+        reason
+        for reason in decision.reasons
+        if reason.startswith("fail:price_within_bands: price_below_min_open_band")
+    ]
+    assert len(matching) == 1
+
+
 # --- forecast_live_eligible ------------------------------------------------------
 
 

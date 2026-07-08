@@ -95,10 +95,22 @@ reasons ending in the pinned ``sizing: raw_centis=354 g_ppm=800000
 binding_cap=none final_centis=300`` line), so
 `test_serialized_output_matches_committed_golden[bundle_a]` and
 `test_fresh_interpreter_produces_identical_bytes[bundle_a]` pass against it.
+
+Issue #46 (execution style) adds three serialized fields to bundle A's emitted
+intent -- ``execution_style`` and the ``resting_ttl_seconds`` /
+``cancel_on_move_ticks`` pair -- so the regenerated `bundle_a.golden` intent
+object now also carries ``"execution_style":"cross"`` with both resting fields
+serialized as JSON ``null`` (bundle A's recorded book has a 200-pip spread,
+narrower than the 300-pip wide-spread floor, so it crosses rather than rests).
+The intent's price (4600), size (300), idempotency key, and all thirteen
+reasons are byte-unchanged; only the three sorted keys are new.
+
 `bundle_b.golden` is byte-unchanged from the #44 shape: bundle B declines at
-the entry conditions, before sizing runs, so its serialized decision is
-identical. Regenerate either golden the same way (never hand-fabricate) after
-any change to `select`'s logic or these bundles' fixtures.
+the entry conditions, before sizing runs, so it emits no intent and its
+serialized decision -- which carries the new execution-style fields only inside
+an emitted intent -- is identical. Regenerate either golden the same way (never
+hand-fabricate) after any change to `select`'s logic or these bundles'
+fixtures.
 """
 
 from __future__ import annotations

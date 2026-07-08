@@ -16,8 +16,8 @@ import json
 from typing import TYPE_CHECKING
 
 from hedgekit.numeric import ContractCentis, MoneyMicros, PricePips, ProbabilityPpm
-from hedgekit.riskkernel.checks import OrderIntent
 from hedgekit.selector import SelectorDecision, select, serialize_decision
+from hedgekit.selector.types import SelectorOrderIntent
 
 if TYPE_CHECKING:
     from hedgekit.selector import SelectorInputs
@@ -65,12 +65,12 @@ def test_serialized_decision_contains_no_floats(
 
 
 def test_serialize_decision_encodes_intents_via_int_values() -> None:
-    """A `NormalizedOrderIntent`'s scaled-integer fields serialize as bare
+    """A `SelectorOrderIntent`'s scaled-integer fields serialize as bare
     ints equal to each unit type's `.value` -- proving `_intent_to_payload`
     (or equivalent) is exercised, despite the stub's `select` always
     returning zero intents, so this path is covered rather than dead code.
     """
-    intent = OrderIntent(
+    intent = SelectorOrderIntent(
         intent_id="intent-0001",
         market_ticker="KXFED-24DEC",
         outcome="yes",
@@ -97,6 +97,74 @@ def test_serialize_decision_encodes_intents_via_int_values() -> None:
     assert encoded_intent["max_notional"] == 450_000
     assert encoded_intent["implied_probability"] == 620_000
     assert encoded_intent["intent_id"] == "intent-0001"
+
+
+def test_serialize_decision_encodes_a_cross_intents_resting_fields_as_null() -> None:
+    """A `cross` intent's three issue-#46 fields --
+    `execution_style`/`resting_ttl_seconds`/`cancel_on_move_ticks` -- carry
+    the resting pair as JSON `null` (the `cross` default), proving
+    `_intent_to_payload` serializes these three new keys.
+    """
+    intent = SelectorOrderIntent(
+        intent_id="intent-0003",
+        market_ticker="KXFED-24DEC",
+        outcome="yes",
+        action="buy",
+        price=PricePips(4500),
+        size=ContractCentis(100),
+        max_notional=MoneyMicros(450_000),
+        implied_probability=ProbabilityPpm(620_000),
+        idempotency_key="idem-0003",
+    )
+    decision = SelectorDecision(
+        intents=(intent,),
+        reasons=("test: exercising the cross intent-encoding path",),
+        forecast_id="fc-0001",
+        market_ticker="KXFED-24DEC",
+        calibration_map_version="calib-v1",
+    )
+
+    payload = json.loads(serialize_decision(decision))
+    encoded_intent = payload["intents"][0]
+
+    assert encoded_intent["execution_style"] == "cross"
+    assert encoded_intent["resting_ttl_seconds"] is None
+    assert encoded_intent["cancel_on_move_ticks"] is None
+
+
+def test_serialize_decision_encodes_a_resting_intents_fields_verbatim() -> None:
+    """A `rest_inside_spread` intent's three issue-#46 fields serialize
+    verbatim -- `execution_style` as its string, and both resting integers
+    unwrapped as bare ints (900 and 2).
+    """
+    intent = SelectorOrderIntent(
+        intent_id="intent-0004",
+        market_ticker="KXFED-24DEC",
+        outcome="yes",
+        action="buy",
+        price=PricePips(4400),
+        size=ContractCentis(100),
+        max_notional=MoneyMicros(440_000),
+        implied_probability=ProbabilityPpm(620_000),
+        idempotency_key="idem-0004",
+        execution_style="rest_inside_spread",
+        resting_ttl_seconds=900,
+        cancel_on_move_ticks=2,
+    )
+    decision = SelectorDecision(
+        intents=(intent,),
+        reasons=("test: exercising the resting intent-encoding path",),
+        forecast_id="fc-0001",
+        market_ticker="KXFED-24DEC",
+        calibration_map_version="calib-v1",
+    )
+
+    payload = json.loads(serialize_decision(decision))
+    encoded_intent = payload["intents"][0]
+
+    assert encoded_intent["execution_style"] == "rest_inside_spread"
+    assert encoded_intent["resting_ttl_seconds"] == 900
+    assert encoded_intent["cancel_on_move_ticks"] == 2
 
 
 def test_decision_carries_no_generated_timestamps(

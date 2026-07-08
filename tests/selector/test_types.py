@@ -23,13 +23,14 @@ from hedgekit.config.schema import RiskConfig
 from hedgekit.connector.fees import FeeModel
 from hedgekit.connector.models import OrderBookSnapshot
 from hedgekit.forecast.records import ForecastRecord
-from hedgekit.numeric import MoneyMicros
+from hedgekit.numeric import ContractCentis, MoneyMicros, PricePips, ProbabilityPpm
 from hedgekit.riskkernel.checks import OrderIntent
 from hedgekit.selector import NormalizedOrderIntent, SelectorDecision
 from hedgekit.selector.types import (
     FeeModelInput,
     PositionReadModelInput,
     RiskConfigInput,
+    SelectorOrderIntent,
     SlippageModelInput,
 )
 
@@ -99,12 +100,21 @@ def _stub_decision() -> SelectorDecision:
 # --- NormalizedOrderIntent: TypeAlias identity ------------------------------
 
 
-def test_normalized_order_intent_is_the_riskkernel_order_intent() -> None:
-    """`NormalizedOrderIntent` is a `TypeAlias` for the real risk-kernel type,
-    not a parallel redefinition -- so a selector-built intent is directly
-    accepted by the Risk Kernel without translation.
+def test_normalized_order_intent_is_the_selector_order_intent() -> None:
+    """`NormalizedOrderIntent` is a `TypeAlias` for `SelectorOrderIntent` --
+    superseding this module's former `NormalizedOrderIntent is OrderIntent`
+    pin (issues #43/#44) now that issue #46 enriches the emitted intent type
+    with the three execution-style fields (`execution_style`,
+    `resting_ttl_seconds`, `cancel_on_move_ticks`). `SelectorOrderIntent`
+    itself remains a genuine subclass of the risk-kernel's `OrderIntent`, so
+    a selector-built intent is still directly accepted by the Risk Kernel
+    (whose checks read only the base `OrderIntent` fields, which every
+    `SelectorOrderIntent` still carries) -- the same #44-over-#43-style
+    supersession this package already applies elsewhere (e.g. the
+    sizing-shaped golden superseding the stub-shaped one).
     """
-    assert NormalizedOrderIntent is OrderIntent
+    assert NormalizedOrderIntent is SelectorOrderIntent
+    assert issubclass(SelectorOrderIntent, OrderIntent)
 
 
 # --- SelectorInputs: frozen/slots and loader round-trip ---------------------
@@ -261,3 +271,94 @@ def test_position_read_model_input_preserves_every_field_verbatim() -> None:
     assert positions.bucket_exposure == MoneyMicros(3_000_000)
     assert positions.total_exposure == MoneyMicros(4_000_000)
     assert positions.notional_today == MoneyMicros(5_000_000)
+
+
+# --- SelectorOrderIntent: execution-style __post_init__ invariants (#46) ----
+
+
+def _selector_order_intent(**overrides: object) -> SelectorOrderIntent:
+    """Build a `SelectorOrderIntent` with sensible base-field defaults.
+
+    Args:
+        **overrides: Field values overriding the defaults below, including
+            the three issue-#46 execution-style fields.
+
+    Returns:
+        The constructed `SelectorOrderIntent`.
+    """
+    defaults: dict[str, object] = {
+        "intent_id": "intent-selector-0001",
+        "market_ticker": "KXFED-24DEC",
+        "outcome": "yes",
+        "action": "buy",
+        "price": PricePips(4_500),
+        "size": ContractCentis(100),
+        "max_notional": MoneyMicros(450_000),
+        "implied_probability": ProbabilityPpm(500_000),
+        "idempotency_key": "idem-selector-0001",
+    }
+    defaults.update(overrides)
+    return SelectorOrderIntent(**defaults)
+
+
+def test_selector_order_intent_cross_defaults_construct_with_no_resting_fields() -> (
+    None
+):
+    """The default `execution_style="cross"` constructs fine with both
+    resting fields left at their `None` defaults."""
+    intent = _selector_order_intent()
+
+    assert intent.execution_style == "cross"
+    assert intent.resting_ttl_seconds is None
+    assert intent.cancel_on_move_ticks is None
+
+
+def test_selector_order_intent_cross_rejects_a_non_none_resting_ttl() -> None:
+    """`cross` requires both resting fields `None`; a non-`None`
+    `resting_ttl_seconds` on a `cross` intent raises."""
+    with pytest.raises(ValueError):
+        _selector_order_intent(execution_style="cross", resting_ttl_seconds=900)
+
+
+def test_selector_order_intent_cross_rejects_a_non_none_cancel_on_move_ticks() -> None:
+    """The mirror of the ttl case above: a non-`None` `cancel_on_move_ticks`
+    on a `cross` intent likewise raises."""
+    with pytest.raises(ValueError):
+        _selector_order_intent(execution_style="cross", cancel_on_move_ticks=2)
+
+
+def test_selector_order_intent_rest_inside_spread_constructs_with_both_fields() -> None:
+    """`rest_inside_spread` requires both resting fields non-`None`;
+    supplying both constructs fine."""
+    intent = _selector_order_intent(
+        execution_style="rest_inside_spread",
+        resting_ttl_seconds=900,
+        cancel_on_move_ticks=2,
+    )
+
+    assert intent.execution_style == "rest_inside_spread"
+    assert intent.resting_ttl_seconds == 900
+    assert intent.cancel_on_move_ticks == 2
+
+
+def test_selector_order_intent_rest_inside_spread_rejects_a_none_resting_ttl() -> None:
+    """A `rest_inside_spread` intent missing its `resting_ttl_seconds`
+    (`None`) raises, even though `cancel_on_move_ticks` is set."""
+    with pytest.raises(ValueError):
+        _selector_order_intent(
+            execution_style="rest_inside_spread",
+            resting_ttl_seconds=None,
+            cancel_on_move_ticks=2,
+        )
+
+
+def test_selector_order_intent_rest_inside_spread_rejects_a_none_cancel_ticks() -> None:
+    """The mirror of the ttl case above: a `rest_inside_spread` intent
+    missing its `cancel_on_move_ticks` (`None`) likewise raises, even though
+    `resting_ttl_seconds` is set."""
+    with pytest.raises(ValueError):
+        _selector_order_intent(
+            execution_style="rest_inside_spread",
+            resting_ttl_seconds=900,
+            cancel_on_move_ticks=None,
+        )

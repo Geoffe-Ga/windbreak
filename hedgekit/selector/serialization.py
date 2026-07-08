@@ -32,7 +32,10 @@ def _intent_to_payload(intent: NormalizedOrderIntent) -> dict[str, object]:
     unit fields (``price``/``size``/``max_notional``/``implied_probability``)
     are unwrapped to their bare ``.value`` int, so no float ever appears (SPEC
     S6.1). This mirrors the unwrap-the-unit-type convention in
-    :func:`hedgekit.forecast.records.forecast_record_to_payload`.
+    :func:`hedgekit.forecast.records.forecast_record_to_payload`. The three
+    issue-#46 execution-style fields (``execution_style`` as its string, and the
+    ``resting_ttl_seconds`` / ``cancel_on_move_ticks`` integers -- each ``None``
+    on a ``cross`` intent, serialized as JSON ``null``) round out the payload.
 
     Args:
         intent: The normalized order intent to project.
@@ -51,6 +54,9 @@ def _intent_to_payload(intent: NormalizedOrderIntent) -> dict[str, object]:
         "max_notional": intent.max_notional.value,
         "implied_probability": intent.implied_probability.value,
         "idempotency_key": intent.idempotency_key,
+        "execution_style": intent.execution_style,
+        "resting_ttl_seconds": intent.resting_ttl_seconds,
+        "cancel_on_move_ticks": intent.cancel_on_move_ticks,
     }
 
 
