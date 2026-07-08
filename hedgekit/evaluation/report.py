@@ -20,6 +20,7 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from hedgekit.evaluation.power import power_analysis
 from hedgekit.evaluation.registry import (
     HEADLINE_SKILL_METRIC,
     EvaluationInputs,
@@ -36,11 +37,16 @@ if TYPE_CHECKING:
     from pathlib import Path
     from typing import Any, Final
 
+    from hedgekit.evaluation.power import PowerAnalysis
     from hedgekit.evaluation.registry import MetricValue, ObservationWindow
 
 #: The blunt banner printed under the forecast track when the headline skill
 #: metric shows no positive demonstrated edge.
 NO_EDGE_BANNER: Final[str] = "NO EDGE DEMONSTRATED"
+
+#: The fixed seed the report's power analysis runs under, so a report over a
+#: given fixture is byte-identical across repeated runs (SPEC S3.5).
+POWER_ANALYSIS_SEED = 20_240_607
 
 #: JSON top-level key holding the list of forecast rows.
 _FORECASTS_KEY = "forecasts"
@@ -86,9 +92,12 @@ class EvaluationReport:
 
     Attributes:
         tracks: The three track reports, one per :class:`Track`, in order.
+        power: The clustered-bootstrap power analysis, or ``None`` when the
+            report was constructed without one (e.g. in renderer unit tests).
     """
 
     tracks: tuple[TrackReport, ...]
+    power: PowerAnalysis | None = None
 
     def __post_init__(self) -> None:
         """Validate that the report carries each track exactly once.
@@ -112,9 +121,13 @@ class EvaluationReport:
             The rendered report: a section per track in fixed order, each with
             one line per metric (``name [window] = <int | NOT_IMPLEMENTED>``)
             and, under the forecast track, :data:`NO_EDGE_BANNER` when the
-            headline skill metric shows no positive edge.
+            headline skill metric shows no positive edge; a trailing
+            ``== power ==`` section is appended when a power analysis is present.
         """
-        return "\n".join(_render_track(track) for track in self.tracks)
+        sections = [_render_track(track) for track in self.tracks]
+        if self.power is not None:
+            sections.append(self.power.render_text())
+        return "\n".join(sections)
 
 
 def _format_value(value: MetricValue) -> str:
@@ -234,6 +247,7 @@ def _forecast_from_entry(entry: Mapping[str, Any]) -> FixtureForecast:
         abstention_reason=entry["abstention_reason"],
         traded=entry["traded"],
         baseline_executable_price_pips=entry["baseline_executable_price_pips"],
+        correlation_group_id=entry.get("correlation_group_id"),
     )
 
 
@@ -310,4 +324,5 @@ def run_evaluation(*, fixture_path: Path) -> EvaluationReport:
     payload: Any = json.loads(fixture_path.read_text(encoding="utf-8"))
     _require_top_level_keys(payload)
     inputs = _build_inputs(payload)
-    return EvaluationReport(tracks=_build_tracks(inputs))
+    power = power_analysis(inputs, seed=POWER_ANALYSIS_SEED)
+    return EvaluationReport(tracks=_build_tracks(inputs), power=power)
