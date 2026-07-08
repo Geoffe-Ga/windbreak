@@ -1,4 +1,4 @@
-"""Pure, pytest-free JSON-to-domain loader for selector test fixtures (#43).
+"""Pure, pytest-free JSON-to-domain loader for selector test fixtures (#43/#44).
 
 `load_inputs` parses one recorded "bundle" JSON file (see
 `tests/selector/fixtures/bundle_a.json` / `bundle_b.json`) into a real
@@ -9,6 +9,15 @@ arithmetic-bearing value wrapped in its `hedgekit.numeric` scaled-integer unit
 type at load time (mirroring `hedgekit.connector.fake.FakeExchange`'s
 `_market_from_dict` / `_book_from_dict` fixture-loading convention). No
 float ever appears in a bundle file or in the objects built from it.
+
+Issue #44 enriches the three placeholder seams into concrete carriers: a
+bundle's `fee_model` object becomes a `FeeModelInput` wrapping a real,
+post-init-validated `hedgekit.connector.fees.FeeModel` plus its `as_of`
+freshness timestamp; `slippage_model` becomes a `SlippageModelInput`;
+`risk_config` becomes a `RiskConfigInput` wrapping a real
+`hedgekit.config.schema.RiskConfig` built from the bundle's override fields
+over the schema's own defaults. `positions` stays the opaque
+`PositionReadModelRef` placeholder (unused this issue).
 
 This module is deliberately free of any `pytest` import: `test_determinism_
 golden.py`'s fresh-interpreter check imports it from a bare `python -c`
@@ -23,15 +32,17 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from hedgekit.config.schema import RiskConfig
+from hedgekit.connector.fees import FeeModel
 from hedgekit.connector.models import OrderBookLevel, OrderBookSnapshot
 from hedgekit.forecast.records import Citation, ForecastRecord, ModelVote
 from hedgekit.numeric import ContractCentis, PricePips
 from hedgekit.selector import SelectorInputs
 from hedgekit.selector.types import (
-    FeeModelRef,
+    FeeModelInput,
     PositionReadModelRef,
-    RiskConfigRef,
-    SlippageModelRef,
+    RiskConfigInput,
+    SlippageModelInput,
 )
 
 if TYPE_CHECKING:
@@ -172,6 +183,60 @@ def _order_book_from_dict(data: Mapping[str, object]) -> OrderBookSnapshot:
     )
 
 
+def _fee_model_input_from_dict(data: Mapping[str, object]) -> FeeModelInput:
+    """Build a :class:`FeeModelInput` from a bundle's ``fee_model`` object.
+
+    Args:
+        data: The raw ``fee_model`` mapping from a bundle JSON file, carrying
+            the schedule's rate fields plus an ``as_of`` freshness timestamp.
+
+    Returns:
+        The constructed :class:`FeeModelInput`, wrapping a real,
+        post-init-validated :class:`~hedgekit.connector.fees.FeeModel`.
+    """
+    model = FeeModel(
+        schedule_id=data["schedule_id"],
+        maker_fee_ppm=data["maker_fee_ppm"],
+        taker_fee_ppm=data["taker_fee_ppm"],
+        settlement_fee_ppm=data["settlement_fee_ppm"],
+    )
+    return FeeModelInput(model=model, as_of=_parse_dt(data["as_of"]))
+
+
+def _slippage_input_from_dict(data: Mapping[str, object]) -> SlippageModelInput:
+    """Build a :class:`SlippageModelInput` from a bundle's ``slippage_model`` object.
+
+    Args:
+        data: The raw ``slippage_model`` mapping from a bundle JSON file.
+
+    Returns:
+        The constructed :class:`SlippageModelInput`.
+    """
+    return SlippageModelInput(
+        model_id=data["model_id"],
+        per_contract_buffer_ppm=data["per_contract_buffer_ppm"],
+    )
+
+
+def _risk_config_input_from_dict(data: Mapping[str, object]) -> RiskConfigInput:
+    """Build a :class:`RiskConfigInput` from a bundle's ``risk_config`` object.
+
+    Every key besides ``config_hash`` is passed through verbatim as a
+    :class:`~hedgekit.config.schema.RiskConfig` field override, so a bundle
+    that supplies none inherits every :class:`RiskConfig` default.
+
+    Args:
+        data: The raw ``risk_config`` mapping from a bundle JSON file.
+
+    Returns:
+        The constructed :class:`RiskConfigInput`.
+    """
+    overrides = {key: value for key, value in data.items() if key != "config_hash"}
+    return RiskConfigInput(
+        config=RiskConfig(**overrides), config_hash=data["config_hash"]
+    )
+
+
 def load_inputs(path: str | Path) -> SelectorInputs:
     """Parse one recorded bundle JSON file into a `SelectorInputs`.
 
@@ -190,9 +255,9 @@ def load_inputs(path: str | Path) -> SelectorInputs:
         forecast=_forecast_record_from_dict(raw["forecast"]),
         calibration_map_version=raw["calibration_map_version"],
         order_book=_order_book_from_dict(raw["order_book"]),
-        fee_model=FeeModelRef(raw["fee_model_id"]),
-        slippage_model=SlippageModelRef(raw["slippage_model_id"]),
+        fee_model=_fee_model_input_from_dict(raw["fee_model"]),
+        slippage_model=_slippage_input_from_dict(raw["slippage_model"]),
         positions=PositionReadModelRef(raw["positions_snapshot_id"]),
-        risk_config=RiskConfigRef(raw["risk_config_hash"]),
+        risk_config=_risk_config_input_from_dict(raw["risk_config"]),
         correlation_tags=tuple(raw["correlation_tags"]),
     )

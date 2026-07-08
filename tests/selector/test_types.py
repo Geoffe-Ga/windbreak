@@ -1,33 +1,67 @@
-"""Tests for hedgekit.selector's core types (issue #43).
+"""Tests for hedgekit.selector's core types (issues #43/#44).
 
-Pins the frozen/slots invariants of `SelectorInputs`, `SelectorDecision`, and
-the four placeholder ref types (`FeeModelRef`, `SlippageModelRef`,
-`PositionReadModelRef`, `RiskConfigRef`), the `NormalizedOrderIntent` type
-alias identity with `hedgekit.riskkernel.checks.OrderIntent`, and that
-`fixture_loader.load_inputs` round-trips both committed bundles into real,
-post-init-validated `ForecastRecord` / `OrderBookSnapshot` instances.
+Pins the frozen/slots invariants of `SelectorInputs`, `SelectorDecision`, the
+three issue-#44 concrete seam carriers (`FeeModelInput`, `SlippageModelInput`,
+`RiskConfigInput`) and the still-opaque `PositionReadModelRef`, the
+`NormalizedOrderIntent` type alias identity with
+`hedgekit.riskkernel.checks.OrderIntent`, and that `fixture_loader.load_inputs`
+round-trips both committed bundles into real, post-init-validated
+`ForecastRecord` / `OrderBookSnapshot` instances.
 """
 
 from __future__ import annotations
 
 import dataclasses
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
 
+from hedgekit.config.schema import RiskConfig
+from hedgekit.connector.fees import FeeModel
 from hedgekit.connector.models import OrderBookSnapshot
 from hedgekit.forecast.records import ForecastRecord
 from hedgekit.riskkernel.checks import OrderIntent
 from hedgekit.selector import NormalizedOrderIntent, SelectorDecision
 from hedgekit.selector.types import (
-    FeeModelRef,
+    FeeModelInput,
     PositionReadModelRef,
-    RiskConfigRef,
-    SlippageModelRef,
+    RiskConfigInput,
+    SlippageModelInput,
 )
 
 if TYPE_CHECKING:
     from hedgekit.selector import SelectorInputs
+
+#: A fixed reference instant for the fee-model carrier's `as_of` stamp.
+_AS_OF = datetime(2025, 1, 1, tzinfo=UTC)
+
+#: A distinct second instant, for the frozen-immutability mutation attempt.
+_OTHER_AS_OF = datetime(2025, 2, 1, tzinfo=UTC)
+
+
+def _fee_model_input() -> FeeModelInput:
+    """Build a `FeeModelInput` over a real, post-init-validated `FeeModel`."""
+    model = FeeModel(
+        schedule_id="fee-model-standard",
+        maker_fee_ppm=0,
+        taker_fee_ppm=10_000,
+        settlement_fee_ppm=0,
+    )
+    return FeeModelInput(model=model, as_of=_AS_OF)
+
+
+def _slippage_model_input() -> SlippageModelInput:
+    """Build a `SlippageModelInput` with a known buffer."""
+    return SlippageModelInput(
+        model_id="slippage-model-linear", per_contract_buffer_ppm=2_000
+    )
+
+
+def _risk_config_input() -> RiskConfigInput:
+    """Build a `RiskConfigInput` over unmodified `RiskConfig` defaults."""
+    return RiskConfigInput(config=RiskConfig(), config_hash="sha256:risk-config-a")
+
 
 #: A stub decision's fields, factored out so every `SelectorDecision`-only
 #: test builds an identical, minimal-but-valid instance.
@@ -133,49 +167,68 @@ def test_selector_decision_intents_and_reasons_are_tuples() -> None:
     assert isinstance(decision.reasons, tuple)
 
 
-# --- Placeholder ref types: frozen/slots -------------------------------------
+# --- Seam carrier types: frozen/slots ----------------------------------------
 
 
 @pytest.mark.parametrize(
-    ("ref_type", "field_name"),
+    ("instance", "field_name", "new_value"),
     [
-        (FeeModelRef, "model_id"),
-        (SlippageModelRef, "model_id"),
-        (PositionReadModelRef, "snapshot_id"),
-        (RiskConfigRef, "config_hash"),
+        (_fee_model_input(), "as_of", _OTHER_AS_OF),
+        (_slippage_model_input(), "per_contract_buffer_ppm", 9_999),
+        (_risk_config_input(), "config_hash", "sha256:other"),
+        (PositionReadModelRef("positions-snap-0001"), "snapshot_id", "other-id"),
     ],
 )
-def test_placeholder_ref_is_frozen(ref_type: type, field_name: str) -> None:
-    """Each placeholder ref type is frozen: mutating its sole field raises."""
-    ref = ref_type("some-id")
-
-    with pytest.raises(dataclasses.FrozenInstanceError):
-        setattr(ref, field_name, "other-id")
-
-
-@pytest.mark.parametrize(
-    "ref_type", [FeeModelRef, SlippageModelRef, PositionReadModelRef, RiskConfigRef]
-)
-def test_placeholder_ref_is_slotted(ref_type: type) -> None:
-    """Each placeholder ref type is slotted: no `__dict__` attribute storage."""
-    ref = ref_type("some-id")
-
-    assert not hasattr(ref, "__dict__")
-
-
-@pytest.mark.parametrize(
-    ("ref_type", "field_name", "value"),
-    [
-        (FeeModelRef, "model_id", "fee-model-standard"),
-        (SlippageModelRef, "model_id", "slippage-model-linear"),
-        (PositionReadModelRef, "snapshot_id", "positions-snap-0001"),
-        (RiskConfigRef, "config_hash", "sha256:risk-config-a"),
-    ],
-)
-def test_placeholder_ref_preserves_its_single_field(
-    ref_type: type, field_name: str, value: str
+def test_seam_carrier_is_frozen(
+    instance: object, field_name: str, new_value: object
 ) -> None:
-    """Each placeholder ref type stores and returns its single str field verbatim."""
-    ref = ref_type(value)
+    """Each selector seam carrier is frozen: mutating a field raises."""
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        setattr(instance, field_name, new_value)
 
-    assert getattr(ref, field_name) == value
+
+@pytest.mark.parametrize(
+    "instance",
+    [
+        _fee_model_input(),
+        _slippage_model_input(),
+        _risk_config_input(),
+        PositionReadModelRef("positions-snap-0001"),
+    ],
+)
+def test_seam_carrier_is_slotted(instance: object) -> None:
+    """Each selector seam carrier is slotted: no `__dict__` attribute storage."""
+    assert not hasattr(instance, "__dict__")
+
+
+def test_fee_model_input_carries_a_real_fee_model_and_as_of() -> None:
+    """`FeeModelInput` wraps a real `FeeModel` and its `as_of` freshness stamp."""
+    fee_model = _fee_model_input()
+
+    assert isinstance(fee_model.model, FeeModel)
+    assert fee_model.model.taker_fee_ppm == 10_000
+    assert fee_model.as_of == _AS_OF
+
+
+def test_slippage_model_input_preserves_its_fields() -> None:
+    """`SlippageModelInput` stores its model id and per-contract buffer verbatim."""
+    slippage = _slippage_model_input()
+
+    assert slippage.model_id == "slippage-model-linear"
+    assert slippage.per_contract_buffer_ppm == 2_000
+
+
+def test_risk_config_input_carries_a_real_risk_config_and_hash() -> None:
+    """`RiskConfigInput` wraps a real `RiskConfig` and its content hash."""
+    risk_config = _risk_config_input()
+
+    assert isinstance(risk_config.config, RiskConfig)
+    assert risk_config.config.min_net_edge_ppm == RiskConfig().min_net_edge_ppm
+    assert risk_config.config_hash == "sha256:risk-config-a"
+
+
+def test_position_read_model_ref_preserves_its_snapshot_id() -> None:
+    """`PositionReadModelRef` stores and returns its snapshot id verbatim."""
+    ref = PositionReadModelRef("positions-snap-0001")
+
+    assert ref.snapshot_id == "positions-snap-0001"

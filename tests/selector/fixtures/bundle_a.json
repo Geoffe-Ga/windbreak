@@ -41,7 +41,7 @@
       }
     ],
     "source_quality_notes": ["primary source", "cross-checked"],
-    "research_cost_micros": 125000,
+    "research_cost_micros": 25000,
     "triage_stage": "full",
     "created_at": "2024-12-10T12:00:00.000000Z",
     "forecast_horizon_hours": 48,
@@ -65,9 +65,20 @@
     "fetched_at": "2024-12-10T12:00:05.000000Z"
   },
   "calibration_map_version": "calib-v1",
-  "fee_model_id": "fee-model-standard",
-  "slippage_model_id": "slippage-model-linear",
+  "fee_model": {
+    "schedule_id": "fee-model-standard",
+    "maker_fee_ppm": 0,
+    "taker_fee_ppm": 70000,
+    "settlement_fee_ppm": 0,
+    "as_of": "2024-12-10T12:00:00.000000Z"
+  },
+  "slippage_model": {
+    "model_id": "slippage-model-linear",
+    "per_contract_buffer_ppm": 5000
+  },
   "positions_snapshot_id": "positions-snap-0001",
-  "risk_config_hash": "sha256:risk-config-a",
+  "risk_config": {
+    "config_hash": "sha256:risk-config-a"
+  },
   "correlation_tags": ["fed", "rates", "macro"]
 }

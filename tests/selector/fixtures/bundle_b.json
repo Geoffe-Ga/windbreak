@@ -63,9 +63,20 @@
     "fetched_at": "2024-12-15T09:30:05.000000Z"
   },
   "calibration_map_version": "calib-v2",
-  "fee_model_id": "fee-model-tiered",
-  "slippage_model_id": "slippage-model-sqrt",
+  "fee_model": {
+    "schedule_id": "fee-model-tiered",
+    "maker_fee_ppm": 0,
+    "taker_fee_ppm": 90000,
+    "settlement_fee_ppm": 5000,
+    "as_of": "2024-12-15T09:00:00.000000Z"
+  },
+  "slippage_model": {
+    "model_id": "slippage-model-sqrt",
+    "per_contract_buffer_ppm": 8000
+  },
   "positions_snapshot_id": "positions-snap-0002",
-  "risk_config_hash": "sha256:risk-config-b",
+  "risk_config": {
+    "config_hash": "sha256:risk-config-b"
+  },
   "correlation_tags": ["cpi", "inflation"]
 }
