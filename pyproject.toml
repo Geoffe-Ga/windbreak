@@ -64,6 +64,9 @@ addopts = [
     "--cov-report=xml",
     "--cov-fail-under=90",
 ]
+markers = [
+    "chaos: fault-injection chaos suite over the Order Gateway (SPEC §11.5); also selected standalone by the CI chaos job",
+]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
