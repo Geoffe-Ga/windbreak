@@ -198,6 +198,50 @@ def selector_decisions_read_model(
     ]
 
 
+#: The live-divergence ledger event types projected into their read models
+#: (issue #58): the per-fill execution-quality comparison and the per-run
+#: divergence sample.
+_EXECUTION_QUALITY_RECORDED = "ExecutionQualityRecorded"
+_LIVE_DIVERGENCE_SAMPLED = "LiveDivergenceSampled"
+
+
+def execution_quality_read_model(
+    records: list[LedgerRecord],
+) -> list[dict[str, object]]:
+    """Project every ``ExecutionQualityRecorded`` row, in ledger order (issue #58).
+
+    Args:
+        records: The verified ledger records, in sequence order.
+
+    Returns:
+        One ``{seq, created_at, event_type, data}`` entry per execution-quality
+        comparison.
+    """
+    return [
+        _gateway_projection(record)
+        for record in records
+        if record.event_type == _EXECUTION_QUALITY_RECORDED
+    ]
+
+
+def live_divergence_read_model(
+    records: list[LedgerRecord],
+) -> list[dict[str, object]]:
+    """Project every ``LiveDivergenceSampled`` row, in ledger order (issue #58).
+
+    Args:
+        records: The verified ledger records, in sequence order.
+
+    Returns:
+        One ``{seq, created_at, event_type, data}`` entry per divergence sample.
+    """
+    return [
+        _gateway_projection(record)
+        for record in records
+        if record.event_type == _LIVE_DIVERGENCE_SAMPLED
+    ]
+
+
 def _write_read_model(path: Path, rows: list[dict[str, object]]) -> None:
     """Write a read model as canonical JSON bytes with one trailing newline.
 

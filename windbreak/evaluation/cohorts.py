@@ -357,6 +357,95 @@ def traded_vs_skipped_brier_delta(
     return skipped - traded
 
 
+def _resolved_track_forecasts(
+    inputs: EvaluationInputs, *, live: bool
+) -> tuple[FixtureForecast, ...]:
+    """Return the resolved forecasts on one live/paper track, in fixture order.
+
+    Args:
+        inputs: The admitted evaluation inputs whose forecasts are partitioned.
+        live: ``True`` keeps LIVE-track forecasts (``forecast.live is True``),
+            ``False`` keeps PAPER-track forecasts.
+
+    Returns:
+        The subset of ``inputs.forecasts`` on the requested track whose market
+        resolves and which carry a non-``None`` ``created_sequence`` (every
+        temporally-admitted forecast does; the guard also keeps the rolling-window
+        sort total).
+    """
+    return tuple(
+        forecast
+        for forecast in inputs.forecasts
+        if forecast.live is live
+        and forecast.market_ticker in inputs.resolutions
+        and forecast.created_sequence is not None
+    )
+
+
+def _rolling_window(
+    forecasts: tuple[FixtureForecast, ...], window_size: int
+) -> tuple[FixtureForecast, ...]:
+    """Return the most-recent ``window_size`` forecasts by ``created_sequence``.
+
+    Args:
+        forecasts: The resolved forecasts to truncate.
+        window_size: The maximum number of most-recent forecasts to keep.
+
+    Returns:
+        The ``window_size`` forecasts with the highest ``created_sequence``
+        (descending); fewer when the cohort is smaller than the window.
+    """
+    ordered = sorted(
+        forecasts,
+        key=lambda forecast: forecast.created_sequence or 0,
+        reverse=True,
+    )
+    return tuple(ordered[:window_size])
+
+
+def live_brier_degradation(
+    inputs: EvaluationInputs, *, window: ObservationWindow, window_size: int
+) -> int:
+    """Return ``mean_brier(LIVE_window) - mean_brier(PAPER)``, in ppm.
+
+    Mirrors :func:`traded_vs_skipped_brier_delta`'s two-cohort partition, but
+    splits on ``forecast.live`` instead of ``forecast.traded``: the LIVE cohort
+    is truncated to the most-recent ``window_size`` resolved forecasts (by
+    ``created_sequence`` descending) before scoring, while the PAPER baseline is
+    every resolved PAPER forecast. A positive degradation flags the LIVE track
+    scoring worse (higher Brier) than the PAPER baseline.
+
+    Args:
+        inputs: The admitted evaluation inputs to score.
+        window: The declared observation-window label passed through to
+            :func:`~windbreak.evaluation.metrics.mean_brier`.
+        window_size: The rolling-window size applied to the LIVE cohort.
+
+    Returns:
+        The signed degradation, in ppm.
+
+    Raises:
+        EmptyCohortError: If the windowed LIVE cohort or the PAPER cohort has no
+            resolved records -- an ordinary early-deployment state. Callers that
+            render rather than crash (the registry adapter) catch it and surface
+            the :data:`UNDEFINED` sentinel; it subclasses ``ValueError`` so plain
+            ``ValueError`` handlers still catch it.
+    """
+    live = _rolling_window(_resolved_track_forecasts(inputs, live=True), window_size)
+    paper = _resolved_track_forecasts(inputs, live=False)
+    if not live:
+        raise EmptyCohortError(
+            "LIVE cohort has no resolved records; live-brier degradation is undefined"
+        )
+    if not paper:
+        raise EmptyCohortError(
+            "PAPER cohort has no resolved records; live-brier degradation is undefined"
+        )
+    live_mean = mean_brier(replace(inputs, forecasts=live), window=window)
+    paper_mean = mean_brier(replace(inputs, forecasts=paper), window=window)
+    return live_mean - paper_mean
+
+
 def mean_brier_over(
     slices: Iterable[WindowedForecasts], inputs: EvaluationInputs
 ) -> int:

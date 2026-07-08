@@ -1,0 +1,28 @@
+{
+  "description": "Two live fills that each filled CHEAPER than the paper model (actual < modeled): sum(actual)=125_000, sum(modeled)=150_000 micros; ceil(125_000 * 1_000_000 / 150_000) = 833_334 (not exact -- the ratio still ceils even though every per-fill slippage_micros is negative, pinning that the ceiling direction is applied to the ratio itself, not flipped by the sign of the underlying slippage).",
+  "fills": [
+    {
+      "fill_id": "FQ-1",
+      "market_ticker": "MKT-EXEC-C",
+      "side": "YES",
+      "filled_centis": 400,
+      "actual_cost_micros": 80000,
+      "modeled_cost_micros": 100000,
+      "model_version": "pfm-known-answer-v1",
+      "created_sequence": 20
+    },
+    {
+      "fill_id": "FQ-2",
+      "market_ticker": "MKT-EXEC-D",
+      "side": "NO",
+      "filled_centis": 250,
+      "actual_cost_micros": 45000,
+      "modeled_cost_micros": 50000,
+      "model_version": "pfm-known-answer-v1",
+      "created_sequence": 21
+    }
+  ],
+  "expected": {
+    "live_slippage_ratio_ppm": 833334
+  }
+}

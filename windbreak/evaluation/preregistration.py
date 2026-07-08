@@ -1,7 +1,7 @@
 """Pre-registered evaluation gate plans (SPEC §13.6 / §17.4 / T15).
 
 A :class:`GatePlan` is a frozen, content-addressed snapshot of the evaluation
-gate's full configuration: the metric/window catalogue, the five
+gate's full configuration: the metric/window catalogue, the eight
 promotion/calibration thresholds, the observation window, the two named schemes
 (executable-price baseline, event-correlation clustering), and the paper
 fill-model version. Every value is an ``int``, a ``str``, or a tuple of those --
@@ -47,7 +47,10 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from windbreak.evaluation.registry import registered_metrics
+from windbreak.evaluation.registry import (
+    LIVE_ROLLING_WINDOW_SIZE,
+    registered_metrics,
+)
 from windbreak.ledger.events import Event, canonical_json
 
 if TYPE_CHECKING:
@@ -77,7 +80,7 @@ _METRIC_WINDOWS_KEY = "metric_windows"
 #: pair.
 _METRIC_WINDOW_PAIR_LEN = 2
 
-#: The five integer threshold fields, in declaration order. Iterated by the
+#: The eight integer threshold fields, in declaration order. Iterated by the
 #: construction guard and the canonical round-trip so the field list is stated
 #: once.
 _INT_FIELD_NAMES: tuple[str, ...] = (
@@ -86,7 +89,33 @@ _INT_FIELD_NAMES: tuple[str, ...] = (
     "promotion_min_independent_event_groups",
     "brier_skill_required_ppm",
     "bootstrap_confidence_ppm",
+    "live_rolling_window_size",
+    "live_slippage_ratio_limit_ppm",
+    "live_brier_degradation_band_ppm",
 )
+
+#: The three live-threshold field names issue #58 added, carved out of
+#: :func:`GatePlan.from_canonical`'s strict key check so a pre-#58, 10-key
+#: registration (which predates these keys) still reads back with documented
+#: legacy defaults -- content addressing stays schema-independent because the
+#: stored hash is verified against the *persisted* plan dict, not a
+#: newly-serialized one. Genuinely unknown keys are still rejected.
+_LIVE_THRESHOLD_FIELD_NAMES: tuple[str, ...] = (
+    "live_rolling_window_size",
+    "live_slippage_ratio_limit_ppm",
+    "live_brier_degradation_band_ppm",
+)
+
+#: Documented legacy defaults for the three new live-threshold keys, applied
+#: when reading a pre-#58 registration that recorded none of them. A system
+#: with no live thresholds recorded before is assumed to want today's standard
+#: defaults applied retroactively (matching
+#: :class:`~windbreak.config.schema.EvaluationConfig`'s own defaults).
+_LEGACY_LIVE_THRESHOLD_DEFAULTS: Mapping[str, int] = {
+    "live_rolling_window_size": 100,
+    "live_slippage_ratio_limit_ppm": 1_500_000,
+    "live_brier_degradation_band_ppm": 50_000,
+}
 
 #: The four string identity fields, in declaration order.
 _STR_FIELD_NAMES: tuple[str, ...] = (
@@ -97,7 +126,7 @@ _STR_FIELD_NAMES: tuple[str, ...] = (
 )
 
 #: The exact set of keys a canonical plan dict carries -- the metric catalogue,
-#: the five thresholds, and the four identity strings.
+#: the eight thresholds, and the four identity strings.
 _CANONICAL_PLAN_KEYS: frozenset[str] = frozenset(
     (_METRIC_WINDOWS_KEY, *_INT_FIELD_NAMES, *_STR_FIELD_NAMES)
 )
@@ -192,6 +221,13 @@ class GatePlan:
         clustering_scheme: The named event-correlation clustering scheme.
         paper_fill_model_version: The paper fill-model version pinned into the
             plan's identity (SPEC §17.4).
+        live_rolling_window_size: Rolling-window size for the live-divergence
+            gates (issue #58); defaulted so a pre-#58 direct construction stays
+            valid.
+        live_slippage_ratio_limit_ppm: Live-vs-paper slippage ratio ceiling, in
+            ppm (issue #58).
+        live_brier_degradation_band_ppm: Allowed LIVE-over-PAPER rolling Brier
+            degradation, in ppm (issue #58).
     """
 
     metric_windows: tuple[tuple[str, str], ...]
@@ -204,6 +240,15 @@ class GatePlan:
     baseline_scheme: str
     clustering_scheme: str
     paper_fill_model_version: str
+    live_rolling_window_size: int = _LEGACY_LIVE_THRESHOLD_DEFAULTS[
+        "live_rolling_window_size"
+    ]
+    live_slippage_ratio_limit_ppm: int = _LEGACY_LIVE_THRESHOLD_DEFAULTS[
+        "live_slippage_ratio_limit_ppm"
+    ]
+    live_brier_degradation_band_ppm: int = _LEGACY_LIVE_THRESHOLD_DEFAULTS[
+        "live_brier_degradation_band_ppm"
+    ]
 
     def __post_init__(self) -> None:
         """Validate every field and normalize ``metric_windows`` in place.
@@ -221,14 +266,14 @@ class GatePlan:
         object.__setattr__(self, _METRIC_WINDOWS_KEY, normalized)
 
     def canonical_dict(self) -> dict[str, object]:
-        """Return the plan as a JSON-safe dict of exactly the ten plan keys.
+        """Return the plan as a JSON-safe dict of exactly the thirteen plan keys.
 
         ``metric_windows`` is rendered as a list of two-element lists (JSON has
         no tuple), matching the persisted form; key order is irrelevant because
         :func:`~windbreak.ledger.events.canonical_json` sorts keys.
 
         Returns:
-            A mapping carrying the metric catalogue, the five thresholds, and
+            A mapping carrying the metric catalogue, the eight thresholds, and
             the four identity strings.
         """
         windows = [[name, window] for name, window in self.metric_windows]
@@ -245,6 +290,9 @@ class GatePlan:
             "baseline_scheme": self.baseline_scheme,
             "clustering_scheme": self.clustering_scheme,
             "paper_fill_model_version": self.paper_fill_model_version,
+            "live_rolling_window_size": self.live_rolling_window_size,
+            "live_slippage_ratio_limit_ppm": self.live_slippage_ratio_limit_ppm,
+            "live_brier_degradation_band_ppm": self.live_brier_degradation_band_ppm,
         }
 
     @property
@@ -271,7 +319,9 @@ class GatePlan:
     def from_canonical(cls, mapping: Mapping[str, object]) -> GatePlan:
         """Reconstruct a :class:`GatePlan` from a canonical plan mapping.
 
-        The mapping must carry exactly the ten canonical plan keys; the
+        The mapping must carry the thirteen canonical plan keys; a pre-#58
+        ten-key registration is also accepted, with the three live-threshold
+        keys defaulting per :data:`_LEGACY_LIVE_THRESHOLD_DEFAULTS`. The
         reconstructed plan's ``__post_init__`` re-validates and re-normalizes.
 
         Args:
@@ -281,9 +331,9 @@ class GatePlan:
             The reconstructed plan.
 
         Raises:
-            ValueError: If the mapping carries any key outside the ten canonical
-                plan keys (the message names the offending key(s)), or is
-                missing a required key.
+            ValueError: If the mapping carries any key outside the thirteen
+                canonical plan keys (the message names the offending key(s)), or
+                is missing a required key.
             TypeError: If a value has the wrong JSON type for its field.
         """
         unknown = set(mapping) - _CANONICAL_PLAN_KEYS
@@ -311,6 +361,15 @@ class GatePlan:
             clustering_scheme=_require_mapping_str(mapping, "clustering_scheme"),
             paper_fill_model_version=_require_mapping_str(
                 mapping, "paper_fill_model_version"
+            ),
+            live_rolling_window_size=_mapping_int_or_legacy_default(
+                mapping, "live_rolling_window_size"
+            ),
+            live_slippage_ratio_limit_ppm=_mapping_int_or_legacy_default(
+                mapping, "live_slippage_ratio_limit_ppm"
+            ),
+            live_brier_degradation_band_ppm=_mapping_int_or_legacy_default(
+                mapping, "live_brier_degradation_band_ppm"
             ),
         )
 
@@ -395,6 +454,30 @@ def _require_mapping_int(mapping: Mapping[str, object], key: str) -> int:
     return value
 
 
+def _mapping_int_or_legacy_default(mapping: Mapping[str, object], key: str) -> int:
+    """Return a live-threshold int, defaulting a pre-#58 record's absent key.
+
+    The three live-threshold keys did not exist before issue #58, so a legacy
+    registration carries none of them. When absent, the documented legacy
+    default in :data:`_LEGACY_LIVE_THRESHOLD_DEFAULTS` is applied; when present,
+    the value is read and int-validated exactly like every other threshold.
+
+    Args:
+        mapping: The canonical plan mapping to read from.
+        key: One of the three live-threshold keys.
+
+    Returns:
+        The stored value, or the documented legacy default when the key is
+        absent.
+
+    Raises:
+        TypeError: If the (present) value is a ``bool`` or not an ``int``.
+    """
+    if key not in mapping:
+        return _LEGACY_LIVE_THRESHOLD_DEFAULTS[key]
+    return _require_mapping_int(mapping, key)
+
+
 def _require_mapping_str(mapping: Mapping[str, object], key: str) -> str:
     """Return ``mapping[key]`` narrowed to a ``str``.
 
@@ -426,7 +509,19 @@ def build_gate_plan(
 
     The metric catalogue is derived from
     :func:`~windbreak.evaluation.registry.registered_metrics` (name-sorted), and
-    the five thresholds and observation window are copied off ``evaluation``.
+    the eight thresholds and observation window are copied off ``evaluation``.
+
+    The live rolling-window size is *pinned* to
+    :data:`~windbreak.evaluation.registry.LIVE_ROLLING_WINDOW_SIZE`, the constant
+    the Python reference path truncates its cohort to. The SQL path binds the
+    plan's ``live_rolling_window_size`` into its ``LIMIT``, so if a config drifts
+    away from the reference constant the two dual-paths would score different
+    windows and the ±1 crosscheck would raise a spurious CRITICAL mismatch. Rather
+    than let that drift through silently (and misreport the applied window in the
+    ledgered snapshot), this boundary fails closed: a config window that differs
+    from the reference constant raises. Changing the window is therefore a code
+    change to that constant, which re-registers the pre-registered gate plan
+    (§13.6 clock reset), keeping the plan's identity hash-committed.
 
     Args:
         evaluation: The evaluation configuration to snapshot thresholds from.
@@ -438,7 +533,25 @@ def build_gate_plan(
 
     Returns:
         The assembled gate plan.
+
+    Raises:
+        ValueError: If ``evaluation.live_rolling_window_size`` differs from
+            :data:`~windbreak.evaluation.registry.LIVE_ROLLING_WINDOW_SIZE`; the
+            window is pinned to the reference-path constant so both dual-paths
+            agree exactly and the pre-registered gate definition stays
+            hash-committed.
     """
+    if evaluation.live_rolling_window_size != LIVE_ROLLING_WINDOW_SIZE:
+        raise ValueError(
+            "live_rolling_window_size is pinned to the reference-path constant "
+            f"LIVE_ROLLING_WINDOW_SIZE ({LIVE_ROLLING_WINDOW_SIZE}); config "
+            f"requested {evaluation.live_rolling_window_size}. The Python "
+            "reference path truncates to the constant while the SQL path binds "
+            "the plan's window into its LIMIT, so a divergent window would make "
+            "the dual-paths disagree and the pre-registered gate plan hash "
+            "drift. Change the window by editing the constant (a code change "
+            "that re-registers the gate plan, §13.6 clock reset), not the config."
+        )
     metric_windows = tuple(
         sorted((name, spec.window.value) for name, spec in registered_metrics().items())
     )
@@ -455,6 +568,9 @@ def build_gate_plan(
         baseline_scheme=baseline_scheme,
         clustering_scheme=clustering_scheme,
         paper_fill_model_version=paper_fill_model_version,
+        live_rolling_window_size=evaluation.live_rolling_window_size,
+        live_slippage_ratio_limit_ppm=evaluation.live_slippage_ratio_limit_ppm,
+        live_brier_degradation_band_ppm=evaluation.live_brier_degradation_band_ppm,
     )
 
 
@@ -726,13 +842,18 @@ def _optional_str(value: object) -> str | None:
 def _registration_from_record(record: LedgerRecord) -> GatePlanRegistration:
     """Reconstruct a registration from one ledger record, verifying its hash.
 
-    The plan is reconstructed from the persisted ``plan_dict`` and its content
-    hash is **recomputed from that content**, then checked against the stored
-    ``plan_hash``. The recomputed hash is authoritative -- the stored copy is
-    treated as a verified redundancy, never a trusted input -- so a record whose
-    ``plan_dict`` and ``plan_hash`` disagree fails closed rather than letting a
-    tampered plan pass the idempotent/change decision and silently skip the
-    PAPER-clock reset (SPEC §13.6 anti-Goodhart).
+    The content hash is **recomputed from the persisted, stripped plan dict**
+    (the exact keys the record stored, whatever the schema at write time) and
+    checked against the stored ``plan_hash``. Verifying the *persisted* content --
+    rather than a freshly-serialized plan -- keeps the check content-addressed
+    and schema-independent: a pre-#58, 10-key record still verifies against its
+    own 10-key hash even though :meth:`GatePlan.from_canonical` reconstructs a
+    13-key plan (applying documented legacy defaults for the three keys the
+    record predates). The recomputed hash is authoritative -- the stored copy is
+    a verified redundancy, never a trusted input -- so a tampered record fails
+    closed rather than silently skipping the PAPER-clock reset (SPEC §13.6
+    anti-Goodhart). The returned registration carries the *persisted* hash, so a
+    legacy record's identity remains its legacy hash.
 
     Args:
         record: A ledger record whose ``event_type`` is a registration event.
@@ -743,24 +864,27 @@ def _registration_from_record(record: LedgerRecord) -> GatePlanRegistration:
     Raises:
         TypeError: If the persisted envelope is malformed for reconstruction.
         ValueError: If a required key is missing, the stripped plan mapping is
-            not a valid canonical plan, or the recomputed plan hash does not
+            not a valid canonical plan, or the recomputed content hash does not
             match the stored ``plan_hash``.
     """
     envelope = _require_dict(json.loads(record.payload_json), "envelope")
     data = _require_dict(_require_present(envelope, "data"), "data")
-    plan_fields = {
+    plan_fields: dict[str, object] = {
         key: value for key, value in data.items() if key not in _REGISTRATION_ONLY_KEYS
     }
-    plan = GatePlan.from_canonical(plan_fields)
     stored_hash = _require_mapping_str(data, "plan_hash")
-    if plan.plan_hash != stored_hash:
+    content_hash = hashlib.sha256(
+        canonical_json(plan_fields).encode("utf-8")
+    ).hexdigest()
+    if content_hash != stored_hash:
         raise ValueError(
             "gate plan hash mismatch on ledger read: "
-            f"recomputed {plan.plan_hash} != stored {stored_hash}"
+            f"recomputed {content_hash} != stored {stored_hash}"
         )
+    plan = GatePlan.from_canonical(plan_fields)
     return GatePlanRegistration(
         plan=plan,
-        plan_hash=plan.plan_hash,
+        plan_hash=stored_hash,
         paper_clock_start=_require_mapping_int(data, "paper_clock_start"),
         previous_plan_hash=_optional_str(data.get("previous_plan_hash")),
         event_type=record.event_type,
