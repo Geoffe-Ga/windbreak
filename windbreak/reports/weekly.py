@@ -51,17 +51,23 @@ def _iso_week_key(today: date) -> tuple[int, int]:
     return iso.year, iso.week
 
 
-def write_weekly_stub(output_dir: Path, *, today: date) -> Path:
+def write_weekly_stub(
+    output_dir: Path, *, today: date, body: str | None = None
+) -> Path:
     """Write ``weekly-YYYY-MM-DD.md`` for ``today``, creating ``output_dir``.
 
     Unconditionally overwrites any existing file for the identical ``today`` (a
-    plain write, never an error). The written body carries markdown section
-    headers, each with a ``No data yet.`` placeholder.
+    plain write, never an error). When ``body`` is ``None`` the written body is
+    the default stub -- markdown section headers each with a ``No data yet.``
+    placeholder; otherwise ``body`` is written verbatim, letting a caller supply
+    a fully-rendered report (issue #55).
 
     Args:
         output_dir: The directory the report is written into; created (with
             parents) when absent.
-        today: The report date, stamped into both the filename and the body.
+        today: The report date, stamped into both the filename and the default
+            body.
+        body: The exact report body to write, or ``None`` to write the stub.
 
     Returns:
         The path of the written report file.
@@ -69,16 +75,19 @@ def write_weekly_stub(output_dir: Path, *, today: date) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     stamp = today.strftime(_DATE_FORMAT)
     path = output_dir.joinpath(f"weekly-{stamp}.md")
-    path.write_text(_REPORT_BODY.format(date=stamp), encoding="utf-8")
+    content = _REPORT_BODY.format(date=stamp) if body is None else body
+    path.write_text(content, encoding="utf-8")
     return path
 
 
-def maybe_write_weekly(output_dir: Path, *, today: date) -> Path:
+def maybe_write_weekly(
+    output_dir: Path, *, today: date, body: str | None = None
+) -> Path:
     """Write this ISO week's report at most once, returning the report path.
 
     Idempotent per ISO calendar week: if any ``weekly-*.md`` file already exists
     for a date in ``today``'s ISO week, that file is returned untouched;
-    otherwise a fresh stub is written. The always-on loop can therefore call
+    otherwise a fresh report is written. The always-on loop can therefore call
     this every beat yet produce exactly one report per week.
 
     Args:
@@ -86,6 +95,8 @@ def maybe_write_weekly(output_dir: Path, *, today: date) -> Path:
             absent).
         today: The report date, whose ISO week gates whether a new file is
             written.
+        body: The exact report body to write when a new file is created, or
+            ``None`` to write the default stub (issue #55).
 
     Returns:
         The path of the freshly written, or already-existing, report file.
@@ -98,4 +109,4 @@ def maybe_write_weekly(output_dir: Path, *, today: date) -> Path:
             ).date()
             if _iso_week_key(existing_date) == target_key:
                 return existing
-    return write_weekly_stub(output_dir, today=today)
+    return write_weekly_stub(output_dir, today=today, body=body)

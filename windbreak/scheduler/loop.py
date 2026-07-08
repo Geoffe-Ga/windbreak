@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Protocol
 from windbreak.config import config_hash
 from windbreak.connector.freshness import is_fresh
 from windbreak.connector.paper import PaperExchange
+from windbreak.evaluation.report import render_weekly_report
 from windbreak.forecast.cassettes import ReplayCassette
 from windbreak.forecast.pipeline import run_pipeline
 from windbreak.forecast.records import BaselineQuoteSnapshot
@@ -1033,7 +1034,12 @@ def run_single_tick(deps: PaperTickDeps, *, beat: int) -> TickOutcome:
         ModeHeartbeat(component=_COMPONENT, mode=Mode.PAPER.name, beat=beat)
     )
     equity = _equity_and_positions_stage(deps, now_epoch_s)
-    maybe_write_weekly(deps.report_dir, today=created_at.date())
+    report_date = created_at.date()
+    maybe_write_weekly(
+        deps.report_dir,
+        today=report_date,
+        body=render_weekly_report(today=report_date, evaluation=None, costs=None),
+    )
     return TickOutcome(
         beat=beat,
         forecast_id=forecast.forecast_id,

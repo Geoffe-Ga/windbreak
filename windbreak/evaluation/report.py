@@ -50,14 +50,17 @@ from windbreak.evaluation.windows import (
     ObservationWindow,
 )
 from windbreak.numeric.types import ProbabilityPpm
+from windbreak.reports.weekly import maybe_write_weekly
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+    from datetime import date
     from pathlib import Path
     from typing import Any, Final
 
     from windbreak.evaluation.abstention import AbstentionSummary
     from windbreak.evaluation.cohorts import CohortBrier, CohortBrierValue
+    from windbreak.evaluation.costs import CostMeter
     from windbreak.evaluation.power import PowerAnalysis
     from windbreak.evaluation.registry import MetricValue
     from windbreak.evaluation.temporal import RejectionEvent
@@ -572,3 +575,110 @@ def run_evaluation(*, fixture_path: Path) -> EvaluationReport:
         cohorts=cohorts,
         abstentions=abstentions,
     )
+
+
+#: The fallback body printed under any weekly-report section that has no data
+#: wired yet -- identical to the #48 stub's placeholder so a populated and an
+#: empty section read the same way.
+_NO_DATA_YET = "No data yet."
+
+#: The three #48 stub headings preserved verbatim in every weekly report; this
+#: issue does not wire their data, so each still renders :data:`_NO_DATA_YET`.
+_STUB_SECTION_HEADINGS = ("Equity vs floor", "Positions", "Decisions")
+
+
+def _render_weekly_section(heading: str, body: str) -> str:
+    """Render one ``## heading`` weekly-report section with its body.
+
+    Args:
+        heading: The section heading text (without the ``## `` prefix).
+        body: The section's already-rendered body text.
+
+    Returns:
+        The ``## <heading>\\n\\n<body>`` section block.
+    """
+    return f"## {heading}\n\n{body}"
+
+
+def _render_cost_meter(costs: CostMeter) -> str:
+    """Render a cost meter's three money fields as ``str``-formatted lines.
+
+    Args:
+        costs: The cost meter to render.
+
+    Returns:
+        Three lines, each naming a cost metric and its
+        :class:`~windbreak.numeric.types.MoneyMicros` rendering (or ``n/a`` for a
+        ``None`` field, which never collides with the section-empty fallback).
+    """
+    fields = (
+        ("cost per resolved forecast", costs.cost_per_resolved_forecast_micros),
+        ("cost per profitable trade", costs.cost_per_profitable_trade_micros),
+        ("cost-adjusted expectancy", costs.cost_adjusted_expectancy_micros),
+    )
+    return "\n".join(
+        f"{label}: {'n/a' if value is None else value!s}" for label, value in fields
+    )
+
+
+def render_weekly_report(
+    *,
+    today: date,
+    evaluation: EvaluationReport | None,
+    costs: CostMeter | None,
+) -> str:
+    """Render the weekly PAPER-loop report as markdown (pure, no I/O).
+
+    Preserves the #48 stub's dated title and its three ``No data yet.`` sections
+    (this issue does not wire that data), then appends an ``## Evaluation``
+    section (the verbatim :meth:`EvaluationReport.render_text` when ``evaluation``
+    is not ``None``, else the fallback) and a ``## Cost meter`` section (the three
+    :class:`~windbreak.evaluation.costs.CostMeter` money fields, else the fallback).
+
+    Args:
+        today: The report date, stamped into the title.
+        evaluation: The evaluation report to embed, or ``None`` for no data.
+        costs: The cost meter to embed, or ``None`` for no data.
+
+    Returns:
+        The rendered markdown body.
+    """
+    stamp = today.isoformat()
+    sections = [f"# Weekly report {stamp}"]
+    sections.extend(
+        _render_weekly_section(heading, _NO_DATA_YET)
+        for heading in _STUB_SECTION_HEADINGS
+    )
+    evaluation_body = _NO_DATA_YET if evaluation is None else evaluation.render_text()
+    sections.append(_render_weekly_section("Evaluation", evaluation_body))
+    cost_body = _NO_DATA_YET if costs is None else _render_cost_meter(costs)
+    sections.append(_render_weekly_section("Cost meter", cost_body))
+    return "\n\n".join(sections) + "\n"
+
+
+def generate_weekly_report(
+    output_dir: Path,
+    *,
+    today: date,
+    evaluation: EvaluationReport | None,
+    costs: CostMeter | None,
+) -> Path:
+    """Render and write this ISO week's weekly report, idempotently.
+
+    Delegates naming and ISO-week idempotence to
+    :func:`windbreak.reports.weekly.maybe_write_weekly`, passing the rendered body
+    through: a second call within the same ISO week returns the first file
+    untouched.
+
+    Args:
+        output_dir: The directory the report is written into (created if absent).
+        today: The report date, whose ISO week gates whether a new file is
+            written and whose value stamps the title.
+        evaluation: The evaluation report to embed, or ``None`` for no data.
+        costs: The cost meter to embed, or ``None`` for no data.
+
+    Returns:
+        The path of the freshly written, or already-existing, report file.
+    """
+    body = render_weekly_report(today=today, evaluation=evaluation, costs=costs)
+    return maybe_write_weekly(output_dir, today=today, body=body)
