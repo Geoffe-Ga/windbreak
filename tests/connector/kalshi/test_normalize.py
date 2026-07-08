@@ -1,8 +1,8 @@
-"""Tests for hedgekit.connector.kalshi.normalize (issue #17).
+"""Tests for windbreak.connector.kalshi.normalize (issue #17).
 
 Pins the pure (no-I/O) normalization functions: `payload_hash`,
 `gate_product`, `normalize_market`, `normalize_order_book`. All prices/sizes
-convert to hedgekit's fixed-point unit types (`PricePips`, `ContractCentis`)
+convert to windbreak's fixed-point unit types (`PricePips`, `ContractCentis`)
 with zero float intermediaries (SPEC S6.1).
 """
 
@@ -13,16 +13,16 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from hedgekit.connector.kalshi.normalize import (
+from windbreak.connector.kalshi.normalize import (
     gate_product,
     normalize_market,
     normalize_order_book,
     payload_hash,
 )
-from hedgekit.numeric import ContractCentis, PricePips
+from windbreak.numeric import ContractCentis, PricePips
 
 if TYPE_CHECKING:
-    from hedgekit.connector.kalshi.adapter import KalshiConnector
+    from windbreak.connector.kalshi.adapter import KalshiConnector
 
 #: A fixed point in time for order-book normalization tests.
 _FETCHED_AT = datetime(2024, 12, 1, tzinfo=UTC)
@@ -242,7 +242,7 @@ def test_order_book_empty_or_absent_sides_become_empty_tuples() -> None:
 
 
 def test_order_book_levels_are_pricepips_and_contractcentis() -> None:
-    """Every level wraps hedgekit's real fixed-point unit types."""
+    """Every level wraps windbreak's real fixed-point unit types."""
     raw = {"orderbook": {"yes": [[45, 100]], "no": [[52, 40]]}}
 
     book = normalize_order_book("KXFED-24DEC", raw, _FETCHED_AT)
@@ -260,7 +260,7 @@ def test_orderbook_prices_are_fixed_point_pips_acceptance(
     `OrderBookLevel` exposes `.price` / `.quantity` (each a unit-wrapper with
     a `.value: int`) -- not the placeholder `.price_pips` / `.count_centis`
     attributes from the original issue draft, which do not exist on the real
-    `hedgekit.connector.models.OrderBookLevel`.
+    `windbreak.connector.models.OrderBookLevel`.
     """
     book = kalshi_fixture_connector.get_order_book("KXFED-24DEC")
 

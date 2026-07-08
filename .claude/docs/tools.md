@@ -151,7 +151,7 @@ provisioned **once** and reused by all lanes — never provisioned per-worktree.
 It installs `requirements.txt` + `requirements-dev.txt` under `-c
 constraints-quality.txt` and upgrades `pip`/`setuptools`/`wheel` to match CI.
 It deliberately does **not** install the project editable (`-e .`): each
-worktree must import its **own** checkout's `hedgekit/` package, so per-lane
+worktree must import its **own** checkout's `windbreak/` package, so per-lane
 test isolation is preserved even though the toolchain venv is shared.
 
 `check-all.sh` auto-detects the shared `.venv` when present, runs a drift

@@ -1,10 +1,10 @@
 ## Role
 
-You are a senior Python engineer working in `hedgekit/config/`, expert in typed configuration modeling (pydantic or dataclasses under mypy --strict) and fail-fast validation.
+You are a senior Python engineer working in `windbreak/config/`, expert in typed configuration modeling (pydantic or dataclasses under mypy --strict) and fail-fast validation.
 
 ## Goal
 
-`hedgekit run --config <path>` loads the complete SPEC §16 YAML schema into typed objects, rejects any unknown key with a fatal error naming the key path, and produces a canonical hash + human-readable diff for every loaded version.
+`windbreak run --config <path>` loads the complete SPEC §16 YAML schema into typed objects, rejects any unknown key with a fatal error naming the key path, and produces a canonical hash + human-readable diff for every loaded version.
 
 ## Context
 
@@ -12,12 +12,12 @@ You are a senior Python engineer working in `hedgekit/config/`, expert in typed 
 - **Predecessor issue(s):** #10 (must be merged first — package layout and CLI exist).
 - **SPEC section:** plans/SPEC_v3.md §16 (full schema: `mode_ceiling`, `exchange`, `capital`, `risk`, `screener`, `forecast`, `evaluation`, `ops`, `alerts`); §1.1-4 (`mode_ceiling` can never be exceeded); §10.7 (floor raise/lower asymmetry — loader only models the fields; governance logic is EPIC_04).
 - **Files involved:**
-  - `hedgekit/config/schema.py` — typed models for every §16 section (new).
-  - `hedgekit/config/loader.py` — YAML load, unknown-key rejection, canonical serialization, `config_hash` (new).
-  - `hedgekit/main.py` — accept `--config`, load before entering the run loop.
+  - `windbreak/config/schema.py` — typed models for every §16 section (new).
+  - `windbreak/config/loader.py` — YAML load, unknown-key rejection, canonical serialization, `config_hash` (new).
+  - `windbreak/main.py` — accept `--config`, load before entering the run loop.
   - `tests/config/` — schema, unknown-key, hash/diff tests (new).
 - **Prior decisions:** integer units only — ppm/micros/pips fields are `int`; no float fields anywhere in config (§6.1). Unknown keys are fatal, not warnings (§16 heading). Ledgering the version is a hook: emit a `ConfigLoaded(config_hash, diff)` event via a narrow interface that issue #13 will back with the real ledger; land it here as an in-memory recorder protocol.
-- **State of the world:** `hedgekit/config/__init__.py` is an empty stub from the skeleton issue; CLI has no `--config` flag; heartbeat interval is a CLI flag.
+- **State of the world:** `windbreak/config/__init__.py` is an empty stub from the skeleton issue; CLI has no `--config` flag; heartbeat interval is a CLI flag.
 
 ## Output Format
 
@@ -34,7 +34,7 @@ Deliverable is a single PR containing:
 
 **Example: unknown key is fatal**
 ```
-$ hedgekit run --config bad.yaml
+$ windbreak run --config bad.yaml
 FATAL: unknown configuration key: risk.max_leverage (unknown keys are fatal per SPEC §16)
 $ echo $?
 1
@@ -61,7 +61,7 @@ def test_unknown_key_is_fatal():
 > reference URL, an alternative considered, and a review date. See the
 > `max-quality-no-shortcuts` skill.
 
-**Tracer-code invariant:** The system must remain demoable after this PR merges — `hedgekit run` without `--config` must still idle with heartbeats using defaults. If your change breaks an unrelated endpoint or CLI surface, you have gone outside scope — revert and re-plan.
+**Tracer-code invariant:** The system must remain demoable after this PR merges — `windbreak run` without `--config` must still idle with heartbeats using defaults. If your change breaks an unrelated endpoint or CLI surface, you have gone outside scope — revert and re-plan.
 
 ## Definition of Done (stay-green)
 

@@ -1,4 +1,4 @@
-"""Tests for hedgekit.forecast.citations (issue #26): citation verification.
+"""Tests for windbreak.forecast.citations (issue #26): citation verification.
 
 Pins `verify_citation`'s SPEC S8.5/S8.8 contract: fetch a citation's URL
 through the egress-guarded `ResearchTools.fetch` capability (never a raw
@@ -7,9 +7,9 @@ integrity, quote presence, publication-date validity (where available), and
 source-type membership in the known set. An unreachable URL (a raised
 `EgressDeniedError` or `OSError`) is an *unverified* result, never an
 uncaught exception: `verify_citation` always returns a `CitationVerdict`.
-`hedgekit/forecast/citations.py` does not exist yet, so importing it below
+`windbreak/forecast/citations.py` does not exist yet, so importing it below
 fails collection with `ModuleNotFoundError: No module named
-'hedgekit.forecast.citations'` -- the expected Gate 1 RED state for
+'windbreak.forecast.citations'` -- the expected Gate 1 RED state for
 issue #26.
 
 Fixture-construction choice (`_StaticFetchTransport`, `_citation`)
@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from hedgekit.forecast.citations import (
+from windbreak.forecast.citations import (
     FAILURE_CONTENT_HASH_MISMATCH,
     FAILURE_PUBLICATION_DATE_INVALID,
     FAILURE_QUOTE_NOT_FOUND,
@@ -46,13 +46,13 @@ from hedgekit.forecast.citations import (
     verify_citation,
     verify_citations,
 )
-from hedgekit.forecast.records import Citation
+from windbreak.forecast.records import Citation
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from hedgekit.forecast.sandbox import ResearchTools
+    from windbreak.forecast.sandbox import ResearchTools
 
     ResearchToolsFactory = Callable[..., ResearchTools]
     RaisingFetchTransportFactory = Callable[[], object]

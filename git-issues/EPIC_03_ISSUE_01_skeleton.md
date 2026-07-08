@@ -1,6 +1,6 @@
 ## Role
 
-You are a senior Python engineer working in this repo's `hedgekit/forecast/` package, experienced with typed pipeline architectures and deterministic record/replay test harnesses for LLM-backed systems.
+You are a senior Python engineer working in this repo's `windbreak/forecast/` package, experienced with typed pipeline architectures and deterministic record/replay test harnesses for LLM-backed systems.
 
 ## Goal
 
@@ -12,19 +12,19 @@ All eleven pipeline stages of SPEC §8.2 are wired end-to-end as pass-through st
 - **Predecessor issue(s):** none — this is the skeleton issue (EPIC_01 and EPIC_02 must be complete: fixed-point types, ledger, config loader, `NormalizedMarket` all exist).
 - **SPEC section:** `plans/SPEC_v3.md` §8.1–§8.2 (pipeline stages), §6.3 (`ForecastRecord`), §17.1 (cassette requirement), §6.1 (no floats in probability paths — `ProbabilityPpm` int units).
 - **Files involved:**
-  - `hedgekit/forecast/records.py` — frozen `ForecastRecord`, `ModelVote`, `Citation` models (new)
-  - `hedgekit/forecast/pipeline.py` — stage orchestration, one function per §8.2 stage (new)
-  - `hedgekit/forecast/cassettes.py` — LLM call record/replay layer keyed by request hash (new)
+  - `windbreak/forecast/records.py` — frozen `ForecastRecord`, `ModelVote`, `Citation` models (new)
+  - `windbreak/forecast/pipeline.py` — stage orchestration, one function per §8.2 stage (new)
+  - `windbreak/forecast/cassettes.py` — LLM call record/replay layer keyed by request hash (new)
   - `tests/forecast/test_pipeline_skeleton.py` — smoke tests (new)
   - `tests/fixtures/forecast/` — fixture markets, baseline snapshots, recorded cassettes (new)
 - **Prior decisions:** all probability/money fields are integer fixed-point (`probability_ppm: int`, `research_cost_micros: int`) per §6.1 — no `float` anywhere in the record or stage signatures. `ForecastRecord` is immutable after creation (§6.3); attempted mutation must raise.
-- **State of the world:** `hedgekit/forecast/` does not exist. `hedgekit/` currently contains M0/M1 output (config, numeric types, ledger, connector). `hedgekit/main.py` is the generated hello-world stub.
+- **State of the world:** `windbreak/forecast/` does not exist. `windbreak/` currently contains M0/M1 output (config, numeric types, ledger, connector). `windbreak/main.py` is the generated hello-world stub.
 
 ## Output Format
 
 Deliverable is a single PR containing:
 
-- [ ] Production code in `hedgekit/forecast/{records,pipeline,cassettes}.py`; every §8.2 stage present as a typed function returning typed data (identity/stub logic is fine, control flow is real)
+- [ ] Production code in `windbreak/forecast/{records,pipeline,cassettes}.py`; every §8.2 stage present as a typed function returning typed data (identity/stub logic is fine, control flow is real)
 - [ ] Smoke tests in `tests/forecast/test_pipeline_skeleton.py` proving: fixture in → schema-valid `ForecastRecord` out; same inputs → byte-identical record; mutation attempt raises
 - [ ] At least one recorded cassette fixture and a test that fails if any stage attempts a live network call in replay mode
 - [ ] Docstrings on all public functions
@@ -65,7 +65,7 @@ def test_pipeline_is_deterministic(fixture_market, fixture_baseline):
 > reference URL, an alternative considered, and a review date. See the
 > `max-quality-no-shortcuts` skill.
 
-**Tracer-code invariant:** The system must remain demoable after this PR merges. `hedgekit run` (M0 idle loop) must still work; if your change breaks an unrelated surface, you have gone outside scope — revert and re-plan.
+**Tracer-code invariant:** The system must remain demoable after this PR merges. `windbreak run` (M0 idle loop) must still work; if your change breaks an unrelated surface, you have gone outside scope — revert and re-plan.
 
 ## Definition of Done (stay-green)
 

@@ -1,8 +1,8 @@
-"""Per-stage failing-first tests for `hedgekit.scheduler.loop` (issue #48, RED).
+"""Per-stage failing-first tests for `windbreak.scheduler.loop` (issue #48, RED).
 
-`hedgekit/scheduler/` does not exist yet -- only `hedgekit/__init__.py` and its
-sibling packages do -- so every import below of `hedgekit.scheduler.loop` fails
-collection with `ModuleNotFoundError: No module named 'hedgekit.scheduler'`,
+`windbreak/scheduler/` does not exist yet -- only `windbreak/__init__.py` and its
+sibling packages do -- so every import below of `windbreak.scheduler.loop` fails
+collection with `ModuleNotFoundError: No module named 'windbreak.scheduler'`,
 the expected Gate 1 RED state for issue #48.
 
 This module pins the per-stage composition contract the ralph-chief-architect
@@ -18,7 +18,7 @@ The single most load-bearing fact this module proves (issue #48's own
 "Load-bearing constraint"): composing the *real*, unmodified
 `RiskKernel.evaluate_intent` with the *real* `ApprovalPipeline.approve` via
 `KernelApproval` can never mint a token today, because three SPEC S10.3
-checks are still unconditional-veto stubs (`hedgekit/riskkernel/checks.py`)
+checks are still unconditional-veto stubs (`windbreak/riskkernel/checks.py`)
 and the three reconciliation checks fail closed on a `None` verification
 snapshot. `test_kernel_approval_vetoes_before_minting_any_token` pins the
 *exact* six veto reasons this yields, mirroring
@@ -34,17 +34,17 @@ from datetime import UTC, datetime
 
 import pytest
 
-from hedgekit.numeric.types import MoneyMicros
-from hedgekit.riskkernel.modes import Mode
 from tests.riskkernel.conftest import DEFAULT_MARKET_TICKER, make_context, make_intent
 from tests.scheduler.conftest import (
     DEFAULT_NOW_EPOCH_S,
     build_kernel_approval_components,
 )
+from windbreak.numeric.types import MoneyMicros
+from windbreak.riskkernel.modes import Mode
 
 #: The six veto reasons a PAPER-mode evaluation with `verification=None` must
 #: produce today, in the exact SPEC S10.3 check order
-#: (`hedgekit/riskkernel/checks.py::_SPEC_10_3_CHECK_NAMES`): the
+#: (`windbreak/riskkernel/checks.py::_SPEC_10_3_CHECK_NAMES`): the
 #: `jurisdiction_product_eligibility` stub (position 2) fires before the three
 #: reconciliation checks (positions 5-7, each failing closed on the missing
 #: verification snapshot), and the two `#110` stubs fire last (positions 21-22).
@@ -72,7 +72,7 @@ def test_kernel_approval_vetoes_before_minting_any_token() -> None:
     reasons veto; the pipeline's `approve` is never reached far enough to
     reserve capital or issue a token.
     """
-    from hedgekit.scheduler.loop import ApprovalOutcome, KernelApproval
+    from windbreak.scheduler.loop import ApprovalOutcome, KernelApproval
 
     kernel, pipeline, _writer = build_kernel_approval_components()
     approval = KernelApproval(kernel, pipeline)
@@ -98,7 +98,7 @@ def test_kernel_approval_ledgers_exactly_one_intent_vetoed_event() -> None:
     ledgers the audit `IntentVetoed` event once, and a vetoed decision must
     never reach `ApprovalPipeline.approve`'s reservation-ledger writes.
     """
-    from hedgekit.scheduler.loop import KernelApproval
+    from windbreak.scheduler.loop import KernelApproval
 
     kernel, pipeline, writer = build_kernel_approval_components()
     approval = KernelApproval(kernel, pipeline)
@@ -133,9 +133,9 @@ def test_kernel_approval_mints_a_token_when_every_check_passes() -> None:
     """
     import dataclasses
 
-    from hedgekit.riskkernel import checks as checks_module
-    from hedgekit.scheduler.loop import KernelApproval
     from tests.riskkernel.conftest import make_verification_snapshot
+    from windbreak.riskkernel import checks as checks_module
+    from windbreak.scheduler.loop import KernelApproval
 
     kernel, pipeline, _writer = build_kernel_approval_components()
     approval = KernelApproval(kernel, pipeline)
@@ -154,8 +154,8 @@ def test_kernel_approval_mints_a_token_when_every_check_passes() -> None:
     # Neither `RiskKernel.evaluate_intent` nor `ApprovalPipeline.approve`
     # exposes a seam to override `DEFAULT_CHECKS`; both call
     # `checks.evaluate_intent(intent, effective)` via a module-attribute
-    # lookup (`from hedgekit.riskkernel import checks`), so patching the
-    # attribute on the shared `hedgekit.riskkernel.checks` module object
+    # lookup (`from windbreak.riskkernel import checks`), so patching the
+    # attribute on the shared `windbreak.riskkernel.checks` module object
     # affects both call sites identically -- proving the composition end to
     # end (kernel evaluates and ledgers `IntentApproved`, then the pipeline
     # re-evaluates, reserves, and mints) rather than just one half of it.
@@ -185,10 +185,10 @@ def test_build_evaluation_context_maps_capital_floor_from_config() -> None:
     `RiskLimits.floor`, so the composed PAPER context honors the operator's
     configured equity floor rather than some hardcoded value.
     """
-    from hedgekit.config.schema import CapitalConfig, HedgekitConfig
-    from hedgekit.scheduler.loop import build_evaluation_context
+    from windbreak.config.schema import CapitalConfig, WindbreakConfig
+    from windbreak.scheduler.loop import build_evaluation_context
 
-    config = HedgekitConfig(capital=CapitalConfig(floor_micros=42_000_000))
+    config = WindbreakConfig(capital=CapitalConfig(floor_micros=42_000_000))
 
     context = build_evaluation_context(
         config,
@@ -204,10 +204,10 @@ def test_build_evaluation_context_maps_risk_thresholds_from_config() -> None:
     """`build_evaluation_context` maps every `config.risk` ttl/threshold field
     it has a `RiskLimits` counterpart for, not just the floor.
     """
-    from hedgekit.config.schema import HedgekitConfig, RiskConfig
-    from hedgekit.scheduler.loop import build_evaluation_context
+    from windbreak.config.schema import RiskConfig, WindbreakConfig
+    from windbreak.scheduler.loop import build_evaluation_context
 
-    config = HedgekitConfig(
+    config = WindbreakConfig(
         risk=RiskConfig(quote_ttl_seconds=17, clock_skew_max_seconds=3)
     )
 
@@ -227,14 +227,14 @@ def test_build_evaluation_context_fails_closed_on_verification_none() -> None:
 
     No production default is threaded in its place: a forgotten wiring
     reaching the real checks must fail closed via the three reconciliation
-    checks (mirrors `hedgekit.riskkernel.context.EvaluationContext`'s own
+    checks (mirrors `windbreak.riskkernel.context.EvaluationContext`'s own
     documented "no production default" contract for this field).
     """
-    from hedgekit.config.schema import HedgekitConfig
-    from hedgekit.scheduler.loop import build_evaluation_context
+    from windbreak.config.schema import WindbreakConfig
+    from windbreak.scheduler.loop import build_evaluation_context
 
     context = build_evaluation_context(
-        HedgekitConfig(),
+        WindbreakConfig(),
         now_epoch_s=DEFAULT_NOW_EPOCH_S,
         verification=None,
         instrument_whitelist=frozenset({DEFAULT_MARKET_TICKER}),
@@ -245,11 +245,11 @@ def test_build_evaluation_context_fails_closed_on_verification_none() -> None:
 
 def test_build_evaluation_context_stamps_now_epoch_s_verbatim() -> None:
     """The supplied `now_epoch_s` is stamped verbatim -- never `time.time()`."""
-    from hedgekit.config.schema import HedgekitConfig
-    from hedgekit.scheduler.loop import build_evaluation_context
+    from windbreak.config.schema import WindbreakConfig
+    from windbreak.scheduler.loop import build_evaluation_context
 
     context = build_evaluation_context(
-        HedgekitConfig(),
+        WindbreakConfig(),
         now_epoch_s=1_234_567,
         verification=None,
         instrument_whitelist=frozenset({DEFAULT_MARKET_TICKER}),
@@ -263,7 +263,7 @@ def test_build_evaluation_context_stamps_now_epoch_s_verbatim() -> None:
 
 def test_compute_equity_micros_sums_cash_and_positions_value_exactly() -> None:
     """Equity is the exact integer sum of available cash and positions value."""
-    from hedgekit.scheduler.loop import compute_equity_micros
+    from windbreak.scheduler.loop import compute_equity_micros
 
     equity = compute_equity_micros(
         available_cash=MoneyMicros(100_000_000),
@@ -280,7 +280,7 @@ def test_compute_equity_micros_rejects_a_float_argument() -> None:
     smuggling a float in via a raw (non-`MoneyMicros`) argument must raise
     rather than silently truncate or coerce.
     """
-    from hedgekit.scheduler.loop import compute_equity_micros
+    from windbreak.scheduler.loop import compute_equity_micros
 
     with pytest.raises((TypeError, AttributeError)):
         compute_equity_micros(available_cash=1_000_000.5, positions_value=0)  # type: ignore[arg-type]
@@ -291,10 +291,10 @@ def test_compute_equity_micros_rejects_a_float_argument() -> None:
 
 def test_is_quote_fresh_true_within_ttl() -> None:
     """A quote exactly at the ttl boundary is fresh (inclusive), per
-    `hedgekit.connector.freshness.is_fresh`'s own documented boundary.
+    `windbreak.connector.freshness.is_fresh`'s own documented boundary.
     """
-    from hedgekit.connector.models import OrderBookSnapshot
-    from hedgekit.scheduler.loop import is_quote_fresh
+    from windbreak.connector.models import OrderBookSnapshot
+    from windbreak.scheduler.loop import is_quote_fresh
 
     fetched_at = datetime(2026, 1, 1, tzinfo=UTC)
     book = OrderBookSnapshot(
@@ -310,8 +310,8 @@ def test_is_quote_fresh_true_within_ttl() -> None:
 
 def test_is_quote_fresh_false_past_ttl() -> None:
     """A quote one second past its ttl is stale, never silently accepted."""
-    from hedgekit.connector.models import OrderBookSnapshot
-    from hedgekit.scheduler.loop import is_quote_fresh
+    from windbreak.connector.models import OrderBookSnapshot
+    from windbreak.scheduler.loop import is_quote_fresh
 
     fetched_at = datetime(2026, 1, 1, tzinfo=UTC)
     book = OrderBookSnapshot(
@@ -332,10 +332,10 @@ def test_market_snapshot_event_to_record_carries_best_bid_and_ask() -> None:
     """The adapter projects a market + book into a `MarketSnapshotRecorded`
     carrying the top-of-book best bid/ask, in pips (never a float).
     """
-    from hedgekit.connector.models import OrderBookLevel, OrderBookSnapshot
-    from hedgekit.ledger.events import MarketSnapshotRecorded
-    from hedgekit.numeric import ContractCentis, PricePips
-    from hedgekit.scheduler.loop import market_snapshot_event_to_record
+    from windbreak.connector.models import OrderBookLevel, OrderBookSnapshot
+    from windbreak.ledger.events import MarketSnapshotRecorded
+    from windbreak.numeric import ContractCentis, PricePips
+    from windbreak.scheduler.loop import market_snapshot_event_to_record
 
     fetched_at = datetime(2026, 1, 1, tzinfo=UTC)
     book = OrderBookSnapshot(
@@ -359,9 +359,9 @@ def test_market_snapshot_event_to_record_handles_an_empty_book_side() -> None:
     """A one-sided (or empty) book projects `None` for the missing side, never
     a crash or a fabricated zero price.
     """
-    from hedgekit.connector.models import OrderBookSnapshot
-    from hedgekit.ledger.events import MarketSnapshotRecorded
-    from hedgekit.scheduler.loop import market_snapshot_event_to_record
+    from windbreak.connector.models import OrderBookSnapshot
+    from windbreak.ledger.events import MarketSnapshotRecorded
+    from windbreak.scheduler.loop import market_snapshot_event_to_record
 
     fetched_at = datetime(2026, 1, 1, tzinfo=UTC)
     book = OrderBookSnapshot(

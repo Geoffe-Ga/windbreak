@@ -1,0 +1,10 @@
+[Unit]
+Description=windbreak risk kernel process (SPEC Process B)
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/env windbreak run --process riskkernel
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

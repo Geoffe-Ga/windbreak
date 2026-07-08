@@ -1,0 +1,10 @@
+[Unit]
+Description=windbreak order gateway process (SPEC Process C)
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/env windbreak run --process order_gateway
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

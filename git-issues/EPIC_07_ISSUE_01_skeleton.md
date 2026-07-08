@@ -1,6 +1,6 @@
 ## Role
 
-You are a senior Python engineer specializing in quantitative evaluation pipelines, working in this repo's `hedgekit/evaluation/` package (mypy --strict, Python ≥3.11, no floats on probability/money paths per SPEC §6.1).
+You are a senior Python engineer specializing in quantitative evaluation pipelines, working in this repo's `windbreak/evaluation/` package (mypy --strict, Python ≥3.11, no floats on probability/money paths per SPEC §6.1).
 
 ## Goal
 
@@ -12,20 +12,20 @@ An end-to-end evaluation pipeline skeleton runs over a synthetic known-answer fi
 - **Predecessor issue(s):** none — this is the skeleton issue for this epic (requires EPIC_06's paper loop to be merged; evaluation reads its ledger events).
 - **SPEC section:** `plans/SPEC_v3.md` §13.1 (three tracks), §13.2 ("the dashboard says so bluntly"), §18 M6.
 - **Files involved:**
-  - `hedgekit/evaluation/__init__.py` — new package
-  - `hedgekit/evaluation/registry.py` — typed metric registry: metric name → computation callable + observation window + track
-  - `hedgekit/evaluation/resolution.py` — resolution tracker stub (returns fixture resolutions)
-  - `hedgekit/evaluation/report.py` — three-track report dataclasses + text renderer
+  - `windbreak/evaluation/__init__.py` — new package
+  - `windbreak/evaluation/registry.py` — typed metric registry: metric name → computation callable + observation window + track
+  - `windbreak/evaluation/resolution.py` — resolution tracker stub (returns fixture resolutions)
+  - `windbreak/evaluation/report.py` — three-track report dataclasses + text renderer
   - `tests/evaluation/test_skeleton.py` — smoke tests over the synthetic fixture
   - `tests/evaluation/fixtures/synthetic_known_answer.json` — tiny hand-built dataset: ~10 forecasts with known resolutions and hand-computed expected metric values (used by every later issue)
 - **Prior decisions:** integer fixed-point units everywhere on probability paths (`ProbabilityPpm`, SPEC §6.1); ledger read models are the only data source (SPEC §12); the three tracks are never merged into one number (§13.1).
-- **State of the world:** `hedgekit/` contains only the generated `main.py` hello-world plus whatever earlier epics have landed. No evaluation code exists.
+- **State of the world:** `windbreak/` contains only the generated `main.py` hello-world plus whatever earlier epics have landed. No evaluation code exists.
 
 ## Output Format
 
 Deliverable is a single PR containing:
 
-- [ ] New `hedgekit/evaluation/` package with typed registry, resolution stub, and report renderer
+- [ ] New `windbreak/evaluation/` package with typed registry, resolution stub, and report renderer
 - [ ] Synthetic known-answer fixture checked in under `tests/evaluation/fixtures/`
 - [ ] Smoke tests proving: pipeline runs end-to-end on the fixture; report contains exactly three tracks; every registered metric appears with a typed value or an explicit `NOT_IMPLEMENTED` sentinel (never a silent omission); "NO EDGE DEMONSTRATED" renders when Brier skill stub ≤ 0
 - [ ] Docstrings on all public API

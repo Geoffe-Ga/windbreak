@@ -1,4 +1,4 @@
-# constraints-quality.txt — SINGLE version authority for the hedgekit quality
+# constraints-quality.txt — SINGLE version authority for the windbreak quality
 # toolchain (issue #104). Every pip install path applies these pins via
 # `-c constraints-quality.txt` (requirements-dev.txt, CI). Pre-commit cannot read a
 # constraints file, so `.pre-commit-config.yaml` hook `rev`s and the mypy hook's

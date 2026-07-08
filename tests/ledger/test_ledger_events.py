@@ -1,6 +1,6 @@
-"""Tests for `hedgekit.ledger.events` (issue #13).
+"""Tests for `windbreak.ledger.events` (issue #13).
 
-Pins the event/envelope contract that `hedgekit.ledger.store` hashes and
+Pins the event/envelope contract that `windbreak.ledger.store` hashes and
 persists:
 
 - `canonical_json` is a deterministic, whitespace-free serialization of a
@@ -22,7 +22,7 @@ persists:
 
 Issue #40 moves the four Order Gateway event types (`OrderTransitionLedgered`,
 `SubmissionRefused`, `ReduceOnlyRefused`, `ReduceOnlyViolation`) into this
-module (still re-exported from `hedgekit.order_gateway.ledger_writer` for
+module (still re-exported from `windbreak.order_gateway.ledger_writer` for
 backward compatibility) and adds three crash-recovery event types
 (`ReconciliationHalted`, `ReconciliationHealed`, `RecoveryCompleted`), growing
 `EVENT_TYPES` to 16 entries. Each gets the same registry-round-trip coverage
@@ -30,7 +30,7 @@ as every other concrete event type.
 
 Issue #41 (RED -- `MarketFreeze`/`ReturnToScreener` do not exist yet, so the
 import below fails collection with `ImportError: cannot import name
-'MarketFreeze' from 'hedgekit.ledger.events'`) adds two more Order Gateway
+'MarketFreeze' from 'windbreak.ledger.events'`) adds two more Order Gateway
 event types for the adverse-selection sweeper, growing `EVENT_TYPES` to 18
 entries:
 
@@ -53,7 +53,7 @@ import re
 
 import pytest
 
-from hedgekit.ledger.events import (
+from windbreak.ledger.events import (
     EVENT_TYPES,
     GENESIS_PREV_HASH,
     AlertEmitted,

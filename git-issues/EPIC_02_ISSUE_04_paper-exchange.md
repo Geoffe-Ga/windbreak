@@ -1,6 +1,6 @@
 ## Role
 
-You are a senior Python engineer working in this repo's `hedgekit/connector/` subpackage, experienced in market-microstructure simulation and property-based testing with `hypothesis`.
+You are a senior Python engineer working in this repo's `windbreak/connector/` subpackage, experienced in market-microstructure simulation and property-based testing with `hypothesis`.
 
 ## Goal
 
@@ -12,8 +12,8 @@ A `PaperExchange` adapter replays recorded real order books and simulates fills 
 - **Predecessor issue(s):** #18 (must be merged first — fee model exists to charge against)
 - **SPEC section:** `plans/SPEC_v3.md` §7.5 (PaperExchange), §17.4 (paper-fill realism model — normative), §9.5 (participation caps apply in simulation exactly as live: `max_participation_ppm` default 250000), §4 T13 (adverse selection — the resting model exists to charge for it), §13.6 (any change to this model re-registers the gate plan)
 - **Files involved:**
-  - `hedgekit/connector/paper.py` — `PaperExchange(MarketConnector)` replaying recorded books
-  - `hedgekit/connector/fills.py` — taker walk + haircut, resting trade-through logic (pure functions, separately testable)
+  - `windbreak/connector/paper.py` — `PaperExchange(MarketConnector)` replaying recorded books
+  - `windbreak/connector/fills.py` — taker walk + haircut, resting trade-through logic (pure functions, separately testable)
   - `tests/connector/test_paper_exchange.py` — behavior tests
   - `tests/connector/test_paper_fill_properties.py` — hypothesis property suite
   - `tests/fixtures/books/` — recorded order-book sequences including trade prints (needed to detect trade-through)

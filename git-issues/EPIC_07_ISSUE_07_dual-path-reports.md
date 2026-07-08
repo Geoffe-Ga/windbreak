@@ -1,6 +1,6 @@
 ## Role
 
-You are a senior Python engineer comfortable with both SQL and Python data paths, working in this repo's `hedgekit/evaluation/` package (SQLite WAL ledger per SPEC §12, mypy --strict).
+You are a senior Python engineer comfortable with both SQL and Python data paths, working in this repo's `windbreak/evaluation/` package (SQLite WAL ledger per SPEC §12, mypy --strict).
 
 ## Goal
 
@@ -12,10 +12,10 @@ Every promotion-gate metric is computed twice — once in SQL against the ledger
 - **Predecessor issue(s):** #54 (must be merged first — gate computations read the registered plan).
 - **SPEC section:** `plans/SPEC_v3.md` §13.6 ("Gate computations are dual-pathed (SQL + Python) and validated against synthetic known-answer datasets"), §4 T12 (silent gate-metric failure), §13.5 (cost metrics), §13.7 (acceptance criteria), §2 ("Why the LLM cost model is part of the strategy").
 - **Files involved:**
-  - `hedgekit/evaluation/sql_gates.py` — new: SQL implementations of each gate metric over ledger read models
-  - `hedgekit/evaluation/crosscheck.py` — new: dual-path comparator with integer tolerance; mismatch → ledgered `GATE_COMPUTATION_MISMATCH` + alert hook
-  - `hedgekit/evaluation/costs.py` — new: research-cost aggregation from `ForecastRecord.research_cost_micros` (both triage and full stages)
-  - `hedgekit/evaluation/report.py` — weekly report assembly; cost meter section
+  - `windbreak/evaluation/sql_gates.py` — new: SQL implementations of each gate metric over ledger read models
+  - `windbreak/evaluation/crosscheck.py` — new: dual-path comparator with integer tolerance; mismatch → ledgered `GATE_COMPUTATION_MISMATCH` + alert hook
+  - `windbreak/evaluation/costs.py` — new: research-cost aggregation from `ForecastRecord.research_cost_micros` (both triage and full stages)
+  - `windbreak/evaluation/report.py` — weekly report assembly; cost meter section
   - `tests/evaluation/test_dual_path.py`, `tests/evaluation/test_costs.py`, `tests/evaluation/test_weekly_report.py`
 - **Prior decisions:** the Python path is the reference implementation from #51; SQL must reproduce it, not vice versa. A mismatch is a halt-worthy anomaly for the Kernel (§10.10 "silent gate-metric failure" class), surfaced via the alert-sink abstraction from M0.
 - **State of the world:** all metrics, windows, cohorts, temporal gate, and pre-registration are real; only the Python path exists; report has no cost section.

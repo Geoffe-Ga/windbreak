@@ -1,4 +1,4 @@
-"""Tests for hedgekit.selector.serialize_decision (issue #43).
+"""Tests for windbreak.selector.serialize_decision (issue #43).
 
 Pins three properties of the canonical serializer independent of the stub's
 empty-intents behavior: no `float` leaf ever appears in the serialized form
@@ -15,12 +15,12 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
-from hedgekit.numeric import ContractCentis, MoneyMicros, PricePips, ProbabilityPpm
-from hedgekit.selector import SelectorDecision, select, serialize_decision
-from hedgekit.selector.types import SelectorOrderIntent
+from windbreak.numeric import ContractCentis, MoneyMicros, PricePips, ProbabilityPpm
+from windbreak.selector import SelectorDecision, select, serialize_decision
+from windbreak.selector.types import SelectorOrderIntent
 
 if TYPE_CHECKING:
-    from hedgekit.selector import SelectorInputs
+    from windbreak.selector import SelectorInputs
 
 #: The exact, closed set of keys `SelectorDecision` may ever serialize to --
 #: none of them a timestamp, because `SelectorDecision` carries no datetime

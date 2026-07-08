@@ -1,4 +1,4 @@
-"""Tests for hedgekit.connector.kalshi.adapter (issues #17, #18): KalshiConnector.
+"""Tests for windbreak.connector.kalshi.adapter (issues #17, #18): KalshiConnector.
 
 Acceptance test: `list_markets()` excludes every refused (non-binary)
 product and ledgers a `PRODUCT_REFUSED` event for each one; `get_market`,
@@ -24,22 +24,22 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from hedgekit.connector.fees import FeeModel, UnknownFeeModelError
-from hedgekit.connector.interface import MarketConnector, UnknownMarketError
-from hedgekit.connector.kalshi import PRODUCT_REFUSED_EVENT, KalshiConnector
-from hedgekit.connector.kalshi.adapter import (
+from windbreak.connector.fees import FeeModel, UnknownFeeModelError
+from windbreak.connector.interface import MarketConnector, UnknownMarketError
+from windbreak.connector.kalshi import PRODUCT_REFUSED_EVENT, KalshiConnector
+from windbreak.connector.kalshi.adapter import (
     KALSHI_BALANCE_SEMANTICS,
     MARKET_MALFORMED_EVENT,
     KalshiPaginationError,
     _fee_model_from_series,
 )
-from hedgekit.connector.kalshi.client import KalshiClient
-from hedgekit.connector.kalshi.normalize import normalize_exchange_status
+from windbreak.connector.kalshi.client import KalshiClient
+from windbreak.connector.kalshi.normalize import normalize_exchange_status
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
-    from hedgekit.connector.snapshot import ConnectorEvent, InMemoryEventLedgerWriter
+    from windbreak.connector.snapshot import ConnectorEvent, InMemoryEventLedgerWriter
 
 #: (method name, positional args) for every SPEC S7.2 method this issue does
 #: not implement -- order path is M4; balances/positions/fills are issue #3.

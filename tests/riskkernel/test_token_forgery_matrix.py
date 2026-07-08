@@ -9,8 +9,8 @@ token, non-consumption of the single-use slot on a *failed* verification,
 the exact expiry boundary, the wrong key, and malformed signature encodings.
 A closing Hypothesis property test generalizes (a)/(b) over random claims.
 
-None of `hedgekit/tokens/verify.py`, `hedgekit/riskkernel/tokens.py`, or
-`hedgekit/riskkernel/signing.py`'s real `SigningKeyHandle` exist yet, so
+None of `windbreak/tokens/verify.py`, `windbreak/riskkernel/tokens.py`, or
+`windbreak/riskkernel/signing.py`'s real `SigningKeyHandle` exist yet, so
 every import below fails collection -- the expected Gate 1 RED state for
 issue #31.
 
@@ -26,16 +26,16 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from hedgekit.numeric.types import ContractCentis, MoneyMicros, PricePips
-from hedgekit.riskkernel.signing import SigningKeyHandle
-from hedgekit.riskkernel.tokens import TokenIssuer
-from hedgekit.tokens.verify import (
+from tests.riskkernel.test_tokens import make_claims
+from windbreak.numeric.types import ContractCentis, MoneyMicros, PricePips
+from windbreak.riskkernel.signing import SigningKeyHandle
+from windbreak.riskkernel.tokens import TokenIssuer
+from windbreak.tokens.verify import (
     ApprovalTokenClaims,
     InMemorySingleUseRegistry,
     SignedApprovalToken,
     verify_token,
 )
-from tests.riskkernel.test_tokens import make_claims
 
 #: The signing key every forgery in this file is issued (or wrongly
 #: verified) under.

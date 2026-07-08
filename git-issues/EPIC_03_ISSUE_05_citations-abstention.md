@@ -1,6 +1,6 @@
 ## Role
 
-You are a senior Python engineer working in this repo's `hedgekit/forecast/` package, experienced with content verification pipelines and evidence-grade data handling.
+You are a senior Python engineer working in this repo's `windbreak/forecast/` package, experienced with content verification pipelines and evidence-grade data handling.
 
 ## Goal
 
@@ -12,9 +12,9 @@ Every citation is verified at forecast time (URL reachability, retrieved-content
 - **Predecessor issue(s):** #24 (must be merged first — verification runs through the sandbox's `verify_citation` capability and evidence lands in the research cache).
 - **SPEC section:** `plans/SPEC_v3.md` §8.8 (citation verification & abstention), §6.3 (`citations`, `source_quality_notes`, `abstention_reason`, `eligible_for_live`), §16 `forecast.min_verified_citations` (default 3), §13.3 (abstentions evaluated counterfactually — downstream consumer).
 - **Files involved:**
-  - `hedgekit/forecast/citations.py` — verification checks + verdict per citation (new)
-  - `hedgekit/forecast/records.py` — live-eligibility rule: verified-citation count ≥ config minimum (modify)
-  - `hedgekit/forecast/pipeline.py` — abstention path produces a schema-valid record with `abstention_reason` set and no probability requirements relaxed elsewhere (modify)
+  - `windbreak/forecast/citations.py` — verification checks + verdict per citation (new)
+  - `windbreak/forecast/records.py` — live-eligibility rule: verified-citation count ≥ config minimum (modify)
+  - `windbreak/forecast/pipeline.py` — abstention path produces a schema-valid record with `abstention_reason` set and no probability requirements relaxed elsewhere (modify)
   - `tests/forecast/test_citations.py`, `tests/forecast/test_abstention.py` (new)
 - **Prior decisions:** verification evidence (raw snapshot + hash) is stored in the research cache, never inline in the ledger; a citation whose quoted text is absent from the retrieved content is *unverified*, not an error; abstention is a terminal, scored outcome — not an exception path.
 - **State of the world:** `Citation` schema exists from the skeleton; verification is stubbed to always-verified; abstention is unreachable.
@@ -23,7 +23,7 @@ Every citation is verified at forecast time (URL reachability, retrieved-content
 
 Deliverable is a single PR containing:
 
-- [ ] Production code in `hedgekit/forecast/citations.py` + record/pipeline wiring
+- [ ] Production code in `windbreak/forecast/citations.py` + record/pipeline wiring
 - [ ] Tests proving: each verification check (reachability, content hash, quote presence, pub date, source type) evaluated independently on fixtures; count < `min_verified_citations` ⇒ record stored with `eligible_for_live=False`; abstention produces a valid record with `abstention_reason` and `eligible_for_live=False`; abstained records are ledgered like any forecast
 - [ ] Fixture set covering: dead URL, changed content (hash mismatch), quote absent, all-green citation
 - [ ] Docstring / doc updates

@@ -1,12 +1,12 @@
-"""Tests for hedgekit.forecast.canary (issue #28): weekly canary set + drift gate.
+"""Tests for windbreak.forecast.canary (issue #28): weekly canary set + drift gate.
 
 Pins the SPEC S8.4/S8.6/S16 canary contract: pure drift scoring
 (`score_canary_run`), a mutation-critical `>` (strict) tolerance boundary on
 `CanaryGate.apply_run`, the alert/ledger side effects of a breach, the
 `run_pipeline` integration that ANDs a drifted gate into `eligible_for_live`,
-and the "ack restores only *new* records" invariant. `hedgekit/forecast/canary.py`
+and the "ack restores only *new* records" invariant. `windbreak/forecast/canary.py`
 does not exist yet, so importing it below fails collection with
-`ModuleNotFoundError: No module named 'hedgekit.forecast.canary'` -- the
+`ModuleNotFoundError: No module named 'windbreak.forecast.canary'` -- the
 expected Gate 1 RED state for issue #28.
 
 Two deliberate test-design choices, explained here because they shape every
@@ -26,7 +26,7 @@ Alert-emitter double (`RecordingAlertEmitter`)
     has no conftest precedent, so a small local double records every call as a
     `(alert_type, message)` tuple -- enough to assert exactly-once dispatch and
     inspect the message, without depending on any real sink's delivery mechanics.
-    A separate test proves a *real* `hedgekit.alerts.AlertDispatcher` also
+    A separate test proves a *real* `windbreak.alerts.AlertDispatcher` also
     satisfies the seam structurally, so the Protocol boundary itself is pinned.
 """
 
@@ -39,8 +39,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from hedgekit.alerts import AlertDispatcher, AlertType, LoggingLedgerWriter
-from hedgekit.forecast.canary import (
+from windbreak.alerts import AlertDispatcher, AlertType, LoggingLedgerWriter
+from windbreak.forecast.canary import (
     CANARY_ACK_EVENT,
     CANARY_DRIFT_EVENT,
     CANARY_OK_EVENT,
@@ -52,15 +52,15 @@ from hedgekit.forecast.canary import (
     run_canary_set,
     score_canary_run,
 )
-from hedgekit.forecast.pipeline import run_pipeline
-from hedgekit.forecast.records import forecast_record_to_payload
+from windbreak.forecast.pipeline import run_pipeline
+from windbreak.forecast.records import forecast_record_to_payload
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from hedgekit.connector.models import NormalizedMarket
-    from hedgekit.forecast.records import BaselineQuoteSnapshot
-    from hedgekit.forecast.sandbox import ResearchTools
+    from windbreak.connector.models import NormalizedMarket
+    from windbreak.forecast.records import BaselineQuoteSnapshot
+    from windbreak.forecast.sandbox import ResearchTools
 
     FakeVoteTransportFactory = Callable[..., object]
 

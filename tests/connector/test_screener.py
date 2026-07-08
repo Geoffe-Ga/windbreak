@@ -1,10 +1,10 @@
-"""Tests for hedgekit.screener.StubScreener (issue #16).
+"""Tests for windbreak.screener.StubScreener (issue #16).
 
 `StubScreener`'s only rule (real filters are issue #6's job):
 `jurisdiction_status != "eligible"` blocks a market with a jurisdiction-
-referencing reason; `"eligible"` passes. `hedgekit/screener/` does not exist
+referencing reason; `"eligible"` passes. `windbreak/screener/` does not exist
 yet, so importing it fails collection with `ModuleNotFoundError: No module
-named 'hedgekit.screener'` -- the expected Gate 1 RED state for issue #16.
+named 'windbreak.screener'` -- the expected Gate 1 RED state for issue #16.
 """
 
 from __future__ import annotations
@@ -14,8 +14,8 @@ from datetime import UTC, datetime
 
 import pytest
 
-from hedgekit.connector.models import NormalizedMarket
-from hedgekit.screener import ScreenDecision, StubScreener
+from windbreak.connector.models import NormalizedMarket
+from windbreak.screener import ScreenDecision, StubScreener
 
 
 def _market(jurisdiction_status: str) -> NormalizedMarket:

@@ -1,6 +1,6 @@
 ## Role
 
-You are a senior Python engineer specializing in financial accounting correctness, working in this repo's `hedgekit/riskkernel/` package with fixed-point integer arithmetic (no floats on money paths).
+You are a senior Python engineer specializing in financial accounting correctness, working in this repo's `windbreak/riskkernel/` package with fixed-point integer arithmetic (no floats on money paths).
 
 ## Goal
 
@@ -12,9 +12,9 @@ The Kernel computes `worst_case_equity` exactly per SPEC §10.4 with conservativ
 - **Predecessor issue(s):** #29 (must be merged first)
 - **SPEC section:** `plans/SPEC_v3.md` §10.3 (per-order checks), §10.4 (floor formula), §1.1-1 (Floor Invariant), §6.1 (numeric units), §17.3 (accounting proofs), threat T4
 - **Files involved:**
-  - `hedgekit/riskkernel/floor.py` — new: `worst_case_equity`, `worst_case_cost` in `MoneyMicros`/`PricePips` integer units
-  - `hedgekit/riskkernel/checks.py` — replace stub checks with real implementations of the §10.3 list (those implementable now; checks whose inputs arrive in later issues stay VETO-stubbed and say so)
-  - `hedgekit/accounting/` — fixed-point helpers from EPIC_01 (`MoneyMicros`, `PricePips`, `ContractCentis`); extend only with conservative-rounding utilities
+  - `windbreak/riskkernel/floor.py` — new: `worst_case_equity`, `worst_case_cost` in `MoneyMicros`/`PricePips` integer units
+  - `windbreak/riskkernel/checks.py` — replace stub checks with real implementations of the §10.3 list (those implementable now; checks whose inputs arrive in later issues stay VETO-stubbed and say so)
+  - `windbreak/accounting/` — fixed-point helpers from EPIC_01 (`MoneyMicros`, `PricePips`, `ContractCentis`); extend only with conservative-rounding utilities
   - `tests/riskkernel/test_floor.py`, `tests/riskkernel/test_checks.py`, `tests/riskkernel/test_floor_metamorphic.py`
 - **Prior decisions:** Formula is fixed by spec: `worst_case_equity = exchange_verified_available_cash + guaranteed_terminal_value_of_positions − pending_kernel_reservations − unresolved_fee_upper_bounds − reconciliation_uncertainty_buffer`; opening-buy `worst_case_cost = limit_price·count + max_trading_fee + max_settlement_fee + conservative_rounding_buffer`. Rounding always overstates cost/risk, understates equity (§6.1). Any check *error* (not just failure) → VETO (§10.3). For closes, worst-case cost must be provably non-increasing or veto (§10.4).
 - **State of the world:** Kernel process, mode machine, and a veto-everything check pipeline exist from the skeleton issue. Balance inputs are injected via typed interfaces (real exchange verification arrives in #32 — use in-memory fakes here).

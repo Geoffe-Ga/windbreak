@@ -1,8 +1,8 @@
-"""Hypothesis property suite for `hedgekit.connector.fills` (issue #19).
+"""Hypothesis property suite for `windbreak.connector.fills` (issue #19).
 
-`hedgekit.connector.fills` does not exist yet, so importing it fails
+`windbreak.connector.fills` does not exist yet, so importing it fails
 collection with `ModuleNotFoundError: No module named
-'hedgekit.connector.fills'` -- the expected Gate 1 RED state for issue #19.
+'windbreak.connector.fills'` -- the expected Gate 1 RED state for issue #19.
 
 SPEC S17.4 requires that no simulated fill is ever better than what walking
 the recorded book allows, and that simulated cost never falls below the
@@ -38,8 +38,8 @@ from typing import TYPE_CHECKING
 from hypothesis import given
 from hypothesis import strategies as st
 
-from hedgekit.connector.fees import FeeModel
-from hedgekit.connector.fills import (
+from windbreak.connector.fees import FeeModel
+from windbreak.connector.fills import (
     RestingFillRequest,
     TradePrint,
     allocate_resting_fills,
@@ -47,8 +47,8 @@ from hedgekit.connector.fills import (
     resting_fill_quantity,
     walk_taker_fill,
 )
-from hedgekit.connector.models import OrderBookLevel
-from hedgekit.numeric import ContractCentis, MoneyMicros, PricePips
+from windbreak.connector.models import OrderBookLevel
+from windbreak.numeric import ContractCentis, MoneyMicros, PricePips
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

@@ -4,7 +4,7 @@
 fails at test-body time with `FileNotFoundError` when `_load_compose` tries
 to open it. Once the deploy skeleton lands, these tests pin its structural
 contract: exactly four services (one per SPEC process), each launching
-`hedgekit run --process <token>` with `restart: on-failure`, a shared named
+`windbreak run --process <token>` with `restart: on-failure`, a shared named
 `ledger` volume mounted read-write on `pipeline` and read-only on
 `dashboard`, no top-level `networks` override, and every published port
 bound to `127.0.0.1` only (never the implicit `0.0.0.0`).
@@ -84,14 +84,14 @@ def test_services_are_exactly_the_four_spec_processes() -> None:
 @pytest.mark.parametrize(
     ("service_name", "cli_token"), sorted(_SERVICE_TO_CLI_TOKEN.items())
 )
-def test_service_command_runs_hedgekit_with_matching_process_token(
+def test_service_command_runs_windbreak_with_matching_process_token(
     service_name: str, cli_token: str
 ) -> None:
-    """Each service's command runs `hedgekit run --process <token>` exactly."""
+    """Each service's command runs `windbreak run --process <token>` exactly."""
     data = _load_compose()
 
     service = data["services"][service_name]
-    expected = f"hedgekit run --process {cli_token}"
+    expected = f"windbreak run --process {cli_token}"
     assert _command_string(service["command"]) == expected
 
 

@@ -1,10 +1,10 @@
-"""Failing-first tests for `hedgekit.evaluation.cohorts` (issue #53, RED).
+"""Failing-first tests for `windbreak.evaluation.cohorts` (issue #53, RED).
 
-`hedgekit.evaluation.cohorts` does not exist yet, so every test below imports
+`windbreak.evaluation.cohorts` does not exist yet, so every test below imports
 its new symbols from that module as the FIRST statement inside the test body
 (matching this package's established RED convention in
 `test_temporal_integrity.py`) so each test collects independently and fails on
-its own `ModuleNotFoundError: No module named 'hedgekit.evaluation.cohorts'`.
+its own `ModuleNotFoundError: No module named 'windbreak.evaluation.cohorts'`.
 
 Pins SPEC-EPIC_07 issue #53's selection-bias cohort taxonomy:
 
@@ -37,7 +37,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from hedgekit.evaluation import (
+from windbreak.evaluation import (
     EvaluationInputs,
     FixtureForecast,
     ObservationWindow,
@@ -45,7 +45,7 @@ from hedgekit.evaluation import (
     Track,
     run_evaluation,
 )
-from hedgekit.numeric.types import ProbabilityPpm
+from windbreak.numeric.types import ProbabilityPpm
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -234,7 +234,7 @@ def test_assign_cohorts_hits_all_seven_cohorts_across_hand_built_records() -> No
     across the five records, every one of the seven `Cohort` members is hit
     by at least one record.
     """
-    from hedgekit.evaluation.cohorts import Cohort, assign_cohorts
+    from windbreak.evaluation.cohorts import Cohort, assign_cohorts
 
     assert assign_cohorts(_R1_TRADED_ABOVE_THRESHOLD) == frozenset(
         {Cohort.ALL, Cohort.TRADED, Cohort.ABOVE_THRESHOLD}
@@ -260,7 +260,7 @@ def test_assign_cohorts_totality_invariant_holds_for_every_record() -> None:
     """`ALL` is present in every record's cohort set, and exactly one of
     `TRADED`/`SKIPPED` is present -- never both, never neither.
     """
-    from hedgekit.evaluation.cohorts import Cohort, assign_cohorts
+    from windbreak.evaluation.cohorts import Cohort, assign_cohorts
 
     for record in _ALL_SEVEN_RECORDS:
         cohorts = assign_cohorts(record)
@@ -320,7 +320,7 @@ def test_cohort_brier_table_matches_hand_computation_on_synthetic_fixture() -> N
     EXCLUDED_BY_CATEGORY: no forecast in this fixture carries the
         `excluded_category` reason -> n=0, UNDEFINED.
     """
-    from hedgekit.evaluation.cohorts import UNDEFINED, Cohort, cohort_brier_table
+    from windbreak.evaluation.cohorts import UNDEFINED, Cohort, cohort_brier_table
 
     table = cohort_brier_table(_synthetic_inputs(), window=_WINDOW)
 
@@ -405,7 +405,7 @@ def test_cohort_brier_table_window_selection_diverges_first_vs_latest() -> None:
     640_000 != 10_000, so the declared window is load-bearing: it changes which
     snapshot is scored, and thus the reported Brier.
     """
-    from hedgekit.evaluation.cohorts import Cohort, cohort_brier_table
+    from windbreak.evaluation.cohorts import Cohort, cohort_brier_table
 
     first = cohort_brier_table(
         _MULTI_FORECAST_INPUTS, window=ObservationWindow.FIRST_PER_MARKET
@@ -487,7 +487,7 @@ def test_traded_vs_skipped_brier_delta_is_negative_when_skipped_outperforms() ->
     delta = SKIPPED - TRADED = 25_000 - 725_000 = -700_000 (negative:
         SKIPPED outperformed TRADED).
     """
-    from hedgekit.evaluation.cohorts import traded_vs_skipped_brier_delta
+    from windbreak.evaluation.cohorts import traded_vs_skipped_brier_delta
 
     delta = traded_vs_skipped_brier_delta(_SKIPPED_BETTER_INPUTS, window=_WINDOW)
 
@@ -499,8 +499,8 @@ def test_report_render_text_contains_skipped_outperformed_banner() -> None:
     """A report built with the skipped-better-by-construction cohort table
     renders the literal `SKIPPED_OUTPERFORMED_BANNER` text.
     """
-    from hedgekit.evaluation.cohorts import cohort_brier_table
-    from hedgekit.evaluation.report import (
+    from windbreak.evaluation.cohorts import cohort_brier_table
+    from windbreak.evaluation.report import (
         SKIPPED_OUTPERFORMED_BANNER,
         EvaluationReport,
         TrackReport,
@@ -535,7 +535,7 @@ def test_traded_vs_skipped_brier_delta_raises_when_traded_cohort_is_empty() -> N
     """Only SKIPPED records present -> TRADED has zero resolved records ->
     `ValueError`.
     """
-    from hedgekit.evaluation.cohorts import traded_vs_skipped_brier_delta
+    from windbreak.evaluation.cohorts import traded_vs_skipped_brier_delta
 
     only_skipped = EvaluationInputs(
         forecasts=(_SKIPPED_HIT_1, _SKIPPED_HIT_2),
@@ -550,7 +550,7 @@ def test_traded_vs_skipped_brier_delta_raises_when_skipped_cohort_is_empty() -> 
     """Only TRADED records present -> SKIPPED has zero resolved records ->
     `ValueError`.
     """
-    from hedgekit.evaluation.cohorts import traded_vs_skipped_brier_delta
+    from windbreak.evaluation.cohorts import traded_vs_skipped_brier_delta
 
     only_traded = EvaluationInputs(
         forecasts=(_TRADED_MISS_1, _TRADED_MISS_2),
@@ -574,7 +574,7 @@ def test_run_evaluation_cohort_lines_are_labeled_latest_before_close() -> None:
     `traded_vs_skipped_brier_delta` metric line renders exactly `0` (TRADED
     and SKIPPED both average 78_000 ppm on this fixture -- see test 2).
     """
-    from hedgekit.evaluation.cohorts import Cohort
+    from windbreak.evaluation.cohorts import Cohort
 
     report = run_evaluation(fixture_path=SYNTHETIC_FIXTURE)
     text = report.render_text()
@@ -663,7 +663,7 @@ def test_registry_adapter_propagates_non_empty_cohort_value_error(
     registry adapter rather than being silently converted to the `UNDEFINED`
     sentinel -- otherwise a real bug would masquerade as an undefined metric.
     """
-    from hedgekit.evaluation import registry
+    from windbreak.evaluation import registry
 
     def _raise_generic(inputs: object, *, window: object) -> int:
         raise ValueError("not an empty-cohort error")

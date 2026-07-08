@@ -1,9 +1,9 @@
 """Failing-first tests for exchange-status gating, the Gateway ledger, and
 idempotent client-order-ids (issue #38, RED).
 
-`hedgekit/order_gateway/client_order_id.py` and
-`hedgekit/order_gateway/ledger_writer.py` do not exist yet, and
-`hedgekit/order_gateway/gateway.py` does not yet export `SubmitOutcome` or
+`windbreak/order_gateway/client_order_id.py` and
+`windbreak/order_gateway/ledger_writer.py` do not exist yet, and
+`windbreak/order_gateway/gateway.py` does not yet export `SubmitOutcome` or
 widen `GatewayResult`/`OrderGateway` with `status_source`/`ledger_writer`, so
 every import below fails collection -- the expected Gate 1 RED state for
 issue #38.
@@ -37,25 +37,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from hedgekit.connector.models import ExchangeStatus
-from hedgekit.numeric.types import ContractCentis
-from hedgekit.order_gateway.client_order_id import client_order_id
-from hedgekit.order_gateway.gateway import (
-    OrderGateway,
-    PaperSubmitter,
-    SubmissionAck,
-    SubmitOutcome,
-)
-from hedgekit.order_gateway.ledger_writer import (
-    InMemoryGatewayLedgerWriter,
-    OrderTransitionLedgered,
-    SubmissionRefused,
-)
-from hedgekit.order_gateway.state_machine import OrderState
-from hedgekit.order_gateway.tokens import VerifyResult
-from hedgekit.riskkernel.signing import SigningKeyHandle
-from hedgekit.riskkernel.tokens import TokenIssuer
-from hedgekit.tokens.verify import InMemorySingleUseRegistry
 from tests.order_gateway.conftest import (
     DEFAULT_NOW_EPOCH_S,
     KEY_MATERIAL,
@@ -63,14 +44,33 @@ from tests.order_gateway.conftest import (
     make_claims_for_intent,
     make_intent,
 )
+from windbreak.connector.models import ExchangeStatus
+from windbreak.numeric.types import ContractCentis
+from windbreak.order_gateway.client_order_id import client_order_id
+from windbreak.order_gateway.gateway import (
+    OrderGateway,
+    PaperSubmitter,
+    SubmissionAck,
+    SubmitOutcome,
+)
+from windbreak.order_gateway.ledger_writer import (
+    InMemoryGatewayLedgerWriter,
+    OrderTransitionLedgered,
+    SubmissionRefused,
+)
+from windbreak.order_gateway.state_machine import OrderState
+from windbreak.order_gateway.tokens import VerifyResult
+from windbreak.riskkernel.signing import SigningKeyHandle
+from windbreak.riskkernel.tokens import TokenIssuer
+from windbreak.tokens.verify import InMemorySingleUseRegistry
 
 if TYPE_CHECKING:
     from typing import Literal
 
-    from hedgekit.connector.paper import PaperExchange
-    from hedgekit.order_gateway.gateway import GatewayStatusSource
-    from hedgekit.riskkernel.checks import OrderIntent
-    from hedgekit.tokens.verify import SignedApprovalToken
+    from windbreak.connector.paper import PaperExchange
+    from windbreak.order_gateway.gateway import GatewayStatusSource
+    from windbreak.riskkernel.checks import OrderIntent
+    from windbreak.tokens.verify import SignedApprovalToken
 
 #: A fixed observation instant every `_StubStatusSource` reading stamps its
 #: `ExchangeStatus.fetched_at` with -- irrelevant to gating, but a real

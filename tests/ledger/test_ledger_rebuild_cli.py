@@ -1,4 +1,4 @@
-"""Tests for the `hedgekit rebuild` CLI subcommand (issue #13).
+"""Tests for the `windbreak rebuild` CLI subcommand (issue #13).
 
 Pins the CLI-level contract: `rebuild` requires `--ledger-path` and
 `--output-dir` Path arguments, `main()` dispatches to `rebuild_command`
@@ -15,9 +15,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from hedgekit.ledger.events import ConfigLoaded
-from hedgekit.ledger.store import SqliteLedgerStore
-from hedgekit.main import build_parser, main
+from windbreak.ledger.events import ConfigLoaded
+from windbreak.ledger.store import SqliteLedgerStore
+from windbreak.main import build_parser, main
 
 if TYPE_CHECKING:
     from collections.abc import Callable

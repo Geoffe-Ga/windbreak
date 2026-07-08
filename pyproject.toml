@@ -1,7 +1,7 @@
 # pyproject.toml - Python project configuration
 
 [project]
-name = "hedgekit"
+name = "windbreak"
 version = "0.1.0"
 description = "Open-source, locally hosted, always-on AI forecast trader for fully collateralized binary event markets"
 readme = "README.md"
@@ -25,7 +25,7 @@ dependencies = [
 ]
 
 [project.scripts]
-hedgekit = "hedgekit.main:main"
+windbreak = "windbreak.main:main"
 
 [project.optional-dependencies]
 dev = [
@@ -49,7 +49,7 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["hedgekit*"]
+include = ["windbreak*"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"
@@ -57,7 +57,7 @@ addopts = [
     "-ra",
     "--strict-markers",
     "--strict-config",
-    "--cov=hedgekit",
+    "--cov=windbreak",
     "--cov-branch",
     "--cov-report=term-missing:skip-covered",
     "--cov-report=html",
@@ -73,7 +73,7 @@ python_classes = ["Test*"]
 python_functions = ["test_*"]
 
 [tool.coverage.run]
-source = ["hedgekit"]
+source = ["windbreak"]
 branch = true
 omit = [
     "*/tests/*",
@@ -147,7 +147,7 @@ extend-ignore-names = ["do_GET"]
 exclude_dirs = ["tests", "venv", "virtualenv"]
 
 [tool.mutmut]
-paths_to_mutate = "hedgekit/"
+paths_to_mutate = "windbreak/"
 backup = false
 runner = "python -m pytest --exitfirst --quiet --tb=no"
 tests_dir = "tests/"

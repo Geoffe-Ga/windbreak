@@ -1,4 +1,4 @@
-"""Failing-first tests for hedgekit.riskkernel.verification (issue #32, RED).
+"""Failing-first tests for windbreak.riskkernel.verification (issue #32, RED).
 
 Issue #32 gives the Risk Kernel read-only exchange verification (SPEC S5.2 /
 S10.3): each cycle, `ReadOnlyVerifier.run_cycle` cross-checks a read-only
@@ -14,9 +14,9 @@ KILLED, both illegal targets on the mode ladder), and `RiskKernel.evaluate_inten
 evaluated context and rewrites `account.exchange_verified_available_cash` /
 `reconciliation_uncertainty_buffer` from it, so verification feeds the floor.
 
-`hedgekit/riskkernel/verification.py` does not exist yet, so every import
+`windbreak/riskkernel/verification.py` does not exist yet, so every import
 below fails collection with `ModuleNotFoundError: No module named
-'hedgekit.riskkernel.verification'` -- the expected Gate 1 RED state for
+'windbreak.riskkernel.verification'` -- the expected Gate 1 RED state for
 issue #32.
 """
 
@@ -25,29 +25,29 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from hedgekit.alerts.dispatch import AlertDispatcher, LoggingLedgerWriter
-from hedgekit.alerts.registry import AlertSeverity, AlertType, get_registration
-from hedgekit.connector.fake import FakeExchange
-from hedgekit.connector.models import (
+from tests.riskkernel.conftest import DEFAULT_NOW_EPOCH_S, make_context, make_intent
+from windbreak.alerts.dispatch import AlertDispatcher, LoggingLedgerWriter
+from windbreak.alerts.registry import AlertSeverity, AlertType, get_registration
+from windbreak.connector.fake import FakeExchange
+from windbreak.connector.models import (
     BalanceSemantics,
     BalanceSnapshot,
     OpenOrder,
     Position,
 )
-from hedgekit.numeric.types import ContractCentis, MoneyMicros, PricePips
-from hedgekit.riskkernel.modes import Mode, ModeStateMachine
-from hedgekit.riskkernel.process import (
+from windbreak.numeric.types import ContractCentis, MoneyMicros, PricePips
+from windbreak.riskkernel.modes import Mode, ModeStateMachine
+from windbreak.riskkernel.process import (
     InMemoryKernelLedgerWriter,
     RiskKernel,
     _default_clock,
 )
-from hedgekit.riskkernel.verification import (
+from windbreak.riskkernel.verification import (
     LedgerExpectations,
     ReadOnlyVerifier,
     VerificationOutcome,
     VerificationTolerances,
 )
-from tests.riskkernel.conftest import DEFAULT_NOW_EPOCH_S, make_context, make_intent
 
 #: `tests/fixtures/verification/<scenario>` -- each a full `FakeExchange`
 #: fixture directory copied from `tests/fixtures/exchange/` with exactly the

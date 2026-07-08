@@ -1,6 +1,6 @@
 ## Role
 
-You are a senior Python engineer working in this repo's `hedgekit/order_gateway/` package, experienced with write-ahead logging, crash-consistent recovery, and reconciliation loops.
+You are a senior Python engineer working in this repo's `windbreak/order_gateway/` package, experienced with write-ahead logging, crash-consistent recovery, and reconciliation loops.
 
 ## Goal
 
@@ -12,10 +12,10 @@ The Gateway survives death at any point in the order lifecycle: a write-ahead in
 - **Predecessor issue(s):** #39 (must be merged first — reduce-only path, so recovery covers close orders too)
 - **SPEC section:** `plans/SPEC_v3.md` §11.4 (crash recovery: load ledger → fetch exchange state → reconcile → halt on mismatch → only then accept approvals; continuous Reconciler), §4 rows T9 (crash mid-order) and T3 (reconciliation loop as runaway-order mitigation), §11.3 (`RECONCILED`/`DISPUTED` terminal states), §10.5 (reservation release/adjustment on reconciliation)
 - **Files involved:**
-  - `hedgekit/order_gateway/wal.py` — new: write-ahead intent log written before `SUBMISSION_REQUESTED`
-  - `hedgekit/order_gateway/recovery.py` — new: startup sequence per §11.4
-  - `hedgekit/order_gateway/reconciler.py` — new: continuous loop, benign-case allowlist (e.g., missed fill notification), halt on everything else
-  - `hedgekit/order_gateway/gateway.py` — refuse new approvals until recovery completes
+  - `windbreak/order_gateway/wal.py` — new: write-ahead intent log written before `SUBMISSION_REQUESTED`
+  - `windbreak/order_gateway/recovery.py` — new: startup sequence per §11.4
+  - `windbreak/order_gateway/reconciler.py` — new: continuous loop, benign-case allowlist (e.g., missed fill notification), halt on everything else
+  - `windbreak/order_gateway/gateway.py` — refuse new approvals until recovery completes
   - `tests/order_gateway/test_recovery.py` — kill-between-every-pair-of-states scenarios using PaperExchange
   - `tests/order_gateway/test_reconciler.py` — benign auto-heal vs unexplained-mismatch halt
 - **Prior decisions:** Deterministic client order IDs from #38 are the join key between WAL entries and exchange open orders. "Benign" is a closed allowlist, not a heuristic — anything not on it halts (guiding principle §3.2: "When in doubt, halt and alert"). Reservation adjustments flow through the Kernel's ledger interfaces from EPIC_04; this issue consumes them, it does not reimplement them.

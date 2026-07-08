@@ -2,8 +2,8 @@
 
 SPEC S7.2 declares thirteen `MarketConnector` methods; this module pins the
 **eleven read methods** across both shipped adapters --
-:class:`~hedgekit.connector.kalshi.adapter.KalshiConnector` and
-:class:`~hedgekit.connector.paper.PaperExchange` -- leaving out
+:class:`~windbreak.connector.kalshi.adapter.KalshiConnector` and
+:class:`~windbreak.connector.paper.PaperExchange` -- leaving out
 ``place_order``/``cancel_order`` (the two *trading* methods, wired by a later
 milestone and already covered by their own dedicated deferral tests). The
 eleven read methods are: ``list_markets``, ``get_market``, ``get_order_book``,
@@ -62,10 +62,10 @@ Float / fixed-point preservation guard
 `test_paper_happy_path_values_carry_no_float_leaf` recursively walk every
 happy-path return value (dataclass fields, tuple/list elements, mapping
 values) and assert no ``float`` instance appears anywhere (datetimes, ints,
-and hedgekit's scaled-integer unit types are all fine) -- the SPEC S17.6
+and windbreak's scaled-integer unit types are all fine) -- the SPEC S17.6
 connector-boundary acceptance check.
-`test_lint_no_floats_passes_over_hedgekit_connector` additionally runs
-`scripts/lint_no_floats.py` over `hedgekit/connector` as a
+`test_lint_no_floats_passes_over_windbreak_connector` additionally runs
+`scripts/lint_no_floats.py` over `windbreak/connector` as a
 light, additive AST-level guard (the repo-wide float-lint test already
 covers this; this is not a duplicate suite).
 """
@@ -87,27 +87,27 @@ from typing import TYPE_CHECKING, Any, Final
 
 import pytest
 
-from hedgekit.connector.fees import UnknownFeeModelError
-from hedgekit.connector.interface import MarketConnector, UnknownMarketError
-from hedgekit.connector.kalshi.adapter import KALSHI_BALANCE_SEMANTICS, KalshiConnector
-from hedgekit.connector.kalshi.client import KalshiApiError, KalshiClient
-from hedgekit.connector.kalshi.normalize import MARKET_MALFORMED_EVENT
-from hedgekit.connector.paper import PaperExchange
-from hedgekit.connector.resilience import ResiliencePolicy, ResilientCaller
-from hedgekit.connector.semantics import PartialFillRepresentation
-from hedgekit.connector.snapshot import InMemoryEventLedgerWriter
-from hedgekit.connector.validation import (
-    SCHEMA_ANOMALY_EVENT,
-    SchemaAnomalyHaltError,
-    SchemaValidator,
-    kalshi_default_schema_registry,
-)
-from hedgekit.numeric import ContractCentis, MoneyMicros, PricePips
 from tests.connector.kalshi.conftest import (
     FakeIntClock,
     FakeKalshiSession,
     RecordingSleeper,
 )
+from windbreak.connector.fees import UnknownFeeModelError
+from windbreak.connector.interface import MarketConnector, UnknownMarketError
+from windbreak.connector.kalshi.adapter import KALSHI_BALANCE_SEMANTICS, KalshiConnector
+from windbreak.connector.kalshi.client import KalshiApiError, KalshiClient
+from windbreak.connector.kalshi.normalize import MARKET_MALFORMED_EVENT
+from windbreak.connector.paper import PaperExchange
+from windbreak.connector.resilience import ResiliencePolicy, ResilientCaller
+from windbreak.connector.semantics import PartialFillRepresentation
+from windbreak.connector.snapshot import InMemoryEventLedgerWriter
+from windbreak.connector.validation import (
+    SCHEMA_ANOMALY_EVENT,
+    SchemaAnomalyHaltError,
+    SchemaValidator,
+    kalshi_default_schema_registry,
+)
+from windbreak.numeric import ContractCentis, MoneyMicros, PricePips
 
 if TYPE_CHECKING:
     import types
@@ -138,7 +138,7 @@ _CLOCK_FIXED: Final = datetime(2025, 6, 1, 12, 0, 0, tzinfo=UTC)
 _FIXTURE_SERVER_DATE: Final = datetime(2024, 12, 1, tzinfo=UTC)
 
 #: `KalshiConnector`'s exact current message for every deferred account method
-#: (`hedgekit.connector.kalshi.adapter._ACCOUNT_DEFERRAL`, copied verbatim so
+#: (`windbreak.connector.kalshi.adapter._ACCOUNT_DEFERRAL`, copied verbatim so
 #: this pin does not depend on importing a private module constant).
 _EXPECTED_ACCOUNT_DEFERRAL_MESSAGE: Final = (
     "account access (balances, positions, open orders, fills) is deferred to issue #3"
@@ -1422,7 +1422,7 @@ def test_kalshi_order_book_cosmetic_schema_drift_is_tolerated_not_halted() -> No
 def _iter_leaves(obj: object, path: str = "$") -> list[tuple[str, object]]:
     """Recursively enumerate every non-container leaf reachable from `obj`.
 
-    Recurses into dataclass fields (including hedgekit's scaled-integer unit
+    Recurses into dataclass fields (including windbreak's scaled-integer unit
     types, themselves frozen dataclasses wrapping a single `.value: int`),
     mapping values, and list/tuple elements. Every other value -- datetimes,
     plain ints, strings, bools, enum members, `None` -- is a leaf.
@@ -1505,11 +1505,11 @@ def test_paper_happy_path_values_carry_no_float_leaf() -> None:
         _assert_no_float_leaves(value)
 
 
-def test_lint_no_floats_passes_over_hedgekit_connector() -> None:
-    """The AST float-lint additionally guards `hedgekit/connector` cleanly.
+def test_lint_no_floats_passes_over_windbreak_connector() -> None:
+    """The AST float-lint additionally guards `windbreak/connector` cleanly.
 
     Loads `scripts/lint_no_floats.py` by file path (it lives outside the
-    `hedgekit` package), mirroring `tests/numeric/test_float_lint.py`'s
+    `windbreak` package), mirroring `tests/numeric/test_float_lint.py`'s
     `importlib.util.spec_from_file_location` pattern. This is a light,
     additive connector-owned regression guard -- the repo-wide float-lint
     test already covers the same package, so this is not a duplicate suite.
@@ -1520,6 +1520,6 @@ def test_lint_no_floats_passes_over_hedgekit_connector() -> None:
     module: types.ModuleType = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    exit_code = module.main([str(_REPO_ROOT / "hedgekit" / "connector")])
+    exit_code = module.main([str(_REPO_ROOT / "windbreak" / "connector")])
 
     assert exit_code == 0

@@ -1,0 +1,10 @@
+[Unit]
+Description=windbreak pipeline process (SPEC Process A)
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/env windbreak run --process pipeline
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

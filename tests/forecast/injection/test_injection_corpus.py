@@ -15,9 +15,9 @@ Pins the SPEC S8.5 contract across two layers:
    embedded *inside* a poisoned page's text is never itself dereferenced) and
    cache-write discipline (only raw bytes land under the sandboxed cache
    dir).
-2. **The response-side defenses** -- `hedgekit.forecast.sanitize`'s
+2. **The response-side defenses** -- `windbreak.forecast.sanitize`'s
    `sanitize_content` / `extract_quote` / `wrap_data_block` /
-   `validate_vote_response`, and `hedgekit.forecast.pipeline`'s new
+   `validate_vote_response`, and `windbreak.forecast.pipeline`'s new
    discard-and-ledger contract: a single model vote that itself tries a
    delimiter forgery or a tool-call lure is thrown away (never silently
    trusted, never causing a privileged retry) and ledgered with a
@@ -25,12 +25,13 @@ Pins the SPEC S8.5 contract across two layers:
    with `ABSTENTION_ALL_VOTES_DISCARDED` rather than aggregating over zero
    votes.
 
-`hedgekit/forecast/sanitize.py` does not exist yet, and `hedgekit/forecast/pipeline.py`
-does not yet export `ForecastEvent`, `InMemoryForecastLedger`,
-`FORECAST_OUTPUT_DISCARDED_EVENT`, `ABSTENTION_ALL_VOTES_DISCARDED`, or the new
+`windbreak/forecast/sanitize.py` does not exist yet, and
+`windbreak/forecast/pipeline.py` does not yet export `ForecastEvent`,
+`InMemoryForecastLedger`, `FORECAST_OUTPUT_DISCARDED_EVENT`,
+`ABSTENTION_ALL_VOTES_DISCARDED`, or the new
 `quotes`/`ledger` keywords on `collect_model_votes` and `run_pipeline`, so
 importing them below fails collection with `ModuleNotFoundError: No module
-named 'hedgekit.forecast.sanitize'` (or an `ImportError` naming a missing
+named 'windbreak.forecast.sanitize'` (or an `ImportError` naming a missing
 pipeline symbol) -- the expected Gate 1 RED state for issue #27.
 
 Corpus-fixture design choice
@@ -54,19 +55,29 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-# Import order below is isort/ruff (`I`) canonical -- `hedgekit.forecast` <
-# `hedgekit.forecast.pipeline` < `hedgekit.forecast.records` <
-# `hedgekit.forecast.sandbox` < `hedgekit.forecast.sanitize`. Because
-# `hedgekit/forecast/__init__.py` does not yet re-export `ForecastEvent` /
+from tests.forecast.conftest import FixtureSearchTransport
+from tests.forecast.injection.conftest import (
+    CORPUS_DIR,
+    LoggingFetchTransport,
+    LoggingSearchTransport,
+    MappingFetchTransport,
+    PoisonedFetchTransport,
+    PromptRecordingTransport,
+)
+
+# Import order below is isort/ruff (`I`) canonical -- `windbreak.forecast` <
+# `windbreak.forecast.pipeline` < `windbreak.forecast.records` <
+# `windbreak.forecast.sandbox` < `windbreak.forecast.sanitize`. Because
+# `windbreak/forecast/__init__.py` does not yet re-export `ForecastEvent` /
 # `InMemoryForecastLedger`, the *first* import statement below to actually
-# fail is the `hedgekit.forecast` one (an `ImportError` naming the missing
-# symbol); `hedgekit.forecast.sanitize` -- which does not exist as a module at
+# fail is the `windbreak.forecast` one (an `ImportError` naming the missing
+# symbol); `windbreak.forecast.sanitize` -- which does not exist as a module at
 # all -- would raise second. Both are the expected Gate 1 RED state (see the
 # module docstring above): a missing-pipeline-symbol `ImportError` and a
 # missing-module `ModuleNotFoundError` are equally valid failure signatures
 # for this issue, and either one blocks collection of every test below.
-from hedgekit.forecast import ForecastEvent, InMemoryForecastLedger
-from hedgekit.forecast.pipeline import (
+from windbreak.forecast import ForecastEvent, InMemoryForecastLedger
+from windbreak.forecast.pipeline import (
     ABSTENTION_ALL_VOTES_DISCARDED,
     ABSTENTION_NO_VERIFIED_CITATIONS,
     DEFAULT_MIN_VERIFIED_CITATIONS,
@@ -75,9 +86,9 @@ from hedgekit.forecast.pipeline import (
     decompose_subquestions,
     run_pipeline,
 )
-from hedgekit.forecast.records import forecast_record_to_payload
-from hedgekit.forecast.sandbox import build_research_tools, tool_registry
-from hedgekit.forecast.sanitize import (
+from windbreak.forecast.records import forecast_record_to_payload
+from windbreak.forecast.sandbox import build_research_tools, tool_registry
+from windbreak.forecast.sanitize import (
     DATA_BLOCK_BEGIN,
     DATA_BLOCK_END,
     MAX_QUOTE_WORDS,
@@ -90,15 +101,6 @@ from hedgekit.forecast.sanitize import (
     validate_vote_response,
     wrap_data_block,
 )
-from tests.forecast.conftest import FixtureSearchTransport
-from tests.forecast.injection.conftest import (
-    CORPUS_DIR,
-    LoggingFetchTransport,
-    LoggingSearchTransport,
-    MappingFetchTransport,
-    PoisonedFetchTransport,
-    PromptRecordingTransport,
-)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -106,9 +108,9 @@ if TYPE_CHECKING:
     from pathlib import Path
     from typing import Literal
 
-    from hedgekit.connector.models import NormalizedMarket
-    from hedgekit.forecast.records import BaselineQuoteSnapshot, ForecastRecord
-    from hedgekit.forecast.sandbox import ResearchTools
+    from windbreak.connector.models import NormalizedMarket
+    from windbreak.forecast.records import BaselineQuoteSnapshot, ForecastRecord
+    from windbreak.forecast.sandbox import ResearchTools
 
     FakeVoteTransportFactory = Callable[..., object]
     MaliciousVoteTransportFactory = Callable[[frozenset[int]], object]
@@ -911,7 +913,7 @@ def test_forecast_output_discarded_event_constant_value() -> None:
 
 def test_forecast_event_dataclass_carries_type_payload_and_timestamp() -> None:
     """`ForecastEvent` exposes `event_type` / `payload` / `ts` (mirrors
-    `hedgekit.forecast.triage.TriageEvent`).
+    `windbreak.forecast.triage.TriageEvent`).
     """
     event = ForecastEvent(
         event_type=FORECAST_OUTPUT_DISCARDED_EVENT,
@@ -933,7 +935,7 @@ def test_default_min_verified_citations_constant_still_three() -> None:
 
 
 class TestSanitizeContent:
-    """Unit tests for `hedgekit.forecast.sanitize.sanitize_content`."""
+    """Unit tests for `windbreak.forecast.sanitize.sanitize_content`."""
 
     def test_fast_identity_path_only_collapses_whitespace(self) -> None:
         """Plain text with no `<` is whitespace-collapsed only -- the fast
@@ -1078,7 +1080,7 @@ class TestSanitizeContent:
 
 
 class TestExtractQuote:
-    """Unit tests for `hedgekit.forecast.sanitize.extract_quote`."""
+    """Unit tests for `windbreak.forecast.sanitize.extract_quote`."""
 
     def test_caps_at_the_default_max_quote_words(self) -> None:
         """A long sanitized text is capped at `MAX_QUOTE_WORDS` words."""
@@ -1112,7 +1114,7 @@ class TestExtractQuote:
 
 
 class TestWrapDataBlock:
-    """Unit tests for `hedgekit.forecast.sanitize.wrap_data_block`."""
+    """Unit tests for `windbreak.forecast.sanitize.wrap_data_block`."""
 
     def test_wraps_url_and_quote_in_the_documented_exact_format(self) -> None:
         """The output matches the documented format byte-for-byte."""
@@ -1154,7 +1156,7 @@ class TestWrapDataBlock:
 
 
 class TestValidateVoteResponse:
-    """Unit tests for `hedgekit.forecast.sanitize.validate_vote_response`.
+    """Unit tests for `windbreak.forecast.sanitize.validate_vote_response`.
 
     `validate_vote_response` checks in a fixed first-failure order: empty,
     then delimiter forgery, then tool-call lure. An empty string cannot also

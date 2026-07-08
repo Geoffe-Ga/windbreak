@@ -8,15 +8,15 @@ only ever up to `OVERRIDE_CEILING` (`Mode.LIVE_MICRO`) -- never all the way to
 itself a ledgered event (`SignificanceOverrideApplied`) replayed by
 `RiskKernel.from_events`, not in-memory state.
 
-Neither `hedgekit/riskkernel/promotion.py` nor the new `hedgekit.ledger.events`
+Neither `windbreak/riskkernel/promotion.py` nor the new `windbreak.ledger.events`
 class it needs (`SignificanceOverrideApplied`) exist yet, so this file fails
 collection in two stages depending on which is fixed first: today, the
-`from hedgekit.ledger.events import ... SignificanceOverrideApplied ...` line
+`from windbreak.ledger.events import ... SignificanceOverrideApplied ...` line
 raises `ImportError: cannot import name 'SignificanceOverrideApplied' from
-'hedgekit.ledger.events'` (that module exists but does not yet define the
+'windbreak.ledger.events'` (that module exists but does not yet define the
 class); once `events.py` is extended, the next import,
-`from hedgekit.riskkernel.promotion import ...`, would raise
-`ModuleNotFoundError: No module named 'hedgekit.riskkernel.promotion'`. Either
+`from windbreak.riskkernel.promotion import ...`, would raise
+`ModuleNotFoundError: No module named 'windbreak.riskkernel.promotion'`. Either
 way this is the expected Gate 1 RED state for issue #33.
 
 This file duplicates the small `_kernel_at` builder from `test_promotion.py`
@@ -25,7 +25,7 @@ and `test_demotion.py` rather than centralizing it in `conftest.py`:
 already-passing suites, and importing a not-yet-existing module there would
 turn this file's expected RED (a `ModuleNotFoundError` scoped to this file)
 into a collection-wide failure across the whole directory. Once
-`hedgekit/riskkernel/promotion.py` exists, this ~10-line duplication is a
+`windbreak/riskkernel/promotion.py` exists, this ~10-line duplication is a
 reasonable, deliberate trade against that collection-wide blast radius.
 """
 
@@ -37,16 +37,16 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from hedgekit.ledger.events import (
+from windbreak.ledger.events import (
     EVENT_TYPES,
     Event,
     ModeHeartbeat,
     SignificanceOverrideApplied,
     canonical_json,
 )
-from hedgekit.riskkernel.modes import Mode, ModeCeilingExceededError, ModeStateMachine
-from hedgekit.riskkernel.process import InMemoryKernelLedgerWriter, RiskKernel
-from hedgekit.riskkernel.promotion import (
+from windbreak.riskkernel.modes import Mode, ModeCeilingExceededError, ModeStateMachine
+from windbreak.riskkernel.process import InMemoryKernelLedgerWriter, RiskKernel
+from windbreak.riskkernel.promotion import (
     OVERRIDE_CEILING,
     SIGNIFICANCE_OVERRIDE_ACK_PHRASE,
     GateEvidence,
@@ -56,7 +56,7 @@ from hedgekit.riskkernel.promotion import (
 )
 
 if TYPE_CHECKING:
-    from hedgekit.config import EvaluationConfig
+    from windbreak.config import EvaluationConfig
 
 #: A `GateEvidence` snapshot that satisfies every LIVE_MICRO->LIVE criterion
 #: (the other 14 fields are irrelevant to that gate and left at their

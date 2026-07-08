@@ -1,6 +1,6 @@
 ## Role
 
-You are a senior Python engineer with applied-cryptography and concurrency experience, working in this repo's `hedgekit/riskkernel/` package.
+You are a senior Python engineer with applied-cryptography and concurrency experience, working in this repo's `windbreak/riskkernel/` package.
 
 ## Goal
 
@@ -12,10 +12,10 @@ All approvals serialize through a single-writer reservation ledger, and every ap
 - **Predecessor issue(s):** #30 (must be merged first)
 - **SPEC section:** `plans/SPEC_v3.md` §10.5 (reservations), §10.6 (approval tokens), §5.2 (Kernel holds signing key; Gateway holds verification key), threats T3, T4
 - **Files involved:**
-  - `hedgekit/riskkernel/reservations.py` — new: single-writer reservation ledger
-  - `hedgekit/riskkernel/tokens.py` — new: token signing over canonical serialization (the ONLY module importing the signing-key handle; import-linter contract from the skeleton issue must cover it)
-  - `hedgekit/riskkernel/checks.py` — wire in approval-token-uniqueness and idempotency-key-uniqueness checks (§10.3)
-  - `hedgekit/tokens/verify.py` — new shared verification logic (imported later by the Gateway in EPIC_05; no Gateway code here)
+  - `windbreak/riskkernel/reservations.py` — new: single-writer reservation ledger
+  - `windbreak/riskkernel/tokens.py` — new: token signing over canonical serialization (the ONLY module importing the signing-key handle; import-linter contract from the skeleton issue must cover it)
+  - `windbreak/riskkernel/checks.py` — wire in approval-token-uniqueness and idempotency-key-uniqueness checks (§10.3)
+  - `windbreak/tokens/verify.py` — new shared verification logic (imported later by the Gateway in EPIC_05; no Gateway code here)
   - `tests/riskkernel/test_reservations.py`, `tests/riskkernel/test_tokens.py`, `tests/riskkernel/test_token_forgery_matrix.py`
 - **Prior decisions:** Reservations are created *before* the token is returned; single-use, intent-bound, amount-bound, time-bound, ledgered; released on expiry/cancel/reject/reconciliation; adjusted on partial fill (§10.5). Token = HMAC/signature over canonical serialization of `{intent_id, market_ticker, outcome, action, limit_price_pips, count_centis, max_fee_micros, expires_at, idempotency_key, config_hash, kernel_sequence_number}`; TTL 60s default; single-use (§10.6). Capital is reserved at approval (T4 row, §4).
 - **State of the world:** Floor math and real checks exist (#30); approvals are still impossible because reservation/token slots in the pipeline are VETO stubs. Signing-key handle is a stub module from the skeleton issue.

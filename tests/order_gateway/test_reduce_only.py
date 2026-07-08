@@ -1,12 +1,12 @@
 """Failing-first tests for reduce-only enforcement on closes (issue #39, RED).
 
-`hedgekit/order_gateway/reduce_only.py` does not exist yet, and
-`hedgekit/order_gateway/gateway.py` does not yet export `GatewayHaltedError` or
+`windbreak/order_gateway/reduce_only.py` does not exist yet, and
+`windbreak/order_gateway/gateway.py` does not yet export `GatewayHaltedError` or
 widen `OrderGateway`/`GatewayResult` with `position_source`/`position_snapshot`,
-nor does `hedgekit/order_gateway/ledger_writer.py` yet export
+nor does `windbreak/order_gateway/ledger_writer.py` yet export
 `ReduceOnlyRefused`/`ReduceOnlyViolation`, so the module-level import below
 fails collection with an `ImportError` naming the first missing symbol
-(currently `GatewayHaltedError` from `hedgekit.order_gateway.gateway`) -- the
+(currently `GatewayHaltedError` from `windbreak.order_gateway.gateway`) -- the
 expected Gate 1 RED state for issue #39. This mirrors
 `tests/order_gateway/test_submission.py`'s own documented RED state for issue
 #38.
@@ -45,23 +45,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from hedgekit.connector.models import ExchangeStatus, Position
-from hedgekit.numeric.types import ContractCentis, PricePips
-from hedgekit.order_gateway.client_order_id import client_order_id
-from hedgekit.order_gateway.gateway import (
-    GatewayHaltedError,
-    OrderGateway,
-    SubmissionAck,
-    SubmitOutcome,
-)
-from hedgekit.order_gateway.ledger_writer import (
-    InMemoryGatewayLedgerWriter,
-    ReduceOnlyRefused,
-    ReduceOnlyViolation,
-)
-from hedgekit.order_gateway.reduce_only import PositionSnapshot
-from hedgekit.order_gateway.state_machine import OrderState
-from hedgekit.order_gateway.tokens import VerifyResult
 from tests.order_gateway.conftest import (
     DEFAULT_MARKET_TICKER,
     DEFAULT_NOW_EPOCH_S,
@@ -69,15 +52,32 @@ from tests.order_gateway.conftest import (
     issue_matching_token,
     make_intent,
 )
+from windbreak.connector.models import ExchangeStatus, Position
+from windbreak.numeric.types import ContractCentis, PricePips
+from windbreak.order_gateway.client_order_id import client_order_id
+from windbreak.order_gateway.gateway import (
+    GatewayHaltedError,
+    OrderGateway,
+    SubmissionAck,
+    SubmitOutcome,
+)
+from windbreak.order_gateway.ledger_writer import (
+    InMemoryGatewayLedgerWriter,
+    ReduceOnlyRefused,
+    ReduceOnlyViolation,
+)
+from windbreak.order_gateway.reduce_only import PositionSnapshot
+from windbreak.order_gateway.state_machine import OrderState
+from windbreak.order_gateway.tokens import VerifyResult
 
 if TYPE_CHECKING:
-    from hedgekit.order_gateway.gateway import (
+    from windbreak.order_gateway.gateway import (
         GatewayPositionSource,
         GatewayStatusSource,
         OrderSubmitter,
     )
-    from hedgekit.riskkernel.checks import OrderIntent
-    from hedgekit.tokens.verify import SignedApprovalToken
+    from windbreak.riskkernel.checks import OrderIntent
+    from windbreak.tokens.verify import SignedApprovalToken
 
 #: A fixed observation instant every stub `GatewayStatusSource` reading
 #: stamps its `ExchangeStatus.fetched_at` with -- irrelevant to reduce-only

@@ -1,8 +1,8 @@
-"""Gate 1 RED tests for `hedgekit.selector.execution_style` (issue #46).
+"""Gate 1 RED tests for `windbreak.selector.execution_style` (issue #46).
 
-`hedgekit/selector/execution_style.py` does not exist yet, so every test below
+`windbreak/selector/execution_style.py` does not exist yet, so every test below
 fails collection with `ModuleNotFoundError: No module named
-'hedgekit.selector.execution_style'` -- the expected Gate 1 RED state for
+'windbreak.selector.execution_style'` -- the expected Gate 1 RED state for
 issue #46's execution-style seam.
 
 `decide_execution_style(inputs, size)` renders the architect's five-row
@@ -34,19 +34,19 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from hedgekit.config.schema import RiskConfig
-from hedgekit.connector.fees import FeeModel
-from hedgekit.connector.models import OrderBookLevel, OrderBookSnapshot
-from hedgekit.forecast.records import Citation, ForecastRecord
-from hedgekit.numeric import ContractCentis, MoneyMicros, PricePips
-from hedgekit.selector import SelectorInputs, select
-from hedgekit.selector.execution_style import (
+from windbreak.config.schema import RiskConfig
+from windbreak.connector.fees import FeeModel
+from windbreak.connector.models import OrderBookLevel, OrderBookSnapshot
+from windbreak.forecast.records import Citation, ForecastRecord
+from windbreak.numeric import ContractCentis, MoneyMicros, PricePips
+from windbreak.selector import SelectorInputs, select
+from windbreak.selector.execution_style import (
     _REST_IMPROVEMENT_PIPS,
     _WIDE_SPREAD_MIN_PIPS,
     ExecutionStyleDecision,
     decide_execution_style,
 )
-from hedgekit.selector.types import (
+from windbreak.selector.types import (
     FeeModelInput,
     PositionReadModelInput,
     RiskConfigInput,

@@ -1,6 +1,6 @@
 # SPEC_v3.md — Open-Source, Locally Hosted, Always-On AI Forecast Trader
 
-**Codename:** `hedgekit`
+**Codename:** `windbreak`
 **Status:** Draft v3.0 — implementation-ready, supersedes v1 and v2
 **License target:** Apache-2.0
 **Audience:** an autonomous coding agent (decomposition into epics/issues), plus maintainer, security reviewer, and operator.
@@ -24,7 +24,7 @@ v3 is a synthesis. To prevent regressions during implementation, the origin of e
 
 ## 1. Executive Summary
 
-`hedgekit` is a local-first, always-on daemon that (1) screens prediction markets for questions where careful research can plausibly beat the crowd, (2) uses an LLM "superforecaster" scaffold to produce calibrated probability estimates with verified citations, (3) compares those estimates against live executable order books, and (4) may create order intents — none of which can reach an exchange unless approved by an independent, veto-holding **Risk Kernel** and submitted through a token-verifying, credential-isolated **Order Gateway**.
+`windbreak` is a local-first, always-on daemon that (1) screens prediction markets for questions where careful research can plausibly beat the crowd, (2) uses an LLM "superforecaster" scaffold to produce calibrated probability estimates with verified citations, (3) compares those estimates against live executable order books, and (4) may create order intents — none of which can reach an exchange unless approved by an independent, veto-holding **Risk Kernel** and submitted through a token-verifying, credential-isolated **Order Gateway**.
 
 The design descends from publicly documented AI-forecasting pipelines (screen by volume → exclude information-disadvantaged categories → deep LLM research → trade only where forecast and executable price disagree beyond fees). It deliberately does **not** assume the headline results around those pipelines are reproducible: the widely cited "beating the market by 25%" figure was a *paper* portfolio with no commissions, borrow costs, or dividends; the "$35 → $2M" figure is a self-reported anecdote whose author states the edge is already competed away. Accordingly, v1's success metric is **demonstrated forecast calibration and provable capital safety**, not profit. Live trading is a privilege earned through gated promotion.
 
@@ -481,7 +481,7 @@ Floor-check failure or computation error; schema anomaly; jurisdiction unknown; 
 
 ### 10.11 Kill switch
 
-Triggers: dashboard button (double-confirm), CLI `hedgekit kill`, `KILL` file in the state dir (works with HTTP down), automatic on repeated reconciliation mismatch. Effect: cancel all open orders, disable approvals, alert. Positions are **held**, not dumped — bounded loss means holding is safe and panic-selling into thin books is not. Re-arm is manual.
+Triggers: dashboard button (double-confirm), CLI `windbreak kill`, `KILL` file in the state dir (works with HTTP down), automatic on repeated reconciliation mismatch. Effect: cancel all open orders, disable approvals, alert. Positions are **held**, not dumped — bounded loss means holding is safe and panic-selling into thin books is not. Re-arm is manual.
 
 ### 10.12 Acceptance criteria
 
@@ -519,7 +519,7 @@ Chaos suite: process killed at every state edge, network cut mid-submit, duplica
 
 ## 12. Ledger & State
 
-SQLite (WAL) default; Postgres behind the same repository interface. Every event row: `sequence_number, event_type, created_at, component, payload_json, payload_schema_version, prev_hash, event_hash` with `event_hash = hash(sequence_number || event_type || created_at || payload_json || prev_hash)`. Read models (markets, screen_decisions, forecasts, model_votes, citations, quote_snapshots, selector_decisions, order_intents, kernel_reservations, approvals, orders, fills, positions, balances, equity_curve, metrics, alerts, config_versions, mode_history) are rebuildable from events; `hedgekit rebuild` equivalence is asserted in CI. Encrypted backups on schedule; restore drills tested; trading halts on disk-space or repeated-backup failure. Audit-bundle export redacts secrets and personal identifiers by construction (tested).
+SQLite (WAL) default; Postgres behind the same repository interface. Every event row: `sequence_number, event_type, created_at, component, payload_json, payload_schema_version, prev_hash, event_hash` with `event_hash = hash(sequence_number || event_type || created_at || payload_json || prev_hash)`. Read models (markets, screen_decisions, forecasts, model_votes, citations, quote_snapshots, selector_decisions, order_intents, kernel_reservations, approvals, orders, fills, positions, balances, equity_curve, metrics, alerts, config_versions, mode_history) are rebuildable from events; `windbreak rebuild` equivalence is asserted in CI. Encrypted backups on schedule; restore drills tested; trading halts on disk-space or repeated-backup failure. Audit-bundle export redacts secrets and personal identifiers by construction (tested).
 
 ---
 
@@ -639,8 +639,8 @@ evaluation:
   observation_window: latest_before_close
 
 ops:
-  state_dir: "~/.local/share/hedgekit"
-  backup_dir: "~/hedgekit-backups"
+  state_dir: "~/.local/share/windbreak"
+  backup_dir: "~/windbreak-backups"
   min_free_disk_mb: 1000
   cancel_open_orders_on_shutdown: true
 
@@ -680,7 +680,7 @@ Synthetic and recorded scenarios: flash moves mid-intent; books that vanish betw
 
 ## 18. Milestones (map to epics; dependency graph below)
 
-**M0 — Foundations.** Repo scaffold; typed config loader (unknown keys fatal); fixed-point numeric types with AST float-lint; hash-chained ledger + rebuild; structured logging with secret redaction; alert-sink abstraction; docker-compose + systemd skeletons; stub dashboard. *Done:* `hedgekit run` idles in RESEARCH with visible heartbeats.
+**M0 — Foundations.** Repo scaffold; typed config loader (unknown keys fatal); fixed-point numeric types with AST float-lint; hash-chained ledger + rebuild; structured logging with secret redaction; alert-sink abstraction; docker-compose + systemd skeletons; stub dashboard. *Done:* `windbreak run` idles in RESEARCH with visible heartbeats.
 
 **M1 — Connector + PaperExchange.** Kalshi adapter (current API); fixed-point book parsing; market normalization incl. mutually-exclusive groups and jurisdiction status; fee-model lookup; balance-semantics contract; PaperExchange with the §17.4 fill model; fixtures + fault injection. *Done:* snapshots and screen decisions ledgered on schedule.
 

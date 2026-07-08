@@ -1,4 +1,4 @@
-"""Failing-first tests for hedgekit.riskkernel.human_ack (issue #34, RED).
+"""Failing-first tests for windbreak.riskkernel.human_ack (issue #34, RED).
 
 Issue #34 gives the Risk Kernel a pending human-acknowledgement queue: an
 over-threshold intent's worst-case cost must be explicitly acknowledged by a
@@ -7,7 +7,7 @@ promoted from stub to real logic in `tests/riskkernel/test_checks.py`), and an
 acknowledgement request that nobody answers lapses on a fixed ttl, releasing
 whatever capital reservation was held against it.
 
-`hedgekit/riskkernel/human_ack.py` does not exist yet, so every import below
+`windbreak/riskkernel/human_ack.py` does not exist yet, so every import below
 fails collection with `ModuleNotFoundError` -- the expected Gate 1 RED state
 for issue #34.
 
@@ -16,7 +16,7 @@ build to these exactly):
 
 * `HumanAckQueue.__init__` takes `writer: KernelLedgerWriter`,
   `releaser: Releaser` (any object exposing `.release(intent_id, *,
-  reason)` -- `hedgekit.riskkernel.reservations.ReservationLedger` already
+  reason)` -- `windbreak.riskkernel.reservations.ReservationLedger` already
   satisfies this duck type, exercised directly below), and
   `ttl_seconds: int = DEFAULT_HUMAN_ACK_TTL_SECONDS`. There is no injected
   clock callable on the queue itself: every method takes an explicit `now`
@@ -25,7 +25,7 @@ build to these exactly):
 * `DEFAULT_HUMAN_ACK_TTL_SECONDS == 3_600` (one hour) -- a plausible
   operator-response window pinned here since the architect's plan did not
   fix an exact value.
-* Events are plain, string-discriminated `hedgekit.ledger.events.Event`s:
+* Events are plain, string-discriminated `windbreak.ledger.events.Event`s:
   `"HumanAckRequested"` (`approval_id`, `intent_id`,
   `worst_case_cost_micros`, `requested_at`, `expires_at`),
   `"HumanAckGranted"` (`approval_id`, `intent_id`, `granted_at`), and
@@ -38,16 +38,16 @@ import dataclasses
 
 import pytest
 
-from hedgekit.numeric.types import MoneyMicros
-from hedgekit.riskkernel.human_ack import (
+from windbreak.numeric.types import MoneyMicros
+from windbreak.riskkernel.human_ack import (
     DEFAULT_HUMAN_ACK_TTL_SECONDS,
     AckLapsedError,
     DuplicateAckRequestError,
     HumanAckQueue,
     UnknownApprovalError,
 )
-from hedgekit.riskkernel.process import InMemoryKernelLedgerWriter
-from hedgekit.riskkernel.reservations import ReservationLedger
+from windbreak.riskkernel.process import InMemoryKernelLedgerWriter
+from windbreak.riskkernel.reservations import ReservationLedger
 
 #: A fixed, generous ttl every test not itself pinning `expires_at` arithmetic
 #: uses, so its exact value never matters to those tests.

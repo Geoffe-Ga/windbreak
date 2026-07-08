@@ -1,13 +1,13 @@
-"""Tests for hedgekit.forecast.records (issue #22): the SPEC S6.3 record schema.
+"""Tests for windbreak.forecast.records (issue #22): the SPEC S6.3 record schema.
 
 Pins `ForecastRecord.__post_init__` validation (ppm range and non-bool-int
 integrality, non-empty identifiers, the `triage_stage` closed set),
 immutability of `ForecastRecord`, `ModelVote`, `Citation`, and
 `BaselineQuoteSnapshot`, and `forecast_record_to_payload`'s JSON-safety (no
 float leaf anywhere, datetimes as ISO-8601 `Z` strings, tuple-of-dataclass
-fields projected as lists of dicts). `hedgekit/forecast/` does not exist yet,
-so importing `hedgekit.forecast.records` fails collection with
-`ModuleNotFoundError: No module named 'hedgekit.forecast'` -- the expected
+fields projected as lists of dicts). `windbreak/forecast/` does not exist yet,
+so importing `windbreak.forecast.records` fails collection with
+`ModuleNotFoundError: No module named 'windbreak.forecast'` -- the expected
 Gate 1 RED state for issue #22.
 """
 
@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from hedgekit.forecast.records import (
+from windbreak.forecast.records import (
     BaselineQuoteSnapshot,
     Citation,
     ForecastRecord,

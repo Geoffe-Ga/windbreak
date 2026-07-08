@@ -1,10 +1,10 @@
-"""Failing-first tests for `hedgekit.evaluation.windows` (issue #53, RED).
+"""Failing-first tests for `windbreak.evaluation.windows` (issue #53, RED).
 
-`hedgekit.evaluation.windows` does not exist yet, so every test below imports
+`windbreak.evaluation.windows` does not exist yet, so every test below imports
 its new symbols from that module as the FIRST statement inside the test body
 (matching this package's established RED convention in
 `test_temporal_integrity.py`) so each test collects independently and fails on
-its own `ModuleNotFoundError: No module named 'hedgekit.evaluation.windows'`
+its own `ModuleNotFoundError: No module named 'windbreak.evaluation.windows'`
 rather than one collection-time explosion.
 
 Pins SPEC-EPIC_07 issue #53's window-as-selection-strategy vocabulary:
@@ -32,8 +32,8 @@ from __future__ import annotations
 
 import pytest
 
-from hedgekit.evaluation import EvaluationInputs, FixtureForecast, ResolutionOutcome
-from hedgekit.numeric.types import ProbabilityPpm
+from windbreak.evaluation import EvaluationInputs, FixtureForecast, ResolutionOutcome
+from windbreak.numeric.types import ProbabilityPpm
 
 
 def _forecast(
@@ -117,7 +117,7 @@ def test_first_per_market_selects_min_created_sequence_per_market() -> None:
     """`FIRST_PER_MARKET` keeps the min-`created_sequence` record per market:
     M's seq-1 record and N's (only) seq-2 record.
     """
-    from hedgekit.evaluation.windows import ObservationWindow, resolve_window
+    from windbreak.evaluation.windows import ObservationWindow, resolve_window
 
     result = resolve_window(
         _MULTI_MARKET_FORECASTS, window=ObservationWindow.FIRST_PER_MARKET
@@ -133,7 +133,7 @@ def test_latest_before_close_selects_max_created_sequence_per_market() -> None:
     """`LATEST_BEFORE_CLOSE` keeps the max-`created_sequence` record per
     market: M's seq-5 record and N's (only) seq-2 record.
     """
-    from hedgekit.evaluation.windows import ObservationWindow, resolve_window
+    from windbreak.evaluation.windows import ObservationWindow, resolve_window
 
     result = resolve_window(
         _MULTI_MARKET_FORECASTS, window=ObservationWindow.LATEST_BEFORE_CLOSE
@@ -149,7 +149,7 @@ def test_trade_triggering_selects_only_traded_records() -> None:
     """`TRADE_TRIGGERING` keeps only `traded=True` records: M's seq-3 record
     alone (N has no traded record at all).
     """
-    from hedgekit.evaluation.windows import ObservationWindow, resolve_window
+    from windbreak.evaluation.windows import ObservationWindow, resolve_window
 
     result = resolve_window(
         _MULTI_MARKET_FORECASTS, window=ObservationWindow.TRADE_TRIGGERING
@@ -165,7 +165,7 @@ def test_daily_snapshots_selects_every_record_unfiltered() -> None:
     """`DAILY_SNAPSHOTS` keeps every record in the input, unfiltered: all
     three M snapshots plus N's single snapshot.
     """
-    from hedgekit.evaluation.windows import ObservationWindow, resolve_window
+    from windbreak.evaluation.windows import ObservationWindow, resolve_window
 
     result = resolve_window(
         _MULTI_MARKET_FORECASTS, window=ObservationWindow.DAILY_SNAPSHOTS
@@ -188,7 +188,7 @@ def test_first_per_market_raises_value_error_on_none_created_sequence() -> None:
     `FIRST_PER_MARKET` selection undefined for that market: fail-closed,
     raise `ValueError`, never silently pick an arbitrary record.
     """
-    from hedgekit.evaluation.windows import ObservationWindow, resolve_window
+    from windbreak.evaluation.windows import ObservationWindow, resolve_window
 
     forecasts = (
         _forecast(
@@ -205,7 +205,7 @@ def test_first_per_market_raises_value_error_on_none_created_sequence() -> None:
 
 def test_latest_before_close_raises_value_error_on_none_created_sequence() -> None:
     """Same fail-closed rule as `FIRST_PER_MARKET`, for `LATEST_BEFORE_CLOSE`."""
-    from hedgekit.evaluation.windows import ObservationWindow, resolve_window
+    from windbreak.evaluation.windows import ObservationWindow, resolve_window
 
     forecasts = (
         _forecast(
@@ -224,7 +224,7 @@ def test_daily_snapshots_tolerates_none_created_sequence() -> None:
     """`DAILY_SNAPSHOTS` does not care about `created_sequence` at all, so a
     `None` record is included without raising.
     """
-    from hedgekit.evaluation.windows import ObservationWindow, resolve_window
+    from windbreak.evaluation.windows import ObservationWindow, resolve_window
 
     forecasts = (
         _forecast(
@@ -245,7 +245,7 @@ def test_trade_triggering_tolerates_none_created_sequence() -> None:
     """`TRADE_TRIGGERING` selects purely on `traded`, so a traded record with
     `created_sequence=None` is included without raising.
     """
-    from hedgekit.evaluation.windows import ObservationWindow, resolve_window
+    from windbreak.evaluation.windows import ObservationWindow, resolve_window
 
     forecasts = (
         _forecast(
@@ -274,7 +274,7 @@ def test_combine_raises_mixed_observation_window_error_on_distinct_windows() -> 
     `MixedObservationWindowError` -- the structural guarantee against
     accidentally averaging across incompatible sampling strategies.
     """
-    from hedgekit.evaluation.windows import (
+    from windbreak.evaluation.windows import (
         MixedObservationWindowError,
         ObservationWindow,
         combine,
@@ -297,7 +297,7 @@ def test_combine_same_window_slices_concatenates_forecasts() -> None:
     their forecasts (in the order the slices were given) and preserves the
     shared window.
     """
-    from hedgekit.evaluation.windows import ObservationWindow, combine, resolve_window
+    from windbreak.evaluation.windows import ObservationWindow, combine, resolve_window
 
     slice_a = resolve_window(
         (_MARKET_M_SEQ1,), window=ObservationWindow.FIRST_PER_MARKET
@@ -326,7 +326,7 @@ def test_windowed_forecasts_exposes_window_and_forecasts_attributes() -> None:
     """`WindowedForecasts` is a frozen carrier exposing exactly `.window` and
     `.forecasts`, binding one `ObservationWindow` to a tuple of forecasts.
     """
-    from hedgekit.evaluation.windows import ObservationWindow, resolve_window
+    from windbreak.evaluation.windows import ObservationWindow, resolve_window
 
     result = resolve_window((_MARKET_M_SEQ1,), window=ObservationWindow.DAILY_SNAPSHOTS)
 
@@ -344,7 +344,7 @@ def test_registry_observation_window_is_the_same_object_as_windows_module() -> N
     `registry.ObservationWindow` must be the exact same enum object (a
     re-export), not a lookalike duplicate with equal member names.
     """
-    from hedgekit.evaluation import registry, windows
+    from windbreak.evaluation import registry, windows
 
     assert registry.ObservationWindow is windows.ObservationWindow
 
@@ -363,8 +363,8 @@ def test_mean_brier_over_raises_mixed_observation_window_error_on_mixed_slices()
     enforces, when the slices name more than one distinct window -- a metric
     must never silently average across incompatible sampling strategies.
     """
-    from hedgekit.evaluation.cohorts import mean_brier_over
-    from hedgekit.evaluation.windows import (
+    from windbreak.evaluation.cohorts import mean_brier_over
+    from windbreak.evaluation.windows import (
         MixedObservationWindowError,
         ObservationWindow,
         resolve_window,
@@ -402,8 +402,8 @@ def test_mean_brier_over_same_window_slices_returns_the_combined_mean() -> None:
 
     total = 8.0e11; n=2 -> mean = 8.0e11 / (2 * 1_000_000) = 400_000 ppm.
     """
-    from hedgekit.evaluation.cohorts import mean_brier_over
-    from hedgekit.evaluation.windows import ObservationWindow, resolve_window
+    from windbreak.evaluation.cohorts import mean_brier_over
+    from windbreak.evaluation.windows import ObservationWindow, resolve_window
 
     slice_a = resolve_window(
         (_MARKET_M_SEQ1,), window=ObservationWindow.FIRST_PER_MARKET

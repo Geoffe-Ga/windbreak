@@ -1,4 +1,4 @@
-"""Failing-first tests for hedgekit.riskkernel.demotion (issue #33, RED).
+"""Failing-first tests for windbreak.riskkernel.demotion (issue #33, RED).
 
 Issue #33 gives the Risk Kernel its demotion-trigger machinery: 16 named
 `DemotionTrigger`s, each mapped to exactly one of four `DemotionAction`s
@@ -8,15 +8,15 @@ by the pure `resolve_demotion` function, plus the kernel-level
 `DemotionTriggerFired` event per firing (including no-op firings) and performs
 the transition when one exists.
 
-Neither `hedgekit/riskkernel/demotion.py` nor the new `hedgekit.ledger.events`
+Neither `windbreak/riskkernel/demotion.py` nor the new `windbreak.ledger.events`
 class it needs (`DemotionTriggerFired`) exist yet, so this file fails
 collection in two stages depending on which is fixed first: today, the
-`from hedgekit.ledger.events import ... DemotionTriggerFired ...` line raises
+`from windbreak.ledger.events import ... DemotionTriggerFired ...` line raises
 `ImportError: cannot import name 'DemotionTriggerFired' from
-'hedgekit.ledger.events'` (that module exists but does not yet define the
+'windbreak.ledger.events'` (that module exists but does not yet define the
 class); once `events.py` is extended, the next import,
-`from hedgekit.riskkernel.demotion import ...`, would raise
-`ModuleNotFoundError: No module named 'hedgekit.riskkernel.demotion'`. Either
+`from windbreak.riskkernel.demotion import ...`, would raise
+`ModuleNotFoundError: No module named 'windbreak.riskkernel.demotion'`. Either
 way this is the expected Gate 1 RED state for issue #33.
 
 ASSUMPTION this file pins (the architecture plan describes the resolution
@@ -41,15 +41,15 @@ import json
 
 import pytest
 
-from hedgekit.ledger.events import EVENT_TYPES, DemotionTriggerFired, canonical_json
-from hedgekit.riskkernel.demotion import (
+from windbreak.ledger.events import EVENT_TYPES, DemotionTriggerFired, canonical_json
+from windbreak.riskkernel.demotion import (
     TRIGGER_ACTIONS,
     DemotionAction,
     DemotionTrigger,
     resolve_demotion,
 )
-from hedgekit.riskkernel.modes import Mode, ModeStateMachine
-from hedgekit.riskkernel.process import InMemoryKernelLedgerWriter, RiskKernel
+from windbreak.riskkernel.modes import Mode, ModeStateMachine
+from windbreak.riskkernel.process import InMemoryKernelLedgerWriter, RiskKernel
 
 #: The exact 16 `DemotionTrigger` members, verbatim from the architecture plan.
 _EXPECTED_TRIGGER_NAMES = frozenset(

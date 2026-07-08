@@ -1,11 +1,11 @@
-"""Tests for hedgekit.connector.snapshot (issue #16): the market-snapshot task.
+"""Tests for windbreak.connector.snapshot (issue #16): the market-snapshot task.
 
 Acceptance test: `MarketSnapshotTask.run_once()` records exactly one
 MARKET_SNAPSHOT and one SCREEN_DECISION event per market on
 `connector.list_markets()`, faithfully reflecting the screener's blocked/
-eligible verdict. `hedgekit/connector/` does not exist yet, so importing
-`hedgekit.connector.snapshot` fails collection with `ModuleNotFoundError: No
-module named 'hedgekit.connector'` -- the expected Gate 1 RED state for
+eligible verdict. `windbreak/connector/` does not exist yet, so importing
+`windbreak.connector.snapshot` fails collection with `ModuleNotFoundError: No
+module named 'windbreak.connector'` -- the expected Gate 1 RED state for
 issue #16.
 """
 
@@ -15,20 +15,20 @@ import logging
 import re
 from typing import TYPE_CHECKING
 
-from hedgekit.connector.models import market_to_payload
-from hedgekit.connector.snapshot import (
+from windbreak.connector.models import market_to_payload
+from windbreak.connector.snapshot import (
     MARKET_SNAPSHOT_EVENT,
     SCREEN_DECISION_EVENT,
     LoggingEventLedgerWriter,
     MarketSnapshotTask,
 )
-from hedgekit.screener import StubScreener
+from windbreak.screener import StubScreener
 
 if TYPE_CHECKING:
     import pytest
 
-    from hedgekit.connector.fake import FakeExchange
-    from hedgekit.connector.snapshot import ConnectorEvent, InMemoryEventLedgerWriter
+    from windbreak.connector.fake import FakeExchange
+    from windbreak.connector.snapshot import ConnectorEvent, InMemoryEventLedgerWriter
 
 _ISO_UTC = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$")
 

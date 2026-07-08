@@ -1,4 +1,4 @@
-"""Tests for the `hedgekit.config` loader (issue #11, SPEC S16).
+"""Tests for the `windbreak.config` loader (issue #11, SPEC S16).
 
 Covers the full example loading correctly, partial configs falling
 back to defaults, unknown keys being fatal at every nesting depth,
@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from hedgekit.config import ConfigError, HedgekitConfig, load_config
+from windbreak.config import ConfigError, WindbreakConfig, load_config
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -52,7 +52,7 @@ def test_partial_config_fills_defaults(
     tmp_path: Path, write_config: Callable[[Path, dict[str, Any]], Path]
 ) -> None:
     """A config specifying only mode_ceiling still fills every other default."""
-    defaults = HedgekitConfig()
+    defaults = WindbreakConfig()
     config_path = write_config(tmp_path, {"mode_ceiling": "paper"})
 
     cfg = load_config(config_path)

@@ -1,8 +1,8 @@
-"""Failing-first tests for `hedgekit.order_gateway.gateway` (issue #37, RED).
+"""Failing-first tests for `windbreak.order_gateway.gateway` (issue #37, RED).
 
-`hedgekit/order_gateway/gateway.py` does not exist yet, so importing it fails
+`windbreak/order_gateway/gateway.py` does not exist yet, so importing it fails
 collection with `ModuleNotFoundError: No module named
-'hedgekit.order_gateway.gateway'` -- the expected Gate 1 RED state for issue
+'windbreak.order_gateway.gateway'` -- the expected Gate 1 RED state for issue
 #37.
 
 This module pins:
@@ -20,8 +20,8 @@ This module pins:
     * The verification key is never exposed via any public attribute (mirrors
       `SigningKeyHandle`'s no-leak guarantee, issue #31).
     * `build_parser`/`main`: a bounded `--max-beats`/`--heartbeat-interval`
-      CLI mirroring `hedgekit.riskkernel.process`'s conventions, plus
-      `hedgekit.order_gateway.__main__` delegating to it.
+      CLI mirroring `windbreak.riskkernel.process`'s conventions, plus
+      `windbreak.order_gateway.__main__` delegating to it.
 
 The Gateway happy-path test drives a *real* `PaperExchange` (issue #19's
 `tests/fixtures/books/deep_walk` fixture) rather than a stub, so its
@@ -43,8 +43,15 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from hedgekit.numeric.types import ContractCentis, PricePips
-from hedgekit.order_gateway.gateway import (
+from tests.order_gateway.conftest import (
+    DEFAULT_NOW_EPOCH_S,
+    KEY_MATERIAL,
+    issue_matching_token,
+    make_claims_for_intent,
+    make_intent,
+)
+from windbreak.numeric.types import ContractCentis, PricePips
+from windbreak.order_gateway.gateway import (
     GatewayResult,
     OrderGateway,
     OrderSubmitter,
@@ -53,34 +60,27 @@ from hedgekit.order_gateway.gateway import (
     build_parser,
     main,
 )
-from hedgekit.order_gateway.state_machine import OrderState
-from hedgekit.order_gateway.tokens import VerifyResult
-from hedgekit.riskkernel.signing import SigningKeyHandle
-from hedgekit.riskkernel.tokens import TokenIssuer
-from hedgekit.tokens.verify import InMemorySingleUseRegistry
-from tests.order_gateway.conftest import (
-    DEFAULT_NOW_EPOCH_S,
-    KEY_MATERIAL,
-    issue_matching_token,
-    make_claims_for_intent,
-    make_intent,
-)
+from windbreak.order_gateway.state_machine import OrderState
+from windbreak.order_gateway.tokens import VerifyResult
+from windbreak.riskkernel.signing import SigningKeyHandle
+from windbreak.riskkernel.tokens import TokenIssuer
+from windbreak.tokens.verify import InMemorySingleUseRegistry
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from hedgekit.connector.paper import PaperExchange
-    from hedgekit.riskkernel.checks import OrderIntent
-    from hedgekit.tokens.verify import SignedApprovalToken
+    from windbreak.connector.paper import PaperExchange
+    from windbreak.riskkernel.checks import OrderIntent
+    from windbreak.tokens.verify import SignedApprovalToken
 
 #: The environment variable the Order Gateway CLI is expected to read its
 #: verification key from -- the *same* variable name
-#: `hedgekit.riskkernel.signing.SigningKeyHandle.from_env` already uses on
+#: `windbreak.riskkernel.signing.SigningKeyHandle.from_env` already uses on
 #: the signing side, since SPEC S10.6 approval tokens are symmetric (the same
 #: 32 bytes sign and verify). Judgment call (issue #37's plan pins `main`'s
 #: signature but not its internal key-loading source): flagged in the
 #: handoff.
-_KEY_ENV_VAR = "HEDGEKIT_APPROVAL_TOKEN_KEY"
+_KEY_ENV_VAR = "WINDBREAK_APPROVAL_TOKEN_KEY"
 
 
 class _SpySubmitter:
@@ -470,7 +470,7 @@ def test_main_bounded_run_exits_zero(monkeypatch: pytest.MonkeyPatch) -> None:
     Judgment call: `main`'s internal key-loading source is not pinned by
     issue #37's plan (only `build_parser`'s two options are), so this test
     sets the same environment variable `SigningKeyHandle.from_env` already
-    reads on the signing side (`HEDGEKIT_APPROVAL_TOKEN_KEY`) in case `main`
+    reads on the signing side (`WINDBREAK_APPROVAL_TOKEN_KEY`) in case `main`
     mirrors it -- harmless if the implementation sources the key another way.
     """
     monkeypatch.setenv(_KEY_ENV_VAR, KEY_MATERIAL.hex())
@@ -481,17 +481,17 @@ def test_main_bounded_run_exits_zero(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_order_gateway_dunder_main_module_imports_cleanly() -> None:
-    """`python -m hedgekit.order_gateway`'s entry module imports without
+    """`python -m windbreak.order_gateway`'s entry module imports without
     error, for in-process coverage of the delegation to `gateway.main`.
     """
-    module = importlib.import_module("hedgekit.order_gateway.__main__")
+    module = importlib.import_module("windbreak.order_gateway.__main__")
 
     assert module is not None
 
 
 @pytest.mark.timeout(30)
 def test_order_gateway_module_invocation_smoke_via_subprocess() -> None:
-    """`python -m hedgekit.order_gateway --max-beats 2 --heartbeat-interval 0`
+    """`python -m windbreak.order_gateway --max-beats 2 --heartbeat-interval 0`
     exits 0. Bounded via both `--max-beats` and a hard subprocess `timeout=`
     -- never an unbounded wait.
     """
@@ -502,7 +502,7 @@ def test_order_gateway_module_invocation_smoke_via_subprocess() -> None:
         [
             sys.executable,
             "-m",
-            "hedgekit.order_gateway",
+            "windbreak.order_gateway",
             "--max-beats",
             "2",
             "--heartbeat-interval",

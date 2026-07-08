@@ -1,0 +1,10 @@
+[Unit]
+Description=windbreak dashboard process (SPEC Process D)
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/env windbreak run --process dashboard
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

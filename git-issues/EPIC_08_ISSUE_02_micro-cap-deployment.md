@@ -1,6 +1,6 @@
 ## Role
 
-You are a senior Python engineer with trading-systems risk-control experience, working across this repo's `hedgekit/riskkernel/` and `hedgekit/order_gateway/` packages (Python ≥3.11, mypy --strict).
+You are a senior Python engineer with trading-systems risk-control experience, working across this repo's `windbreak/riskkernel/` and `windbreak/order_gateway/` packages (Python ≥3.11, mypy --strict).
 
 ## Goal
 
@@ -12,13 +12,13 @@ LIVE_MICRO mode deploys real capital against production APIs while total deploye
 - **Predecessor issue(s):** #56 (must be merged first — LIVE_MICRO must be unreachable unless preflight passes).
 - **SPEC section:** `plans/SPEC_v3.md` §10.2 ("LIVE_MICRO caps deployed capital at `micro_cap_micros` regardless of all other settings"), §10.8 (human-ack thresholds), §10.9 (PAPER→LIVE_MICRO gate — including the ledgered-override path that caps the system at LIVE_MICRO permanently), §15 (Network: outbound allowlist only), §16 (`capital.micro_cap_micros`, `risk.require_human_ack_above_micros`).
 - **Files involved:**
-  - `hedgekit/riskkernel/` — micro-cap check in the per-order check list (§10.3); human-ack hold state; mode-transition wiring.
-  - `hedgekit/order_gateway/` — refuse submission while a required ack is pending or lapsed.
-  - `hedgekit/net/` (or the existing HTTP client layer) — outbound allowlist enforcement at the client-construction boundary.
-  - `hedgekit/dashboard/`, CLI — ack surfaces (§10.8: dashboard or CLI; ack events ledgered).
+  - `windbreak/riskkernel/` — micro-cap check in the per-order check list (§10.3); human-ack hold state; mode-transition wiring.
+  - `windbreak/order_gateway/` — refuse submission while a required ack is pending or lapsed.
+  - `windbreak/net/` (or the existing HTTP client layer) — outbound allowlist enforcement at the client-construction boundary.
+  - `windbreak/dashboard/`, CLI — ack surfaces (§10.8: dashboard or CLI; ack events ledgered).
   - `tests/riskkernel/`, `tests/gateway/` — property + fixture tests.
 - **Prior decisions:** all money math is fixed-point integers (§6.1) — the cap comparison is integer arithmetic with conservative rounding (§17.3). The Kernel is single-writer over reservations (§10.5): the micro-cap check must be computed inside the same serialized reservation path, or T4-style races reappear.
-- **State of the world:** `hedgekit preflight` exists (issue 01). Mode state machine, floor checks, reservations, and tokens exist from EPIC_04; the Gateway from EPIC_05. LIVE_MICRO is defined in the mode enum but nothing enforces the micro cap or human-ack in a live setting yet.
+- **State of the world:** `windbreak preflight` exists (issue 01). Mode state machine, floor checks, reservations, and tokens exist from EPIC_04; the Gateway from EPIC_05. LIVE_MICRO is defined in the mode enum but nothing enforces the micro cap or human-ack in a live setting yet.
 
 ## Output Format
 

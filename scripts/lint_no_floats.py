@@ -4,7 +4,7 @@
 This tool backs SPEC S6.1: the money/price/probability packages must never
 contain a float literal, a ``float`` annotation (including forward-ref string
 annotations), a true-division operator, or a ``float(...)`` cast. Only integer
-arithmetic and hedgekit's sanctioned scaled-integer types are allowed there.
+arithmetic and windbreak's sanctioned scaled-integer types are allowed there.
 
 Emitted violation codes:
     * ``FLOAT-001`` -- float literal, e.g. ``x = 1.5``.
@@ -16,7 +16,7 @@ Emitted violation codes:
 
 The guarded packages live in :data:`DENYLISTED_PACKAGES`. Later epics extend the
 money path by appending their package prefixes (relative to the repo root) to
-that tuple -- e.g. a future ``hedgekit/settlement`` -- and the full-scan mode
+that tuple -- e.g. a future ``windbreak/settlement`` -- and the full-scan mode
 picks them up automatically.
 
 Usage:
@@ -41,28 +41,28 @@ if TYPE_CHECKING:
 #: Package prefixes (relative to the repo root) guarded against floats. Later
 #: epics append their own money-path packages here; full-scan mode globs
 #: ``**/*.py`` under each one that exists. Issue #16 extends the path with the
-#: exchange-facing ``hedgekit/connector`` (prices, quantities, balances) and
-#: ``hedgekit/screener`` (eligibility decisions derived from those values).
+#: exchange-facing ``windbreak/connector`` (prices, quantities, balances) and
+#: ``windbreak/screener`` (eligibility decisions derived from those values).
 #: Issue #22 extends the path with the probability/money-bearing
-#: ``hedgekit/forecast`` package (probability_ppm, research_cost_micros, ...).
-#: Issue #31 extends the path with the shared ``hedgekit/tokens`` package, whose
+#: ``windbreak/forecast`` package (probability_ppm, research_cost_micros, ...).
+#: Issue #31 extends the path with the shared ``windbreak/tokens`` package, whose
 #: approval-token claims carry money-bearing fields (max_fee_micros, ...).
-#: Issue #43 extends the path with the ``hedgekit/selector`` package, whose
+#: Issue #43 extends the path with the ``windbreak/selector`` package, whose
 #: decisions carry price/size/notional/probability intents (SPEC S9.1).
-#: Issue #48 extends the path with the ``hedgekit/scheduler`` package, the
+#: Issue #48 extends the path with the ``windbreak/scheduler`` package, the
 #: always-on PAPER composition root, whose tick computes equity/positions in
 #: scaled-integer micros/centis (SPEC S6.1) -- a strengthening of the gate over
 #: the new money-handling package, never a weakening.
 DENYLISTED_PACKAGES: tuple[str, ...] = (
-    "hedgekit/numeric",
-    "hedgekit/ledger",
-    "hedgekit/riskkernel",
-    "hedgekit/connector",
-    "hedgekit/screener",
-    "hedgekit/forecast",
-    "hedgekit/tokens",
-    "hedgekit/selector",
-    "hedgekit/scheduler",
+    "windbreak/numeric",
+    "windbreak/ledger",
+    "windbreak/riskkernel",
+    "windbreak/connector",
+    "windbreak/screener",
+    "windbreak/forecast",
+    "windbreak/tokens",
+    "windbreak/selector",
+    "windbreak/scheduler",
 )
 
 FLOAT_LITERAL_CODE = "FLOAT-001"

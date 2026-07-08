@@ -1,4 +1,4 @@
-"""Tests for hedgekit.logging_setup (issue #14): structured, redacted logs.
+"""Tests for windbreak.logging_setup (issue #14): structured, redacted logs.
 
 `configure_logging` installs a process-wide StreamHandler carrying a
 `JsonFormatter` and a `RedactionFilter`. These tests pin two independent
@@ -10,9 +10,9 @@ contracts:
 2. Nothing that looks like a secret -- either by key name (the denylist) or
    by value shape (an `sk-...` token or a `Bearer ...` header) -- ever
    reaches that stream in the clear, on *any* logger under the root, not
-   just `hedgekit` itself.
+   just `windbreak` itself.
 
-None of `hedgekit.logging_setup`'s public names exist yet, so importing
+None of `windbreak.logging_setup`'s public names exist yet, so importing
 this module fails at collection with `ModuleNotFoundError` -- the expected
 RED state for issue #14's Gate 1.
 """
@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from hedgekit.logging_setup import (
+from windbreak.logging_setup import (
     DENYLIST_KEY_TOKENS,
     REDACTED,
     JsonFormatter,
@@ -233,7 +233,7 @@ class TestConfigureLogging:
         stream = io.StringIO()
         configure_logging(stream=stream)
 
-        logging.getLogger("hedgekit.test").info("hello world")
+        logging.getLogger("windbreak.test").info("hello world")
 
         lines = [line for line in stream.getvalue().splitlines() if line]
         assert len(lines) == 1
@@ -246,7 +246,7 @@ class TestConfigureLogging:
         stream = io.StringIO()
         configure_logging(stream=stream)
 
-        logging.getLogger("hedgekit.test").info("x")
+        logging.getLogger("windbreak.test").info("x")
 
         payload = _first_payload(stream.getvalue())
         assert _ISO_UTC_MICROS.match(payload["ts"])
@@ -258,10 +258,10 @@ class TestConfigureLogging:
         stream = io.StringIO()
         configure_logging(stream=stream)
 
-        logging.getLogger("hedgekit.test").info("hi")
+        logging.getLogger("windbreak.test").info("hi")
 
         payload = _first_payload(stream.getvalue())
-        assert payload["component"] == "hedgekit.test"
+        assert payload["component"] == "windbreak.test"
 
     def test_component_extra_overrides_logger_name(
         self, restore_logging_state: None
@@ -270,7 +270,7 @@ class TestConfigureLogging:
         stream = io.StringIO()
         configure_logging(stream=stream)
 
-        logging.getLogger("hedgekit.test").info("hi", extra={"component": "config"})
+        logging.getLogger("windbreak.test").info("hi", extra={"component": "config"})
 
         payload = _first_payload(stream.getvalue())
         assert payload["component"] == "config"
@@ -281,7 +281,7 @@ class TestConfigureLogging:
         """Records below the configured level are dropped entirely."""
         stream = io.StringIO()
         configure_logging(level=logging.WARNING, stream=stream)
-        logger = logging.getLogger("hedgekit.test")
+        logger = logging.getLogger("windbreak.test")
 
         logger.info("hidden")
         logger.warning("shown")
@@ -296,7 +296,7 @@ class TestConfigureLogging:
         """Omitting `stream` writes JSON lines to `sys.stderr`."""
         configure_logging()
 
-        logging.getLogger("hedgekit.test").info("hi")
+        logging.getLogger("windbreak.test").info("hi")
 
         captured = capsys.readouterr()
         payload = _first_payload(captured.err)
@@ -309,7 +309,7 @@ class TestConfigureLogging:
         stream = io.StringIO()
         configure_logging(stream=stream)
 
-        logging.getLogger("hedgekit.test").info(
+        logging.getLogger("windbreak.test").info(
             "auth attempt",
             extra={
                 "llm_api_key": "sk-secret123456",
@@ -334,7 +334,7 @@ class TestConfigureLogging:
         stream = io.StringIO()
         configure_logging(stream=stream)
 
-        logging.getLogger("hedgekit.test").info(
+        logging.getLogger("windbreak.test").info(
             "resp",
             extra={
                 "response": {
@@ -372,7 +372,7 @@ class TestConfigureLogging:
         stream = io.StringIO()
         configure_logging(stream=stream)
 
-        logging.getLogger("hedgekit.test").info(
+        logging.getLogger("windbreak.test").info(
             "headers",
             extra={
                 "headers": ["Bearer xyz123456", "sk-ABCDEFGH12345", "plain"],
@@ -395,7 +395,7 @@ class TestConfigureLogging:
         stream = io.StringIO()
         configure_logging(stream=stream)
 
-        logging.getLogger("hedgekit.test").info(
+        logging.getLogger("windbreak.test").info(
             "usage", extra={"prompt_tokens": 1500, "author": "Ada"}
         )
 
@@ -413,7 +413,7 @@ class TestConfigureLogging:
         stream = io.StringIO()
         configure_logging(stream=stream)
 
-        logging.getLogger("hedgekit.test").info("key is %s", "sk-ABCDEF12345678")
+        logging.getLogger("windbreak.test").info("key is %s", "sk-ABCDEF12345678")
 
         raw = stream.getvalue()
         payload = _first_payload(raw)
@@ -427,7 +427,7 @@ class TestConfigureLogging:
         stream = io.StringIO()
         configure_logging(stream=stream)
 
-        logging.getLogger("hedgekit.test").info("Authorization: Bearer eyJtoken")
+        logging.getLogger("windbreak.test").info("Authorization: Bearer eyJtoken")
 
         raw = stream.getvalue()
         payload = _first_payload(raw)
@@ -442,7 +442,7 @@ class TestConfigureLogging:
         configure_logging(stream=stream)
         original = "uses sk-XYZ12345678"
 
-        logging.getLogger("hedgekit.test").info("note test", extra={"note": original})
+        logging.getLogger("windbreak.test").info("note test", extra={"note": original})
 
         raw = stream.getvalue()
         payload = _first_payload(raw)
@@ -452,11 +452,11 @@ class TestConfigureLogging:
     def test_redacts_records_from_child_loggers_via_root_handler(
         self, restore_logging_state: None
     ) -> None:
-        """Redaction applies process-wide, not only to the `hedgekit` logger."""
+        """Redaction applies process-wide, not only to the `windbreak` logger."""
         stream = io.StringIO()
         configure_logging(stream=stream)
 
-        logging.getLogger("hedgekit.some.child").info("token=sk-CHILD12345678")
+        logging.getLogger("windbreak.some.child").info("token=sk-CHILD12345678")
 
         raw = stream.getvalue()
         assert "sk-CHILD12345678" not in raw
@@ -469,7 +469,7 @@ class TestConfigureLogging:
         stream = io.StringIO()
         configure_logging(stream=stream)
 
-        logging.getLogger("hedgekit.test").info(
+        logging.getLogger("windbreak.test").info(
             "order placed", extra={"order_id": "abc123", "count": 3}
         )
 
@@ -483,7 +483,7 @@ class TestConfigureLogging:
         """`logger.exception` yields valid JSON with a redacted `exc_info`."""
         stream = io.StringIO()
         configure_logging(stream=stream)
-        logger = logging.getLogger("hedgekit.test")
+        logger = logging.getLogger("windbreak.test")
 
         try:
             raise ValueError("token leak sk-TRACE1234567")

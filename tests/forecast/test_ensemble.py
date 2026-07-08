@@ -1,12 +1,12 @@
-"""Tests for hedgekit.forecast.ensemble (issue #25): SPEC S8.6 vote aggregation.
+"""Tests for windbreak.forecast.ensemble (issue #25): SPEC S8.6 vote aggregation.
 
 Pins `aggregate_votes`'s integer median (exclusive-median floor-on-ties
 rounding), its exclusive-median (Moore-McCabe) IQR dispersion (Q1 rounds
 down, Q3 rounds up -- a risk-widening convention), its min/max confidence
 bounds, its unpinned-provenance guard, and `VoteAggregate`'s immutability.
-`hedgekit/forecast/ensemble.py` does not exist yet, so importing
-`hedgekit.forecast.ensemble` fails collection with
-`ModuleNotFoundError: No module named 'hedgekit.forecast.ensemble'` -- the
+`windbreak/forecast/ensemble.py` does not exist yet, so importing
+`windbreak.forecast.ensemble` fails collection with
+`ModuleNotFoundError: No module named 'windbreak.forecast.ensemble'` -- the
 expected Gate 1 RED state for issue #25.
 """
 
@@ -18,8 +18,8 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from hedgekit.forecast.ensemble import VoteAggregate, aggregate_votes
-from hedgekit.forecast.records import ModelVote
+from windbreak.forecast.ensemble import VoteAggregate, aggregate_votes
+from windbreak.forecast.records import ModelVote
 
 #: Ppm domain bound shared by every probability field under test.
 _MAX_PPM = 1_000_000

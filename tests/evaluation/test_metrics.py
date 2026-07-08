@@ -1,9 +1,9 @@
-"""Failing-first tests for `hedgekit.evaluation.metrics` and
-`hedgekit.evaluation.power` (issue #51, RED; SPEC-EPIC_07 S13.5).
+"""Failing-first tests for `windbreak.evaluation.metrics` and
+`windbreak.evaluation.power` (issue #51, RED; SPEC-EPIC_07 S13.5).
 
-`hedgekit.evaluation.metrics` and `hedgekit.evaluation.power` do not exist yet,
+`windbreak.evaluation.metrics` and `windbreak.evaluation.power` do not exist yet,
 so every test below fails collection/execution with `ModuleNotFoundError: No
-module named 'hedgekit.evaluation.metrics'` (or `'...power'`) -- the expected
+module named 'windbreak.evaluation.metrics'` (or `'...power'`) -- the expected
 Gate 1 RED state for issue #51.
 
 Pins SPEC S13.5's forecast-track statistical machinery:
@@ -15,7 +15,7 @@ Pins SPEC S13.5's forecast-track statistical machinery:
   forecasts never enter a headline metric).
 - Rich (non-scalar) reports `reliability_diagram`, `price_bucket_report`,
   `edge_bucket_report` -- each `(inputs, *, window) -> tuple[...]`.
-- The power-analysis document (`hedgekit.evaluation.power.power_analysis`),
+- The power-analysis document (`windbreak.evaluation.power.power_analysis`),
   which this file also covers per the issue's file fence ("power tests live
   here, not a new file").
 
@@ -34,13 +34,13 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from hedgekit.evaluation import (
+from windbreak.evaluation import (
     EvaluationInputs,
     FixtureForecast,
     ObservationWindow,
     ResolutionOutcome,
 )
-from hedgekit.numeric.types import ProbabilityPpm
+from windbreak.numeric.types import ProbabilityPpm
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -96,7 +96,7 @@ def _load_fixture() -> dict[str, Any]:
 def _forecast_from_entry(entry: Mapping[str, Any]) -> FixtureForecast:
     """Build a `FixtureForecast` from one raw fixture forecast entry.
 
-    Duplicated locally (rather than imported from `hedgekit.evaluation.report`)
+    Duplicated locally (rather than imported from `windbreak.evaluation.report`)
     to keep this suite import-isolated, matching `test_baselines.py`'s
     established convention of local, non-cross-test-module helpers.
 
@@ -205,7 +205,7 @@ def test_mean_brier_matches_hand_computation_on_synthetic_fixture() -> None:
     mean over 10 is 0.078, scaled to ppm is 78_000 -- an exact division (no
     remainder), so OVERSTATE_COST and UNDERSTATE_EQUITY agree here.
     """
-    from hedgekit.evaluation.metrics import mean_brier
+    from windbreak.evaluation.metrics import mean_brier
 
     result = mean_brier(_synthetic_inputs(), window=_WINDOW)
 
@@ -224,7 +224,7 @@ def test_mean_brier_is_always_within_zero_to_one_million_ppm(
     rows: list[tuple[int, bool]],
 ) -> None:
     """`mean_brier` is bounded in `[0, 1_000_000]` for any resolved inputs."""
-    from hedgekit.evaluation.metrics import mean_brier
+    from windbreak.evaluation.metrics import mean_brier
 
     forecasts = tuple(
         _forecast(
@@ -251,7 +251,7 @@ def test_mean_brier_raises_value_error_on_empty_resolved_set() -> None:
     naming the empty/resolved condition -- a headline metric must never be
     silently computed over zero observations (S13.6).
     """
-    from hedgekit.evaluation.metrics import mean_brier
+    from windbreak.evaluation.metrics import mean_brier
 
     unresolved_only = EvaluationInputs(
         forecasts=(
@@ -274,7 +274,7 @@ def test_mean_brier_excludes_forecasts_with_no_matching_resolution() -> None:
     metric (S13.6): adding one alongside a resolved forecast leaves the
     result identical to computing over the resolved forecast alone.
     """
-    from hedgekit.evaluation.metrics import mean_brier
+    from windbreak.evaluation.metrics import mean_brier
 
     resolved_only = EvaluationInputs(
         forecasts=(
@@ -318,7 +318,7 @@ def test_mean_log_score_matches_hand_computation_on_synthetic_fixture() -> None:
     deterministic integer `_ln` reproduces this exactly, so it is an exact
     known-answer pin, not a tolerance band.
     """
-    from hedgekit.evaluation.metrics import mean_log_score
+    from windbreak.evaluation.metrics import mean_log_score
 
     result = mean_log_score(_synthetic_inputs(), window=_WINDOW)
 
@@ -332,7 +332,7 @@ def test_mean_log_score_raises_value_error_on_certain_wrong_yes_forecast() -> No
     is undefined, so `mean_log_score` must raise `ValueError` rather than
     silently return `inf` or crash with an unrelated exception.
     """
-    from hedgekit.evaluation.metrics import mean_log_score
+    from windbreak.evaluation.metrics import mean_log_score
 
     inputs = EvaluationInputs(
         forecasts=(
@@ -355,7 +355,7 @@ def test_mean_log_score_raises_value_error_on_certain_wrong_no_forecast() -> Non
     certain-and-wrong: `-ln(1-1)` is undefined, so `mean_log_score` must
     raise `ValueError`.
     """
-    from hedgekit.evaluation.metrics import mean_log_score
+    from windbreak.evaluation.metrics import mean_log_score
 
     inputs = EvaluationInputs(
         forecasts=(
@@ -396,7 +396,7 @@ def test_brier_skill_matches_hand_computation_on_synthetic_fixture() -> None:
     (UNDERSTATE_EQUITY floors toward -infinity, so -49_374.41 floors to the
     more-negative -49_375).
     """
-    from hedgekit.evaluation.metrics import brier_skill
+    from windbreak.evaluation.metrics import brier_skill
 
     result = brier_skill(_synthetic_inputs(), window=_WINDOW)
 
@@ -428,7 +428,7 @@ def test_brier_skill_of_executable_baseline_against_itself_is_exactly_zero(
     term strictly positive (`(p-o)^2 > 0` for `p` in `(0, 1)`), so the
     baseline-term sum can never be zero.
     """
-    from hedgekit.evaluation.metrics import brier_skill
+    from windbreak.evaluation.metrics import brier_skill
 
     forecasts = tuple(
         _forecast(
@@ -501,7 +501,7 @@ def test_expected_calibration_error_is_zero_on_perfectly_calibrated_set() -> Non
     frequency: bin 0 (p=0, 0/1 yes -> freq 0) diff 0; bin 5 (p=0.5, 1/2 yes ->
     freq 500_000) diff 0; bin 9 (p=1.0, 1/1 yes -> freq 1_000_000) diff 0.
     """
-    from hedgekit.evaluation.metrics import expected_calibration_error
+    from windbreak.evaluation.metrics import expected_calibration_error
 
     result = expected_calibration_error(_CALIBRATED_INPUTS, window=_WINDOW)
 
@@ -519,7 +519,7 @@ def test_calibration_slope_and_intercept_are_one_and_zero_on_calibrated_set() ->
     p-deviations) = 0.25 + 0.25 + 0 + 0 = 0.5. slope = 0.5 / 0.5 = 1.0 exactly
     -> 1_000_000 ppm. intercept = obar - slope * pbar = 0.5 - 1*0.5 = 0.
     """
-    from hedgekit.evaluation.metrics import (
+    from windbreak.evaluation.metrics import (
         calibration_intercept,
         calibration_slope,
     )
@@ -537,7 +537,7 @@ def test_sharpness_matches_hand_computed_variance_on_calibrated_set() -> None:
     squared deviations are (250_000_000_000, 250_000_000_000, 0, 0), summing
     to 5e11; divided by (n * 1e6 = 4_000_000) gives exactly 125_000 ppm.
     """
-    from hedgekit.evaluation.metrics import sharpness
+    from windbreak.evaluation.metrics import sharpness
 
     result = sharpness(_CALIBRATED_INPUTS, window=_WINDOW)
 
@@ -549,7 +549,7 @@ def test_calibration_slope_raises_value_error_on_zero_variance() -> None:
     OLS slope is undefined: `calibration_slope` must raise `ValueError`
     rather than divide by zero silently or crash with `ZeroDivisionError`.
     """
-    from hedgekit.evaluation.metrics import calibration_slope
+    from windbreak.evaluation.metrics import calibration_slope
 
     inputs = EvaluationInputs(
         forecasts=(
@@ -585,7 +585,7 @@ def test_reliability_diagram_has_ten_contiguous_equal_width_bins() -> None:
     """`reliability_diagram` always returns exactly 10 bins, each spanning
     100_000 ppm, contiguous from 0 to 1_000_000.
     """
-    from hedgekit.evaluation.metrics import reliability_diagram
+    from windbreak.evaluation.metrics import reliability_diagram
 
     bins = reliability_diagram(_CALIBRATED_INPUTS, window=_WINDOW)
 
@@ -601,7 +601,7 @@ def test_reliability_diagram_populated_bins_match_hand_computation() -> None:
     500_000), and bin 9 holds the single p=1.0 forecast (1/1 yes -> freq
     1_000_000); every other bin is empty. Bin index is `min(p//100_000, 9)`.
     """
-    from hedgekit.evaluation.metrics import reliability_diagram
+    from windbreak.evaluation.metrics import reliability_diagram
 
     bins = reliability_diagram(_CALIBRATED_INPUTS, window=_WINDOW)
     by_index = dict(enumerate(bins))
@@ -678,7 +678,7 @@ def test_price_bucket_report_has_ten_thousand_pip_wide_deciles() -> None:
     """`price_bucket_report` always returns 10 buckets of 1_000 pips each,
     contiguous from 0 to 10_000 pips.
     """
-    from hedgekit.evaluation.metrics import price_bucket_report
+    from windbreak.evaluation.metrics import price_bucket_report
 
     buckets = price_bucket_report(_PRICE_BUCKET_INPUTS, window=_WINDOW)
 
@@ -705,7 +705,7 @@ def test_price_bucket_report_matches_hand_computation() -> None:
         10_000 ppm. PnL (traded): 1*10_000 - 9_500 = 500.
     All other buckets are empty (count=0).
     """
-    from hedgekit.evaluation.metrics import price_bucket_report
+    from windbreak.evaluation.metrics import price_bucket_report
 
     buckets = price_bucket_report(_PRICE_BUCKET_INPUTS, window=_WINDOW)
     by_index = dict(enumerate(buckets))
@@ -788,7 +788,7 @@ def test_edge_bucket_report_has_six_symmetric_buckets() -> None:
     """The six symmetric edge-bucket boundaries are `(-1_000_000, -100_000,
     -50_000, 0, 50_000, 100_000, 1_000_000)`.
     """
-    from hedgekit.evaluation.metrics import edge_bucket_report
+    from windbreak.evaluation.metrics import edge_bucket_report
 
     boundaries = (-1_000_000, -100_000, -50_000, 0, 50_000, 100_000, 1_000_000)
     buckets = edge_bucket_report(_EDGE_BUCKET_INPUTS, window=_WINDOW)
@@ -818,7 +818,7 @@ def test_edge_bucket_report_matches_hand_computation() -> None:
     The remaining two buckets ([-1_000_000,-100_000) and [50_000,100_000))
     are empty.
     """
-    from hedgekit.evaluation.metrics import edge_bucket_report
+    from windbreak.evaluation.metrics import edge_bucket_report
 
     buckets = edge_bucket_report(_EDGE_BUCKET_INPUTS, window=_WINDOW)
     by_index = dict(enumerate(buckets))
@@ -856,7 +856,7 @@ def test_edge_bucket_report_matches_hand_computation() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 8. power_analysis (hedgekit.evaluation.power) -- lives here per the file
+# 8. power_analysis (windbreak.evaluation.power) -- lives here per the file
 #    fence in this issue's instructions, not in a separate test_power.py.
 # ---------------------------------------------------------------------------
 
@@ -865,7 +865,7 @@ def test_power_analysis_module_constants_have_the_documented_defaults() -> None:
     """`POWER_TARGET_N` is 300 and `POWER_TARGET_PPM` is 800_000 (80%
     power), the documented default target sample size and power level.
     """
-    from hedgekit.evaluation.power import POWER_TARGET_N, POWER_TARGET_PPM
+    from windbreak.evaluation.power import POWER_TARGET_N, POWER_TARGET_PPM
 
     assert POWER_TARGET_N == 300
     assert POWER_TARGET_PPM == 800_000
@@ -877,7 +877,7 @@ def test_power_analysis_returns_positive_min_detectable_skill() -> None:
     minimum detectable effect size at the target sample size is a meaningful
     positive threshold, never zero or negative.
     """
-    from hedgekit.evaluation.power import power_analysis
+    from windbreak.evaluation.power import power_analysis
 
     result = power_analysis(_synthetic_inputs(), seed=7, window=_WINDOW)
 
@@ -890,7 +890,7 @@ def test_power_analysis_is_deterministic_for_a_fixed_seed() -> None:
     """Two calls with identical inputs and seed produce byte-identical
     results (SPEC S3.5: identical inputs + seed -> identical output).
     """
-    from hedgekit.evaluation.power import power_analysis
+    from windbreak.evaluation.power import power_analysis
 
     first = power_analysis(_synthetic_inputs(), seed=99, window=_WINDOW)
     second = power_analysis(_synthetic_inputs(), seed=99, window=_WINDOW)
@@ -903,7 +903,7 @@ def test_power_analysis_render_text_contains_mde_and_seed() -> None:
     effect integer and the seed used to produce it, so a report reader can
     audit reproducibility without re-running the analysis.
     """
-    from hedgekit.evaluation.power import power_analysis
+    from windbreak.evaluation.power import power_analysis
 
     result = power_analysis(_synthetic_inputs(), seed=42, window=_WINDOW)
     text = result.render_text()
@@ -916,7 +916,7 @@ def test_power_analysis_rejects_confidence_ppm_outside_open_unit_interval() -> N
     """A `confidence_ppm` of `0` or `1_000_000` (the closed boundary) is
     rejected: a confidence level must be strictly between 0% and 100%.
     """
-    from hedgekit.evaluation.power import power_analysis
+    from windbreak.evaluation.power import power_analysis
 
     with pytest.raises(ValueError, match="confidence_ppm"):
         power_analysis(_synthetic_inputs(), seed=1, confidence_ppm=0, window=_WINDOW)
@@ -933,7 +933,7 @@ def test_run_evaluation_report_includes_power_section() -> None:
     the full report text, and is reproducible across repeated runs against
     the same fixture (SPEC S3.5: fixed module seed constant).
     """
-    from hedgekit.evaluation import run_evaluation
+    from windbreak.evaluation import run_evaluation
 
     first_report = run_evaluation(fixture_path=SYNTHETIC_FIXTURE)
     second_report = run_evaluation(fixture_path=SYNTHETIC_FIXTURE)

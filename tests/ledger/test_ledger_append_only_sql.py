@@ -25,7 +25,7 @@ _FORBIDDEN_SQL_TOKENS = ("UPDATE", "DELETE", "REPLACE", "DROP")
 #: skipped by an empty glob result.
 _LEDGER_SOURCE_FILENAMES = ("__init__.py", "events.py", "store.py", "rebuild.py")
 
-_LEDGER_PACKAGE_DIR = Path(__file__).resolve().parents[2] / "hedgekit" / "ledger"
+_LEDGER_PACKAGE_DIR = Path(__file__).resolve().parents[2] / "windbreak" / "ledger"
 
 
 def _ledger_source_paths() -> list[Path]:

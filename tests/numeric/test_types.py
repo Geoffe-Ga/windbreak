@@ -1,4 +1,4 @@
-"""Failing-first tests for hedgekit.numeric.types (issue #12, SPEC S6.1).
+"""Failing-first tests for windbreak.numeric.types (issue #12, SPEC S6.1).
 
 Pins the four frozen int-wrapper value types -- PricePips (1e-4
 payout-dollars), ContractCentis (1e-2 contracts), MoneyMicros (1e-6
@@ -25,8 +25,8 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from hedgekit.numeric.rounding import RoundingDirection
-from hedgekit.numeric.types import (
+from windbreak.numeric.rounding import RoundingDirection
+from windbreak.numeric.types import (
     ContractCentis,
     MoneyMicros,
     PricePips,

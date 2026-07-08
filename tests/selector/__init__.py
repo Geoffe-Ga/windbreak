@@ -1,1 +1,1 @@
-"""Tests for hedgekit.selector (issue #43)."""
+"""Tests for windbreak.selector (issue #43)."""

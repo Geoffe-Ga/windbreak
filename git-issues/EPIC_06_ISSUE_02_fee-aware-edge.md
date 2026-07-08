@@ -1,6 +1,6 @@
 ## Role
 
-You are a senior Python engineer with market-microstructure experience, working in this repo's `hedgekit/selector/` package on fixed-point financial arithmetic.
+You are a senior Python engineer with market-microstructure experience, working in this repo's `windbreak/selector/` package on fixed-point financial arithmetic.
 
 ## Goal
 
@@ -12,9 +12,9 @@ You are a senior Python engineer with market-microstructure experience, working 
 - **Predecessor issue(s):** #43 (must be merged first — provides `SelectorInputs`/`SelectorDecision` and the determinism harness)
 - **SPEC section:** `plans/SPEC_v3.md` §9.2 (fee-aware executable edge), §9.3 (entry conditions, all required), §2 (why fees/microstructure are first-class), §16 `risk:` keys `min_net_edge_ppm`, `annualized_hurdle_ppm`, `idle_cash_apr_ppm`
 - **Files involved:**
-  - `hedgekit/selector/edge.py` — book-walking and edge arithmetic (new)
-  - `hedgekit/selector/entry.py` — §9.3 entry-condition evaluation returning a per-condition pass/fail record (new)
-  - `hedgekit/selector/__init__.py` — `select()` calls edge → entry conditions → (still-stubbed sizing)
+  - `windbreak/selector/edge.py` — book-walking and edge arithmetic (new)
+  - `windbreak/selector/entry.py` — §9.3 entry-condition evaluation returning a per-condition pass/fail record (new)
+  - `windbreak/selector/__init__.py` — `select()` calls edge → entry conditions → (still-stubbed sizing)
   - `tests/selector/test_edge.py`, `tests/selector/test_entry_conditions.py`
 - **Prior decisions:** all arithmetic in fixed-point integer units (§6.1) with rounding always conservative — overstate cost, understate edge. The annualization hurdle is compared net of `idle_cash_apr_ppm` so trades must beat parked capital, not zero (§9.2). Freshness is judged from timestamps carried in `SelectorInputs`, never a live clock read.
 - **State of the world:** `select()` is a stub returning zero intents with reasons; the golden harness exists and must keep passing.
@@ -23,8 +23,8 @@ You are a senior Python engineer with market-microstructure experience, working 
 
 Deliverable is a single PR containing:
 
-- [ ] `hedgekit/selector/edge.py`: walk the book's asks (for YES buys) / bids side to the proposed size, accumulating executable cost level by level; fail with an explicit reason if depth is insufficient; compute all five edge figures
-- [ ] `hedgekit/selector/entry.py`: every §9.3 condition — `net_edge ≥ min_net_edge`, annualized return ≥ hurdle net of idle-cash yield, forecast CI does not straddle the executable price, quote/forecast/fee-model freshness, market eligibility (jurisdiction, category, coherence, citation support), price bands (band values consumed here, enforcement logic may be a stub until #46), `forecast.eligible_for_live` for live modes — each producing a named pass/fail entry in `SelectorDecision.reasons`
+- [ ] `windbreak/selector/edge.py`: walk the book's asks (for YES buys) / bids side to the proposed size, accumulating executable cost level by level; fail with an explicit reason if depth is insufficient; compute all five edge figures
+- [ ] `windbreak/selector/entry.py`: every §9.3 condition — `net_edge ≥ min_net_edge`, annualized return ≥ hurdle net of idle-cash yield, forecast CI does not straddle the executable price, quote/forecast/fee-model freshness, market eligibility (jurisdiction, category, coherence, citation support), price bands (band values consumed here, enforcement logic may be a stub until #46), `forecast.eligible_for_live` for live modes — each producing a named pass/fail entry in `SelectorDecision.reasons`
 - [ ] Tests: hand-computed edge fixtures (book + fees → expected edges, computed in the test by hand, not by calling the code under test); negative tests for each failed entry condition
 - [ ] No drive-by changes unrelated to the goal
 

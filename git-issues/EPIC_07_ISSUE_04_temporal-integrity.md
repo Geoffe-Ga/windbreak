@@ -1,6 +1,6 @@
 ## Role
 
-You are a senior Python engineer with an adversarial-QA mindset, working in this repo's `hedgekit/evaluation/` package (mypy --strict). Your job is to make training-data leakage into gate metrics structurally impossible.
+You are a senior Python engineer with an adversarial-QA mindset, working in this repo's `windbreak/evaluation/` package (mypy --strict). Your job is to make training-data leakage into gate metrics structurally impossible.
 
 ## Goal
 
@@ -12,8 +12,8 @@ The evaluation package rejects, at ingestion, any forecast record whose `created
 - **Predecessor issue(s):** #50 (must be merged first — needs real resolution timestamps). Parallel-safe with #51.
 - **SPEC section:** `plans/SPEC_v3.md` §1.1-6 (temporal integrity invariant), §8.6 ("the evaluation package must reject any record whose `created_at` postdates question resolution or predates system deployment"), §13.6 ("Unresolved markets can never enter a headline metric — enforced in code, tested"), §4 T14.
 - **Files involved:**
-  - `hedgekit/evaluation/temporal.py` — new: the temporal-integrity gate, a single choke point every metric-input query passes through
-  - `hedgekit/evaluation/registry.py` — route all metric input through the choke point; no metric can opt out
+  - `windbreak/evaluation/temporal.py` — new: the temporal-integrity gate, a single choke point every metric-input query passes through
+  - `windbreak/evaluation/registry.py` — route all metric input through the choke point; no metric can opt out
   - `tests/evaluation/test_temporal_integrity.py`
   - `tests/evaluation/fixtures/` — leakage fixtures: backdated forecast, pre-deployment forecast, unresolved-market forecast
 - **Prior decisions:** rejection is ledgered, not silent (§8.5 pattern: invalid input is discarded *and recorded*); deployment timestamp comes from the ledger's first mode-transition event, not config (config can be edited; the ledger is append-only, §12).

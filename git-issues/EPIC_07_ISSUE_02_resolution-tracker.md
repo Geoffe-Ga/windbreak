@@ -1,6 +1,6 @@
 ## Role
 
-You are a senior Python engineer with market-data plumbing experience, working in this repo's `hedgekit/evaluation/` package (mypy --strict, integer fixed-point units per SPEC §6.1).
+You are a senior Python engineer with market-data plumbing experience, working in this repo's `windbreak/evaluation/` package (mypy --strict, integer fixed-point units per SPEC §6.1).
 
 ## Goal
 
@@ -12,8 +12,8 @@ The resolution tracker ingests market resolutions from ledger events — includi
 - **Predecessor issue(s):** #49 (must be merged first — replaces its resolution stub).
 - **SPEC section:** `plans/SPEC_v3.md` §13.2 (baselines), §4 T16 (resolution reversal), §11.3 (`SETTLEMENT_REVERSED` order state), §6.3 (`ForecastRecord.market_price_baseline_pips`, `baseline_quote_snapshot_id`).
 - **Files involved:**
-  - `hedgekit/evaluation/resolution.py` — replace stub with real tracker over ledger read models
-  - `hedgekit/evaluation/baselines.py` — new: the five baselines (executable price at baseline snapshot [primary]; midpoint at forecast time; uniform 0.5; base-rate model where available; previous forecast for same market)
+  - `windbreak/evaluation/resolution.py` — replace stub with real tracker over ledger read models
+  - `windbreak/evaluation/baselines.py` — new: the five baselines (executable price at baseline snapshot [primary]; midpoint at forecast time; uniform 0.5; base-rate model where available; previous forecast for same market)
   - `tests/evaluation/test_resolution.py`, `tests/evaluation/test_baselines.py`
   - `tests/evaluation/fixtures/` — extend the synthetic fixture with a reversal scenario
 - **Prior decisions:** resolutions are ledger events, never mutated in place — a reversal appends a `SETTLEMENT_REVERSED` event and the tracker recomputes derived state (SPEC §12 append-only). The primary baseline is the *executable* price, not midpoint (§13.2).

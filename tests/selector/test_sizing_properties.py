@@ -1,10 +1,10 @@
-"""Gate 1 RED, Hypothesis property suite for `hedgekit.selector.sizing` (#45).
+"""Gate 1 RED, Hypothesis property suite for `windbreak.selector.sizing` (#45).
 
-`hedgekit/selector/sizing.py` does not exist yet, so importing it fails
-collection with `ModuleNotFoundError: No module named 'hedgekit.selector.sizing'`
+`windbreak/selector/sizing.py` does not exist yet, so importing it fails
+collection with `ModuleNotFoundError: No module named 'windbreak.selector.sizing'`
 -- the expected Gate 1 RED state for issue #45's sizing seam. The strategy
 building a full `SelectorInputs` below also imports `PositionReadModelInput`
-from `hedgekit.selector.types`, which does not exist yet either -- the same
+from `windbreak.selector.types`, which does not exist yet either -- the same
 correct RED reason.
 
 Five properties, from the narrowest (pure `dispersion_scale`/`kelly_size`
@@ -29,7 +29,7 @@ positions, and risk configuration):
        negative-EV-after-fees" is structural, not incidental.
 
 Every generated value is a plain integer -- never a float -- per SPEC S6.1;
-`hedgekit.selector`/`hedgekit.selector.sizing` are on
+`windbreak.selector`/`windbreak.selector.sizing` are on
 `scripts/lint_no_floats.py`'s denylist, and so is this test module's own
 arithmetic (no bare `/`/`//`).
 """
@@ -41,26 +41,26 @@ from datetime import UTC, datetime
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from hedgekit.config.schema import RiskConfig
-from hedgekit.connector.fees import FeeModel
-from hedgekit.connector.models import OrderBookLevel, OrderBookSnapshot
-from hedgekit.forecast.records import Citation, ForecastRecord
-from hedgekit.numeric import (
+from windbreak.config.schema import RiskConfig
+from windbreak.connector.fees import FeeModel
+from windbreak.connector.models import OrderBookLevel, OrderBookSnapshot
+from windbreak.forecast.records import Citation, ForecastRecord
+from windbreak.numeric import (
     ContractCentis,
     MoneyMicros,
     PricePips,
     RoundingDirection,
     divide,
 )
-from hedgekit.selector import select
-from hedgekit.selector.correlation import (
+from windbreak.selector import select
+from windbreak.selector.correlation import (
     BUCKET_FED_POLICY,
     BucketExposureEntry,
     CorrelationTag,
 )
-from hedgekit.selector.edge import EdgeFigures, compute_executable_edge
-from hedgekit.selector.sizing import dispersion_scale, kelly_size
-from hedgekit.selector.types import (
+from windbreak.selector.edge import EdgeFigures, compute_executable_edge
+from windbreak.selector.sizing import dispersion_scale, kelly_size
+from windbreak.selector.types import (
     FeeModelInput,
     PositionReadModelInput,
     RiskConfigInput,

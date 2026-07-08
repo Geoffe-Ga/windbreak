@@ -1,1 +1,1 @@
-"""Tests for the hedgekit.numeric package."""
+"""Tests for the windbreak.numeric package."""

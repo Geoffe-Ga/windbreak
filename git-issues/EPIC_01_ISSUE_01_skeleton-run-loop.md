@@ -1,33 +1,33 @@
 ## Role
 
-You are a senior Python engineer working in the `hedgekit` repo, experienced in structuring multi-process daemons with clean package boundaries (Python ≥3.11, mypy --strict).
+You are a senior Python engineer working in the `windbreak` repo, experienced in structuring multi-process daemons with clean package boundaries (Python ≥3.11, mypy --strict).
 
 ## Goal
 
-`hedgekit run` starts, enters RESEARCH mode, and emits a heartbeat log line at a fixed interval until interrupted — with the full four-process package skeleton in place so every later issue has a home.
+`windbreak run` starts, enters RESEARCH mode, and emits a heartbeat log line at a fixed interval until interrupted — with the full four-process package skeleton in place so every later issue has a home.
 
 ## Context
 
 - **Parent epic:** #2
 - **Predecessor issue(s):** none — this is the skeleton issue.
-- **SPEC section:** plans/SPEC_v3.md §18 M0 ("`hedgekit run` idles in RESEARCH with visible heartbeats"); §5.1 component & trust topology; §10.2 mode names (`RESEARCH → PAPER → LIVE_MICRO → LIVE`).
+- **SPEC section:** plans/SPEC_v3.md §18 M0 ("`windbreak run` idles in RESEARCH with visible heartbeats"); §5.1 component & trust topology; §10.2 mode names (`RESEARCH → PAPER → LIVE_MICRO → LIVE`).
 - **Files involved:**
-  - `hedgekit/main.py` — currently the generated hello-world; becomes the CLI entrypoint (`hedgekit run`).
-  - `hedgekit/pipeline/__init__.py` — Process A stub (market connector / screener / forecast / selector homes).
-  - `hedgekit/riskkernel/__init__.py` — Process B stub.
-  - `hedgekit/order_gateway/__init__.py` — Process C stub.
-  - `hedgekit/dashboard/__init__.py` — Process D stub.
-  - `hedgekit/ledger/__init__.py`, `hedgekit/config/__init__.py`, `hedgekit/numeric/__init__.py`, `hedgekit/alerts/__init__.py` — shared-component stubs.
+  - `windbreak/main.py` — currently the generated hello-world; becomes the CLI entrypoint (`windbreak run`).
+  - `windbreak/pipeline/__init__.py` — Process A stub (market connector / screener / forecast / selector homes).
+  - `windbreak/riskkernel/__init__.py` — Process B stub.
+  - `windbreak/order_gateway/__init__.py` — Process C stub.
+  - `windbreak/dashboard/__init__.py` — Process D stub.
+  - `windbreak/ledger/__init__.py`, `windbreak/config/__init__.py`, `windbreak/numeric/__init__.py`, `windbreak/alerts/__init__.py` — shared-component stubs.
   - `tests/test_main.py` — replace hello-world test with run-loop smoke tests.
 - **Prior decisions:** process isolation is mandatory (§5.1); only `order_gateway` may ever import the exchange order-submission client and only `riskkernel` the signing key handle (§5.3) — the package layout must make that import-boundary rule expressible later.
-- **State of the world:** fresh Start Green Stay Green scaffold; `hedgekit/main.py` prints "Hello from hedgekit!"; no subpackages exist.
+- **State of the world:** fresh Start Green Stay Green scaffold; `windbreak/main.py` prints "Hello from windbreak!"; no subpackages exist.
 
 ## Output Format
 
 Deliverable is a single PR containing:
 
 - [ ] Subpackages listed above, each with a module docstring stating its SPEC role and credential boundary (§5.2)
-- [ ] A `hedgekit run` CLI (argparse or typer, whichever `requirements.txt` already carries) that logs `mode=RESEARCH heartbeat seq=<n>` at a configurable interval (default 5s) and exits cleanly on SIGINT/SIGTERM
+- [ ] A `windbreak run` CLI (argparse or typer, whichever `requirements.txt` already carries) that logs `mode=RESEARCH heartbeat seq=<n>` at a configurable interval (default 5s) and exits cleanly on SIGINT/SIGTERM
 - [ ] Smoke tests in `tests/` proving: CLI parses, heartbeat emits ≥2 beats with monotonic `seq`, clean shutdown
 - [ ] No drive-by changes unrelated to the goal
 
@@ -35,11 +35,11 @@ Deliverable is a single PR containing:
 
 **Example: expected terminal output**
 ```
-$ hedgekit run --heartbeat-interval 1
-2026-07-04T21:00:00Z INFO hedgekit mode=RESEARCH heartbeat seq=1
-2026-07-04T21:00:01Z INFO hedgekit mode=RESEARCH heartbeat seq=2
+$ windbreak run --heartbeat-interval 1
+2026-07-04T21:00:00Z INFO windbreak mode=RESEARCH heartbeat seq=1
+2026-07-04T21:00:01Z INFO windbreak mode=RESEARCH heartbeat seq=2
 ^C
-2026-07-04T21:00:02Z INFO hedgekit shutdown reason=SIGINT
+2026-07-04T21:00:02Z INFO windbreak shutdown reason=SIGINT
 ```
 
 **Example: test case that should pass after this issue lands**

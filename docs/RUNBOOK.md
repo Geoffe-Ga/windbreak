@@ -1,6 +1,6 @@
-# hedgekit Runbook
+# windbreak Runbook
 
-Operational instructions for running and observing hedgekit. This runbook
+Operational instructions for running and observing windbreak. This runbook
 grows with the project; today it covers the always-on PAPER loop shipped in
 issue #48.
 
@@ -8,13 +8,13 @@ issue #48.
 
 ### Prerequisites / config
 
-The PAPER loop is one per-beat hook inside `hedgekit run`'s existing RESEARCH
-heartbeat loop (`hedgekit/main.py`). It activates only when **both** of these
+The PAPER loop is one per-beat hook inside `windbreak run`'s existing RESEARCH
+heartbeat loop (`windbreak/main.py`). It activates only when **both** of these
 hold, checked by `_paper_activated`:
 
 1. The active configuration's `mode_ceiling` (SPEC S16) permits `PAPER` --
    i.e. `Mode.from_config(config.mode_ceiling) is not Mode.RESEARCH`. The
-   built-in default configuration (`hedgekit.config.load_default_config`,
+   built-in default configuration (`windbreak.config.load_default_config`,
    used whenever `--config` is omitted) already ships `mode_ceiling: "paper"`,
    so no custom config is required to satisfy this condition.
 2. **All four** of the following `run` flags are supplied together:
@@ -27,7 +27,7 @@ hold, checked by `_paper_activated`:
    | `--report-dir` | Directory the weekly report stub is written into. |
 
 If the ceiling forbids PAPER, or even one of the four flags is missing, none
-of this is wired: `hedgekit run` falls back to its plain RESEARCH heartbeat
+of this is wired: `windbreak run` falls back to its plain RESEARCH heartbeat
 (optionally with `--snapshot-fixture-dir` snapshotting, if given) -- **byte
 identical to today's behavior**. This "all four flags or nothing" gate is the
 tracer invariant: partially-flagged or ceiling-mismatched invocations can
@@ -35,12 +35,12 @@ never half-activate PAPER.
 
 **RESEARCH is the safe default.** Omitting the four PAPER flags (or setting
 `mode_ceiling: research`) is always a safe, side-effect-free way to run
-`hedgekit run` -- no ledger is created, no paper exchange is touched.
+`windbreak run` -- no ledger is created, no paper exchange is touched.
 
 ### Starting the loop
 
 ```bash
-hedgekit run \
+windbreak run \
   --paper-books-dir tests/fixtures/books/deep_walk \
   --cassette-path /path/to/cassette.json \
   --ledger-path /path/to/state/ledger.db \
@@ -61,7 +61,7 @@ hedgekit run \
 
 ### What one PAPER tick actually does
 
-Each beat runs one `hedgekit.scheduler.loop.run_single_tick` pass over the
+Each beat runs one `windbreak.scheduler.loop.run_single_tick` pass over the
 *real* (unmodified) components, per SPEC S5.3's SINGLE order path:
 
 ```
@@ -75,7 +75,7 @@ The weekly report stub (below) is also (re-)written each tick.
 
 **Known limitation -- today's tick never actually fills.** The `approve`
 stage composes the real `RiskKernel.evaluate_intent` with the real
-`ApprovalPipeline.approve` (`KernelApproval` in `hedgekit/scheduler/loop.py`).
+`ApprovalPipeline.approve` (`KernelApproval` in `windbreak/scheduler/loop.py`).
 Right now that seam can never mint an approval token, for two independent
 reasons:
 
@@ -94,15 +94,15 @@ real, kernel-approved paper fill activates once issue #110 lands and a live
 verification cycle is wired into the loop.
 
 **Known limitation -- the kill switch does not stop the PAPER loop yet.**
-`hedgekit kill --state-dir <dir>` and `hedgekit rearm --state-dir <dir>` write
+`windbreak kill --state-dir <dir>` and `windbreak rearm --state-dir <dir>` write
 and clear a `KILL`/`REARM` file, but the PAPER loop's `RiskKernel` is
-constructed with `kill_integration=None` (`hedgekit/scheduler/loop.py`), so no
+constructed with `kill_integration=None` (`windbreak/scheduler/loop.py`), so no
 kill-file watcher is polled. To stop the loop today, stop the process itself
 (`Ctrl-C`/SIGINT or SIGTERM).
 
 ### Observing via the dashboard
 
-`hedgekit.dashboard.app` serves a read-only, loopback-only HTTP surface:
+`windbreak.dashboard.app` serves a read-only, loopback-only HTTP surface:
 
 - Binds `127.0.0.1` only (never a public interface -- not configurable, per
   SPEC S14).
@@ -120,13 +120,13 @@ Routes:
 | `/equity` | The equity curve vs. the configured capital floor. |
 | `/decisions` | The interleaved selector decisions, including skip/veto reasons. |
 
-There is no `hedgekit run` CLI wiring for the dashboard process yet --
+There is no `windbreak run` CLI wiring for the dashboard process yet --
 `create_server` is a library entry point an operator boots directly. To serve
 it against a live PAPER ledger:
 
 ```python
-from hedgekit.dashboard.app import create_server
-from hedgekit.dashboard.views import build_ledger_read_models_source
+from windbreak.dashboard.app import create_server
+from windbreak.dashboard.views import build_ledger_read_models_source
 
 server = create_server(
     token="replace-with-a-real-secret",
@@ -145,11 +145,11 @@ every view unconditionally.
 
 ### Observing via ledger read models
 
-`hedgekit rebuild` folds a verified ledger into a set of byte-stable JSON
+`windbreak rebuild` folds a verified ledger into a set of byte-stable JSON
 read-model files -- the same projection functions the dashboard reads live:
 
 ```bash
-hedgekit rebuild --ledger-path /path/to/state/ledger.db --output-dir /path/to/state/read-models
+windbreak rebuild --ledger-path /path/to/state/ledger.db --output-dir /path/to/state/read-models
 ```
 
 This writes (or overwrites) six files into `--output-dir`:
@@ -170,7 +170,7 @@ on stderr, rather than silently emitting a plausible-but-wrong projection.
 
 ### Weekly reports
 
-Each PAPER tick calls `hedgekit.reports.weekly.maybe_write_weekly`, which
+Each PAPER tick calls `windbreak.reports.weekly.maybe_write_weekly`, which
 writes at most one `weekly-YYYY-MM-DD.md` file per ISO calendar week into
 `--report-dir` (idempotent: repeated calls within the same ISO week return the
 already-written file untouched). The stub carries markdown section headers
@@ -184,10 +184,10 @@ pass.
   are unconditional-veto stubs blocked on #110; reconciliation also fails
   closed on the `verification=None` the loop supplies), so no PAPER tick
   fills yet -- expect vetoes, not fills, in the ledger and dashboard.
-- `hedgekit kill`/`hedgekit rearm` do not stop or gate the PAPER loop today
+- `windbreak kill`/`windbreak rearm` do not stop or gate the PAPER loop today
   (`kill_integration=None`); use process signals to stop the loop.
-- There is no `hedgekit run --process dashboard` wiring yet that actually
+- There is no `windbreak run --process dashboard` wiring yet that actually
   boots the HTTP dashboard server; operators start it directly via
-  `hedgekit.dashboard.app.create_server`.
+  `windbreak.dashboard.app.create_server`.
 - Weekly reports are structural stubs (`No data yet.` bodies); the real
   report content is a later pass.

@@ -2,9 +2,9 @@
 
 `ResolutionStatus`, `SettlementEventType`, `SettlementEvent`,
 `MarketResolution`, `ResolutionTracker`, and `settlement_events_from_fixture`
-do not exist yet in `hedgekit.evaluation.resolution`, so every import below
+do not exist yet in `windbreak.evaluation.resolution`, so every import below
 fails collection with `ImportError: cannot import name '...' from
-'hedgekit.evaluation.resolution'` -- the expected Gate 1 RED state for issue
+'windbreak.evaluation.resolution'` -- the expected Gate 1 RED state for issue
 #50. `ResolutionOutcome` and `resolutions_from_fixture` (issue #49) already
 exist and are exercised here only as a regression check.
 
@@ -64,7 +64,7 @@ def test_reversed_and_resettled_market_ends_resolved_with_corrected_outcome() ->
     RESOLVED/NO with reversal_count 1 -- the corrected outcome, not the
     original one.
     """
-    from hedgekit.evaluation.resolution import (
+    from windbreak.evaluation.resolution import (
         ResolutionOutcome,
         ResolutionStatus,
         ResolutionTracker,
@@ -95,7 +95,7 @@ def test_resolved_outcomes_recomputes_from_a_partial_vs_full_event_stream() -> N
     corrected, post-reversal outcome) and T3 has dropped out entirely
     (REVERSED markets are not "resolved").
     """
-    from hedgekit.evaluation.resolution import (
+    from windbreak.evaluation.resolution import (
         ResolutionOutcome,
         ResolutionTracker,
         settlement_events_from_fixture,
@@ -120,7 +120,7 @@ def test_resolved_outcomes_recomputes_from_a_partial_vs_full_event_stream() -> N
 
 def test_plain_settlement_with_no_reversal_resolves_once() -> None:
     """T2 settles YES exactly once: RESOLVED/YES/reversal_count 0."""
-    from hedgekit.evaluation.resolution import (
+    from windbreak.evaluation.resolution import (
         ResolutionOutcome,
         ResolutionStatus,
         ResolutionTracker,
@@ -143,7 +143,7 @@ def test_reversed_market_with_no_resettlement_has_none_outcome() -> None:
     `outcome` is `None` (mid-dispute -- there is no current settled answer),
     reversal_count 1.
     """
-    from hedgekit.evaluation.resolution import (
+    from windbreak.evaluation.resolution import (
         ResolutionStatus,
         ResolutionTracker,
         settlement_events_from_fixture,
@@ -165,7 +165,7 @@ def test_get_is_total_and_defaults_unseen_ticker_to_unresolved() -> None:
     `MarketResolution(status=UNRESOLVED, outcome=None, reversal_count=0)` --
     `get` never raises `KeyError`.
     """
-    from hedgekit.evaluation.resolution import (
+    from windbreak.evaluation.resolution import (
         ResolutionStatus,
         ResolutionTracker,
         settlement_events_from_fixture,
@@ -192,7 +192,7 @@ def test_settlement_events_from_fixture_parses_every_field_in_stream_order() -> 
     """The loader returns one `SettlementEvent` per entry, in stream order,
     with the outcome token parsed through the existing outcome parser.
     """
-    from hedgekit.evaluation.resolution import (
+    from windbreak.evaluation.resolution import (
         ResolutionOutcome,
         SettlementEvent,
         SettlementEventType,
@@ -217,7 +217,7 @@ def test_settlement_events_from_fixture_rejects_unknown_event_type() -> None:
     """An `event_type` token other than `settlement`/`settlement_reversed`
     raises `ValueError` naming the `event_type` field.
     """
-    from hedgekit.evaluation.resolution import settlement_events_from_fixture
+    from windbreak.evaluation.resolution import settlement_events_from_fixture
 
     fixture = {
         "settlement_events": [
@@ -244,7 +244,7 @@ def test_settlement_event_requires_outcome_for_settlement() -> None:
     the `outcome` field -- a settlement without a settled answer is
     incoherent.
     """
-    from hedgekit.evaluation.resolution import SettlementEvent, SettlementEventType
+    from windbreak.evaluation.resolution import SettlementEvent, SettlementEventType
 
     with pytest.raises(ValueError, match="outcome"):
         SettlementEvent(
@@ -261,7 +261,7 @@ def test_settlement_event_rejects_outcome_on_reversal() -> None:
     outcome, it does not carry a new one (that requires a follow-up
     `SETTLEMENT`).
     """
-    from hedgekit.evaluation.resolution import (
+    from windbreak.evaluation.resolution import (
         ResolutionOutcome,
         SettlementEvent,
         SettlementEventType,
@@ -279,9 +279,9 @@ def test_settlement_event_rejects_outcome_on_reversal() -> None:
 def test_settlement_event_rejects_bool_as_sequence_number() -> None:
     """A `bool` `sequence_number` (an `int` subclass) raises `TypeError`
     naming the `sequence_number` field, per the repo-wide "no bool-as-int"
-    rule (see `hedgekit.numeric.types._IntUnit`).
+    rule (see `windbreak.numeric.types._IntUnit`).
     """
-    from hedgekit.evaluation.resolution import (
+    from windbreak.evaluation.resolution import (
         ResolutionOutcome,
         SettlementEvent,
         SettlementEventType,
@@ -305,7 +305,7 @@ def test_market_resolution_rejects_resolved_status_with_no_outcome() -> None:
     """`status=RESOLVED` with `outcome=None` raises `ValueError` naming
     `outcome` -- a resolved market must carry its settled answer.
     """
-    from hedgekit.evaluation.resolution import MarketResolution, ResolutionStatus
+    from windbreak.evaluation.resolution import MarketResolution, ResolutionStatus
 
     with pytest.raises(ValueError, match="outcome"):
         MarketResolution(
@@ -321,7 +321,7 @@ def test_market_resolution_rejects_non_resolved_status_with_an_outcome() -> None
     raises `ValueError` naming `outcome` -- only a `RESOLVED` market may
     carry a settled answer.
     """
-    from hedgekit.evaluation.resolution import (
+    from windbreak.evaluation.resolution import (
         MarketResolution,
         ResolutionOutcome,
         ResolutionStatus,
@@ -354,7 +354,7 @@ def test_from_ledger_rejects_duplicate_sequence_number() -> None:
     `sequence_number` -- the global stream order must be a strict total
     order with no ties.
     """
-    from hedgekit.evaluation.resolution import (
+    from windbreak.evaluation.resolution import (
         ResolutionOutcome,
         ResolutionTracker,
         SettlementEvent,
@@ -384,7 +384,7 @@ def test_from_ledger_rejects_decreasing_sequence_number() -> None:
     """A `sequence_number` lower than the previous event's raises
     `ValueError` naming `sequence_number`.
     """
-    from hedgekit.evaluation.resolution import (
+    from windbreak.evaluation.resolution import (
         ResolutionOutcome,
         ResolutionTracker,
         SettlementEvent,
@@ -415,7 +415,7 @@ def test_from_ledger_rejects_settlement_on_an_already_resolved_market() -> None:
     intervening reversal) raises `ValueError` naming the offending
     `market_ticker`.
     """
-    from hedgekit.evaluation.resolution import (
+    from windbreak.evaluation.resolution import (
         ResolutionOutcome,
         ResolutionTracker,
         SettlementEvent,
@@ -446,7 +446,7 @@ def test_from_ledger_rejects_reversal_of_an_unresolved_market() -> None:
     (still `UNRESOLVED`) raises `ValueError` naming the offending
     `market_ticker` -- there is nothing to reverse.
     """
-    from hedgekit.evaluation.resolution import (
+    from windbreak.evaluation.resolution import (
         ResolutionTracker,
         SettlementEvent,
         SettlementEventType,
@@ -470,7 +470,7 @@ def test_from_ledger_rejects_double_reversal_of_the_same_market() -> None:
     `REVERSED` (with no intervening resettlement) raises `ValueError`
     naming the offending `market_ticker`.
     """
-    from hedgekit.evaluation.resolution import (
+    from windbreak.evaluation.resolution import (
         ResolutionOutcome,
         ResolutionTracker,
         SettlementEvent,
@@ -514,7 +514,7 @@ def test_resolutions_from_fixture_still_works_alongside_the_new_blocks() -> None
     `quote_snapshots`, and `base_rates` sit alongside it -- the new,
     additive blocks do not interfere with the existing loader.
     """
-    from hedgekit.evaluation.resolution import (
+    from windbreak.evaluation.resolution import (
         ResolutionOutcome,
         resolutions_from_fixture,
     )

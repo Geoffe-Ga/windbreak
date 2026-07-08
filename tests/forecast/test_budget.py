@@ -1,4 +1,4 @@
-"""Tests for hedgekit.forecast.budget (issue #28): research budget enforcement.
+"""Tests for windbreak.forecast.budget (issue #28): research budget enforcement.
 
 Pins the SPEC S8.4/S16 budget contract: per-forecast and per-day micros
 ceilings enforced fail-closed (the day-bucket charge lands *before* the
@@ -7,8 +7,8 @@ per-forecast raise, so a breached forecast still counts against the day),
 rollover that resets the day bucket, the tracer invariant that an unused
 budget produces a byte-identical record, and the cost-per-resolved-forecast
 report's ceiling-division and zero-denominator handling.
-`hedgekit/forecast/budget.py` does not exist yet, so importing it below fails
-collection with `ModuleNotFoundError: No module named 'hedgekit.forecast.budget'`
+`windbreak/forecast/budget.py` does not exist yet, so importing it below fails
+collection with `ModuleNotFoundError: No module named 'windbreak.forecast.budget'`
 -- the expected Gate 1 RED state for issue #28.
 
 Local-double choice (`CountingFetchTransport`)
@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from hedgekit.forecast.budget import (
+from windbreak.forecast.budget import (
     BUDGET_DAY_EXHAUSTED_EVENT,
     BUDGET_FORECAST_EXCEEDED_EVENT,
     COST_REPORT_EVENT,
@@ -48,25 +48,25 @@ from hedgekit.forecast.budget import (
     ResearchBudget,
     report_research_costs,
 )
-from hedgekit.forecast.pipeline import (
+from windbreak.forecast.pipeline import (
     bounded_web_research,
     decompose_subquestions,
     run_pipeline,
 )
-from hedgekit.forecast.records import forecast_record_to_payload
+from windbreak.forecast.records import forecast_record_to_payload
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from hedgekit.connector.models import NormalizedMarket
-    from hedgekit.forecast.records import BaselineQuoteSnapshot
-    from hedgekit.forecast.sandbox import ResearchTools
+    from windbreak.connector.models import NormalizedMarket
+    from windbreak.forecast.records import BaselineQuoteSnapshot
+    from windbreak.forecast.sandbox import ResearchTools
 
     FakeVoteTransportFactory = Callable[..., object]
     ResearchToolsFactory = Callable[..., ResearchTools]
 
-#: `hedgekit.forecast.pipeline`'s private `_RESEARCH_COST_MICROS` stub cost for
+#: `windbreak.forecast.pipeline`'s private `_RESEARCH_COST_MICROS` stub cost for
 #: a full run -- named here (rather than imported, since it is private) so
 #: every budget-boundary assertion below reads against the same known figure.
 _FULL_RUN_RESEARCH_COST_MICROS = 3_000_000

@@ -1,16 +1,16 @@
-"""Shared fixtures for hedgekit.connector / hedgekit.screener tests (issue #16).
+"""Shared fixtures for windbreak.connector / windbreak.screener tests (issue #16).
 
 Every fixture below is built against the shared JSON exchange fixtures in
-`tests/fixtures/exchange/`. Neither `hedgekit.connector` nor `hedgekit.screener`
+`tests/fixtures/exchange/`. Neither `windbreak.connector` nor `windbreak.screener`
 exist yet, so importing this module fails collection with
-`ModuleNotFoundError: No module named 'hedgekit.connector'` -- the expected
+`ModuleNotFoundError: No module named 'windbreak.connector'` -- the expected
 Gate 1 RED state for issue #16.
 
 The `books_fixture_dir` / `paper_exchange` fixtures below back issue #19's
 `PaperExchange` tests (`test_paper_exchange.py`, `test_paper_fill_properties.py`)
-and are additive: nothing above this point is modified. `hedgekit.connector.paper`
+and are additive: nothing above this point is modified. `windbreak.connector.paper`
 does not exist yet either, so `paper_exchange` fails collection the same way,
-with `ModuleNotFoundError: No module named 'hedgekit.connector.paper'` -- the
+with `ModuleNotFoundError: No module named 'windbreak.connector.paper'` -- the
 expected Gate 1 RED state for issue #19.
 """
 
@@ -21,12 +21,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from hedgekit.connector.fake import FakeExchange
-from hedgekit.connector.snapshot import InMemoryEventLedgerWriter, MarketSnapshotTask
-from hedgekit.screener import StubScreener
+from windbreak.connector.fake import FakeExchange
+from windbreak.connector.snapshot import InMemoryEventLedgerWriter, MarketSnapshotTask
+from windbreak.screener import StubScreener
 
 if TYPE_CHECKING:
-    from hedgekit.connector.paper import PaperExchange
+    from windbreak.connector.paper import PaperExchange
 
 
 @pytest.fixture
@@ -77,6 +77,6 @@ def paper_exchange(books_fixture_dir: Path) -> PaperExchange:
     fill scenario. Tests pinning a specific scenario's golden numbers build
     their own connector directly from `books_fixture_dir / "<scenario>"`.
     """
-    from hedgekit.connector.paper import PaperExchange
+    from windbreak.connector.paper import PaperExchange
 
     return PaperExchange.from_fixture_dir(books_fixture_dir / "deep_walk")

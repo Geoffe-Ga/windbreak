@@ -1,6 +1,6 @@
 ## Role
 
-You are a senior Python engineer working in this repo's `hedgekit/connector/` subpackage, experienced with exchange REST APIs, defensive deserialization, and fixed-point arithmetic.
+You are a senior Python engineer working in this repo's `windbreak/connector/` subpackage, experienced with exchange REST APIs, defensive deserialization, and fixed-point arithmetic.
 
 ## Goal
 
@@ -12,9 +12,9 @@ A `KalshiConnector` implements the `MarketConnector` interface against the curre
 - **Predecessor issue(s):** #16 (must be merged first — interface and NormalizedMarket exist)
 - **SPEC section:** `plans/SPEC_v3.md` §7.1 (responsibility; "no deprecated endpoints"; "must explicitly reject any margin/perp/derivative product surfaces"), §6.1 (numeric units), §6.2, §1.1 invariant 2 (bounded-loss only — "the connector must refuse to normalize such products … even if the exchange API exposes them"), §20 Q1 (fee fields pulled from live schedule at M1, never hardcoded from blog posts)
 - **Files involved:**
-  - `hedgekit/connector/kalshi/client.py` — thin HTTP client, read/public endpoints only
-  - `hedgekit/connector/kalshi/adapter.py` — `KalshiConnector(MarketConnector)`
-  - `hedgekit/connector/kalshi/normalize.py` — raw payload → `NormalizedMarket` / order book, fixed-point conversion
+  - `windbreak/connector/kalshi/client.py` — thin HTTP client, read/public endpoints only
+  - `windbreak/connector/kalshi/adapter.py` — `KalshiConnector(MarketConnector)`
+  - `windbreak/connector/kalshi/normalize.py` — raw payload → `NormalizedMarket` / order book, fixed-point conversion
   - `tests/connector/kalshi/` — contract tests against recorded fixtures
   - `tests/fixtures/exchange/kalshi/` — recorded API responses (markets, events, order books, exchange status)
 - **Prior decisions:** ISSUE_01 fixed the interface surface; all prices parse to `PricePips` (int, 0.0001 payout-dollars — 1¢ = 100 pips), sizes to `ContractCentis`; rounding is always conservative (overstate cost/risk, understate equity, §6.1). No trade or withdrawal credentials exist in this component (§5.2 — Market Connector holds public/read-only only).

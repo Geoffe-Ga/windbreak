@@ -14,7 +14,7 @@
 #     permissions it needs; the bug is that its CALLERS don't re-grant them.
 #
 #  2. _claude-scan.yml itself must stop referencing this repo's nonexistent
-#     frontend/ tree and backend/requirements* layout (hedgekit keeps
+#     frontend/ tree and backend/requirements* layout (windbreak keeps
 #     requirements at the ROOT and is Python-only — no npm/Node step at all).
 #
 # Both fixes don't exist yet, so this suite fails RED now.

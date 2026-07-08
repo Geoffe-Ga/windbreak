@@ -1,6 +1,6 @@
 ## Role
 
-You are a senior Python engineer with quantitative-sizing experience, working in this repo's `hedgekit/selector/` package, fluent in `hypothesis` property-based testing.
+You are a senior Python engineer with quantitative-sizing experience, working in this repo's `windbreak/selector/` package, fluent in `hypothesis` property-based testing.
 
 ## Goal
 
@@ -12,8 +12,8 @@ Intents are sized by fractional Kelly on above-floor capital using the calibrate
 - **Predecessor issue(s):** #44 (must be merged first — provides edge computation and the 1-contract placeholder this issue replaces)
 - **SPEC section:** `plans/SPEC_v3.md` §9.5 (sizing), §9.6 (disagreement-scaled sizing, T2), §4 row T2, §16 `risk:` keys `kelly_fraction_ppm`, `dispersion_zero_ceiling_ppm`, `max_participation_ppm`, `max_pos_market_pct_ppm`, `max_pos_event_pct_ppm`, `max_pos_bucket_pct_ppm`, `max_notional_per_day_micros`, `micro_cap_micros`
 - **Files involved:**
-  - `hedgekit/selector/sizing.py` — Kelly, dispersion scaling `g()`, cap clipping pipeline (new)
-  - `hedgekit/selector/__init__.py` — replace the 1-contract placeholder with real sizing
+  - `windbreak/selector/sizing.py` — Kelly, dispersion scaling `g()`, cap clipping pipeline (new)
+  - `windbreak/selector/__init__.py` — replace the 1-contract placeholder with real sizing
   - `tests/selector/test_sizing_properties.py` — hypothesis property suite
   - `tests/selector/test_sizing_examples.py` — hand-computed example cases
 - **Prior decisions:** `g()` is monotone non-increasing, `g(0)=1`, and reaches 0 at `dispersion_zero_ceiling_ppm`; the exact functional form is config-selected but those three properties are invariants (§9.6). Sizing operates only on above-floor capital as reported in the risk-config snapshot — the selector never computes the floor itself (that is the Kernel's job; the selector just respects the snapshot). All arithmetic fixed-point; rounding on size always rounds *down*.
@@ -23,7 +23,7 @@ Intents are sized by fractional Kelly on above-floor capital using the calibrate
 
 Deliverable is a single PR containing:
 
-- [ ] `hedgekit/selector/sizing.py`: `kelly_size()`, `dispersion_scale()`, and `clip_to_caps()` as separately testable stages; the cap pipeline records *which* cap bound the final size in `SelectorDecision.reasons`
+- [ ] `windbreak/selector/sizing.py`: `kelly_size()`, `dispersion_scale()`, and `clip_to_caps()` as separately testable stages; the cap pipeline records *which* cap bound the final size in `SelectorDecision.reasons`
 - [ ] Property tests (hypothesis): sizing monotone non-decreasing in edge; exactly zero below `min_net_edge_ppm`; never exceeds any cap or the participation limit for any generated book; never negative-EV-after-fees; `g` monotone non-increasing with `g(0)=1` and `g(ceiling)=0`
 - [ ] Example tests with hand-computed Kelly sizes at known probabilities/prices
 - [ ] No drive-by changes unrelated to the goal

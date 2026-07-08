@@ -1,23 +1,23 @@
-"""Failing-first tests for hedgekit.riskkernel.process (issue #29, RED).
+"""Failing-first tests for windbreak.riskkernel.process (issue #29, RED).
 
 Issue #29 gives the Risk Kernel (Process B, SPEC S5.1-S5.3) its process
 skeleton: a bounded heartbeat loop, an `evaluate_intent` entry point that
 records every veto to a ledger writer, a `main()` CLI matching
-`hedgekit.main`'s bounded-loop conventions, and -- the load-bearing isolation
+`windbreak.main`'s bounded-loop conventions, and -- the load-bearing isolation
 property SPEC S5.3 exists to protect -- the guarantee that *no other package*
 can ever import the approval-token signing key handle.
 
-None of `hedgekit/riskkernel/{process,signing}.py` or
-`hedgekit/riskkernel/__main__.py` exist yet, so the imports below fail the
+None of `windbreak/riskkernel/{process,signing}.py` or
+`windbreak/riskkernel/__main__.py` exist yet, so the imports below fail the
 whole module at collection with
-`ModuleNotFoundError: No module named 'hedgekit.riskkernel.process'` -- the
+`ModuleNotFoundError: No module named 'windbreak.riskkernel.process'` -- the
 expected Gate 1 RED state for issue #29. Once the modules exist, this file
 pins: a self-contained AST scanner (mirroring
 `tests/forecast/test_sandbox.py`'s import-boundary checker) proving zero
-`hedgekit.riskkernel.signing` imports anywhere outside the `riskkernel`
+`windbreak.riskkernel.signing` imports anywhere outside the `riskkernel`
 package; a matching `plans/architecture/.importlinter` contract; the
 `KernelLedgerWriter` trio (`Logging`/`InMemory`, mirroring
-`hedgekit.connector.snapshot`'s `EventLedgerWriter` trio); `RiskKernel`'s
+`windbreak.connector.snapshot`'s `EventLedgerWriter` trio); `RiskKernel`'s
 bounded heartbeat loop and ledgered `evaluate_intent`; a subprocess-level
 "Process B survives Process A" isolation smoke test; and (issue #31) that
 `SigningKeyHandle` signs with real HMAC-SHA256 while never exposing its key
@@ -41,38 +41,38 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from hedgekit.ledger.events import Event
-from hedgekit.numeric.types import (
+from tests.riskkernel.conftest import make_context
+from windbreak.ledger.events import Event
+from windbreak.numeric.types import (
     ContractCentis,
     MoneyMicros,
     PricePips,
     ProbabilityPpm,
 )
-from hedgekit.riskkernel.checks import OrderIntent
-from hedgekit.riskkernel.modes import Mode, ModeStateMachine
-from hedgekit.riskkernel.process import (
+from windbreak.riskkernel.checks import OrderIntent
+from windbreak.riskkernel.modes import Mode, ModeStateMachine
+from windbreak.riskkernel.process import (
     InMemoryKernelLedgerWriter,
     LoggingKernelLedgerWriter,
     RiskKernel,
 )
-from hedgekit.riskkernel.process import main as riskkernel_main
-from hedgekit.riskkernel.signing import SigningKeyHandle
-from tests.riskkernel.conftest import make_context
+from windbreak.riskkernel.process import main as riskkernel_main
+from windbreak.riskkernel.signing import SigningKeyHandle
 
 if TYPE_CHECKING:
-    from hedgekit.riskkernel.context import EvaluationContext
-    from hedgekit.riskkernel.process import KernelLedgerWriter
+    from windbreak.riskkernel.context import EvaluationContext
+    from windbreak.riskkernel.process import KernelLedgerWriter
 
 #: Repo root, derived from this test file's own location
 #: (`<root>/tests/riskkernel/test_process_isolation.py`).
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
-_HEDGEKIT_PACKAGE_DIR = _REPO_ROOT / "hedgekit"
-_RISKKERNEL_PACKAGE_DIR = _HEDGEKIT_PACKAGE_DIR / "riskkernel"
+_WINDBREAK_PACKAGE_DIR = _REPO_ROOT / "windbreak"
+_RISKKERNEL_PACKAGE_DIR = _WINDBREAK_PACKAGE_DIR / "riskkernel"
 _IMPORTLINTER_PATH = _REPO_ROOT / "plans" / "architecture" / ".importlinter"
 
 #: The single module SPEC S5.3 reserves to the `riskkernel` package alone.
-_FORBIDDEN_SIGNING_MODULE = "hedgekit.riskkernel.signing"
+_FORBIDDEN_SIGNING_MODULE = "windbreak.riskkernel.signing"
 
 #: The `.importlinter` contract section declaring the signing-key boundary.
 _SIGNING_CONTRACT_SECTION = "importlinter:contract:signing-key-isolation"
@@ -140,15 +140,15 @@ def _make_intent(
 
 
 def _find_signing_imports(source: str) -> tuple[str, ...]:
-    """Return every spelling of a `hedgekit.riskkernel.signing` import found.
+    """Return every spelling of a `windbreak.riskkernel.signing` import found.
 
-    A plain `import hedgekit.riskkernel.signing`, an absolute
-    `from hedgekit.riskkernel import signing` (module-plus-symbol), and an
-    absolute `from hedgekit.riskkernel.signing import X` (module itself) are
+    A plain `import windbreak.riskkernel.signing`, an absolute
+    `from windbreak.riskkernel import signing` (module-plus-symbol), and an
+    absolute `from windbreak.riskkernel.signing import X` (module itself) are
     all flagged. Every *relative* import (`node.level > 0`) is also flagged,
     conservatively: a `..`-hop could reach the forbidden module, and the
     codebase's own convention is absolute imports throughout (verified: zero
-    relative imports ship anywhere in `hedgekit/` today).
+    relative imports ship anywhere in `windbreak/` today).
 
     Args:
         source: Python source text to parse.
@@ -183,11 +183,11 @@ def _find_signing_imports(source: str) -> tuple[str, ...]:
 
 
 def test_zero_forbidden_signing_imports_outside_riskkernel_package() -> None:
-    """Every shipped `hedgekit/**/*.py` module outside `riskkernel/` itself
+    """Every shipped `windbreak/**/*.py` module outside `riskkernel/` itself
     imports across the signing-key boundary cleanly -- zero hits.
     """
     violations: list[str] = []
-    for path in sorted(_HEDGEKIT_PACKAGE_DIR.rglob("*.py")):
+    for path in sorted(_WINDBREAK_PACKAGE_DIR.rglob("*.py")):
         if _RISKKERNEL_PACKAGE_DIR in path.parents:
             continue
         source = path.read_text(encoding="utf-8")
@@ -202,9 +202,9 @@ def test_zero_forbidden_signing_imports_outside_riskkernel_package() -> None:
 @pytest.mark.parametrize(
     "source",
     [
-        "import hedgekit.riskkernel.signing\n",
-        "from hedgekit.riskkernel import signing\n",
-        "from hedgekit.riskkernel.signing import SigningKeyHandle\n",
+        "import windbreak.riskkernel.signing\n",
+        "from windbreak.riskkernel import signing\n",
+        "from windbreak.riskkernel.signing import SigningKeyHandle\n",
         "from . import signing\n",
         "from ..riskkernel import signing\n",
     ],
@@ -220,7 +220,7 @@ def test_ast_checker_does_not_flag_an_unrelated_riskkernel_import() -> None:
     """Importing another `riskkernel` submodule (e.g. `checks`) is not itself
     a signing-key-boundary violation.
     """
-    source = "from hedgekit.riskkernel import checks\n"
+    source = "from windbreak.riskkernel import checks\n"
 
     assert _find_signing_imports(source) == ()
 
@@ -407,7 +407,7 @@ def test_risk_kernel_evaluate_intent_records_intent_approved_when_not_vetoed(
     stubbed here so the audit trail's correctness is pinned before that
     remaining logic lands, not rediscovered as a ledger bug after.
     """
-    from hedgekit.riskkernel import checks as checks_module
+    from windbreak.riskkernel import checks as checks_module
 
     approved = checks_module.Decision(vetoed=False, reasons=())
     monkeypatch.setattr(
@@ -447,7 +447,7 @@ def test_risk_kernel_evaluate_intent_stamps_its_own_mode_onto_the_context(
     a caller-supplied `context.mode` is never trusted over the kernel's own
     tracked mode, and the caller's original context object is left untouched.
     """
-    from hedgekit.riskkernel import checks as checks_module
+    from windbreak.riskkernel import checks as checks_module
 
     captured_contexts: list[EvaluationContext] = []
 
@@ -484,7 +484,7 @@ def test_process_b_kernel_survives_process_a_pipeline_termination() -> None:
         [
             sys.executable,
             "-m",
-            "hedgekit",
+            "windbreak",
             "run",
             "--process",
             "pipeline",
@@ -518,7 +518,7 @@ def test_process_b_kernel_survives_process_a_pipeline_termination() -> None:
     assert len(heartbeat_events) == 3
 
 
-# --- process.main(): bounded CLI, matching hedgekit.main's conventions ----------
+# --- process.main(): bounded CLI, matching windbreak.main's conventions ----------
 
 
 def test_process_main_returns_zero_for_a_bounded_run() -> None:
@@ -530,7 +530,7 @@ def test_process_main_returns_zero_for_a_bounded_run() -> None:
 
 def test_process_main_rejects_negative_max_beats() -> None:
     """A negative `--max-beats` is an argparse usage error (exit code 2),
-    matching `hedgekit.main`'s non-negative-int parsing convention.
+    matching `windbreak.main`'s non-negative-int parsing convention.
     """
     with pytest.raises(SystemExit) as exc_info:
         riskkernel_main(["--max-beats", "-1"])
@@ -550,24 +550,24 @@ def test_process_main_rejects_negative_heartbeat_interval() -> None:
 
 
 def test_riskkernel_dunder_main_module_imports_cleanly() -> None:
-    """`python -m hedgekit.riskkernel`'s entry module imports without error,
+    """`python -m windbreak.riskkernel`'s entry module imports without error,
     for in-process coverage of the delegation to `process.main`.
     """
-    module = importlib.import_module("hedgekit.riskkernel.__main__")
+    module = importlib.import_module("windbreak.riskkernel.__main__")
 
     assert module is not None
 
 
 @pytest.mark.timeout(30)
 def test_riskkernel_module_invocation_smoke_via_subprocess() -> None:
-    """`python -m hedgekit.riskkernel --max-beats 2 --heartbeat-interval 0`
+    """`python -m windbreak.riskkernel --max-beats 2 --heartbeat-interval 0`
     exits 0 and logs at least one heartbeat line as JSON on stderr.
     """
     result = subprocess.run(
         [
             sys.executable,
             "-m",
-            "hedgekit.riskkernel",
+            "windbreak.riskkernel",
             "--max-beats",
             "2",
             "--heartbeat-interval",

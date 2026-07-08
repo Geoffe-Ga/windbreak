@@ -1,4 +1,4 @@
-"""Shared fixtures for `hedgekit.config` tests (issue #11).
+"""Shared fixtures for `windbreak.config` tests (issue #11).
 
 Provides the checked-in SPEC S16 example config, both as a filesystem
 path and as a parsed mapping, plus a helper for writing arbitrary

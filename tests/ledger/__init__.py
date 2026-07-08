@@ -1,1 +1,1 @@
-"""Tests for the hedgekit hash-chained ledger."""
+"""Tests for the windbreak hash-chained ledger."""
