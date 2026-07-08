@@ -34,6 +34,15 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _HEDGEKIT_PACKAGE_DIR = _REPO_ROOT / "hedgekit"
 _ORDER_GATEWAY_PACKAGE_DIR = _HEDGEKIT_PACKAGE_DIR / "order_gateway"
 _CONNECTOR_PACKAGE_DIR = _HEDGEKIT_PACKAGE_DIR / "connector"
+#: The PAPER-mode composition root (issue #48): a legitimate importer of
+#: `hedgekit.connector.paper`, because `build_paper_deps` constructs a
+#: `PaperExchange` in its PAPER factory. This is an intentional allowlist
+#: extension, not a gate weakening: the boundary's intent -- keeping the paper
+#: fake out of the RESEARCH/LIVE trading path -- is preserved because the
+#: RESEARCH loop never imports `hedgekit.scheduler` (it wires the PAPER tick via
+#: a local import only when PAPER is actually activated), and the scheduler
+#: imports paper solely inside that PAPER factory.
+_SCHEDULER_PACKAGE_DIR = _HEDGEKIT_PACKAGE_DIR / "scheduler"
 _IMPORTLINTER_PATH = _REPO_ROOT / "plans" / "architecture" / ".importlinter"
 
 #: The single module this boundary reserves to `order_gateway`/`connector`.
@@ -115,18 +124,23 @@ def _find_paper_imports_from(node: ast.ImportFrom) -> tuple[str, ...]:
 
 
 def test_zero_forbidden_paper_imports_outside_order_gateway_and_connector() -> None:
-    """Every shipped `hedgekit/**/*.py` module outside `order_gateway/` and
-    `connector/` themselves imports across the order-submission-client
-    boundary cleanly -- zero hits. Both packages are legitimately exempt:
-    `connector/` is where `PaperExchange` itself is defined (and
-    `connector/__init__.py` already re-exports it), and `order_gateway/` is
-    the sole intended consumer (issue #37's `PaperSubmitter`).
+    """Every shipped `hedgekit/**/*.py` module outside `order_gateway/`,
+    `connector/`, and `scheduler/` themselves imports across the
+    order-submission-client boundary cleanly -- zero hits. All three packages are
+    legitimately exempt: `connector/` is where `PaperExchange` itself is defined
+    (and `connector/__init__.py` already re-exports it), `order_gateway/` is the
+    sole intended trading consumer (issue #37's `PaperSubmitter`), and
+    `scheduler/` is the PAPER-mode composition root (issue #48) that constructs a
+    `PaperExchange` only inside its `build_paper_deps` PAPER factory -- the
+    boundary's intent (keeping the paper fake off the RESEARCH/LIVE path) holds
+    because the RESEARCH loop never imports `hedgekit.scheduler`.
     """
     violations: list[str] = []
     for path in sorted(_HEDGEKIT_PACKAGE_DIR.rglob("*.py")):
         if (
             _ORDER_GATEWAY_PACKAGE_DIR in path.parents
             or _CONNECTOR_PACKAGE_DIR in path.parents
+            or _SCHEDULER_PACKAGE_DIR in path.parents
         ):
             continue
         source = path.read_text(encoding="utf-8")

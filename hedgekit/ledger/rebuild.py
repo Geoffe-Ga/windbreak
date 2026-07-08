@@ -55,6 +55,31 @@ _GATEWAY_EVENT_TYPES: frozenset[str] = frozenset(
     }
 )
 
+#: Read-model filename holding the latest open-positions snapshot (issue #48).
+_POSITIONS_FILENAME = "positions.json"
+
+#: Read-model filename holding every equity sample in ledger order (issue #48).
+_EQUITY_CURVE_FILENAME = "equity_curve.json"
+
+#: Read-model filename holding the interleaved selector/intent decision trail
+#: (issue #48).
+_SELECTOR_DECISIONS_FILENAME = "selector_decisions.json"
+
+_POSITIONS_SNAPSHOT_RECORDED = "PositionsSnapshotRecorded"
+_EQUITY_SAMPLED = "EquitySampled"
+
+#: The PAPER-loop selector/intent event types projected, in ledger order, into
+#: ``selector_decisions.json`` (issue #48): the scheduler's own
+#: ``SelectorDecisionRecorded`` plus the two bare intent-verdict events the Risk
+#: Kernel already emits (``IntentApproved``/``IntentVetoed``).
+_SELECTOR_DECISION_EVENT_TYPES: frozenset[str] = frozenset(
+    {
+        "SelectorDecisionRecorded",
+        "IntentApproved",
+        "IntentVetoed",
+    }
+)
+
 
 def _config_projection(record: LedgerRecord) -> dict[str, object]:
     """Project a ``ConfigLoaded`` record into its read-model entry.
@@ -111,6 +136,68 @@ def _gateway_projection(record: LedgerRecord) -> dict[str, object]:
     }
 
 
+def positions_read_model(records: list[LedgerRecord]) -> list[dict[str, object]]:
+    """Project the latest ``PositionsSnapshotRecorded`` into ``positions.json``.
+
+    Holds at most one entry -- the single most recent snapshot -- so a reader
+    sees the account's current positions, not its whole history. An empty list
+    when no such event has ever been ledgered.
+
+    Args:
+        records: The verified ledger records, in sequence order.
+
+    Returns:
+        A list with the latest snapshot's ``{seq, created_at, event_type, data}``
+        entry, or an empty list.
+    """
+    snapshots = [
+        _gateway_projection(record)
+        for record in records
+        if record.event_type == _POSITIONS_SNAPSHOT_RECORDED
+    ]
+    return snapshots[-1:]
+
+
+def equity_curve_read_model(records: list[LedgerRecord]) -> list[dict[str, object]]:
+    """Project every ``EquitySampled`` row, in ledger order, into ``equity_curve.json``.
+
+    Args:
+        records: The verified ledger records, in sequence order.
+
+    Returns:
+        One ``{seq, created_at, event_type, data}`` entry per equity sample.
+    """
+    return [
+        _gateway_projection(record)
+        for record in records
+        if record.event_type == _EQUITY_SAMPLED
+    ]
+
+
+def selector_decisions_read_model(
+    records: list[LedgerRecord],
+) -> list[dict[str, object]]:
+    """Project the interleaved selector/intent trail into ``selector_decisions.json``.
+
+    Folds each ``SelectorDecisionRecorded`` plus the bare
+    ``IntentApproved``/``IntentVetoed`` verdicts the Risk Kernel emits, in ledger
+    order, so a reader can follow each forecast's decision through to its
+    approval or veto.
+
+    Args:
+        records: The verified ledger records, in sequence order.
+
+    Returns:
+        One ``{seq, created_at, event_type, data}`` entry per selector/intent
+        event, interleaved in ledger order.
+    """
+    return [
+        _gateway_projection(record)
+        for record in records
+        if record.event_type in _SELECTOR_DECISION_EVENT_TYPES
+    ]
+
+
 def _write_read_model(path: Path, rows: list[dict[str, object]]) -> None:
     """Write a read model as canonical JSON bytes with one trailing newline.
 
@@ -163,6 +250,16 @@ def rebuild(ledger_path: Path, output_dir: Path) -> None:
     _write_read_model(output_dir.joinpath(_CONFIG_VERSIONS_FILENAME), config_versions)
     _write_read_model(output_dir.joinpath(_MODE_HISTORY_FILENAME), mode_history)
     _write_read_model(output_dir.joinpath(_GATEWAY_EVENTS_FILENAME), gateway_events)
+    _write_read_model(
+        output_dir.joinpath(_POSITIONS_FILENAME), positions_read_model(records)
+    )
+    _write_read_model(
+        output_dir.joinpath(_EQUITY_CURVE_FILENAME), equity_curve_read_model(records)
+    )
+    _write_read_model(
+        output_dir.joinpath(_SELECTOR_DECISIONS_FILENAME),
+        selector_decisions_read_model(records),
+    )
 
 
 def rebuild_command(args: Namespace) -> int:

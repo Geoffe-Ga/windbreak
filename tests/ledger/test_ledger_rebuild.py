@@ -70,13 +70,15 @@ def _populate_interleaved_ledger(store: SqliteLedgerStore) -> None:
     )
 
 
-def test_rebuild_writes_only_the_three_documented_read_model_files(
+def test_rebuild_writes_only_the_documented_read_model_files(
     tmp_path: Path, deterministic_clock: Callable[[], datetime]
 ) -> None:
-    """Only the three documented read models ever appear in output_dir.
+    """Only the documented read models ever appear in output_dir.
 
-    `gateway_events.json` is unconditionally written (empty here, since no
-    gateway/recovery events are present), mirroring the other two.
+    Every read model is written unconditionally (empty here where no source
+    events are present) -- the original three plus the three PAPER-loop read
+    models issue #48 adds (`positions.json`, `equity_curve.json`,
+    `selector_decisions.json`).
     """
     db_path = tmp_path / "ledger.db"
     output_dir = tmp_path / "out"
@@ -89,8 +91,11 @@ def test_rebuild_writes_only_the_three_documented_read_model_files(
     produced = sorted(path.name for path in output_dir.iterdir())
     assert produced == [
         "config_versions.json",
+        "equity_curve.json",
         "gateway_events.json",
         "mode_history.json",
+        "positions.json",
+        "selector_decisions.json",
     ]
 
 

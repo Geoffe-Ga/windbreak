@@ -692,6 +692,181 @@ class ReturnToScreener(Event):
         _derive_typed_event(self, payload)
 
 
+@dataclass(frozen=True)
+class MarketSnapshotRecorded(Event):
+    """Records one PAPER-loop market snapshot's top of book (issue #48).
+
+    The best bid/ask are scaled-integer pips (never a float, SPEC S6.1) and each
+    is ``None`` for a missing (empty) book side, so a one-sided or empty book is
+    representable without fabricating a zero price.
+
+    Attributes:
+        ticker: The market the snapshot is for.
+        best_bid_pips: The top-of-book best YES bid, in pips, or ``None``.
+        best_ask_pips: The top-of-book best YES ask, in pips, or ``None``.
+        fetched_at_epoch_s: When the book was fetched, in whole epoch seconds.
+    """
+
+    ticker: str
+    best_bid_pips: int | None
+    best_ask_pips: int | None
+    fetched_at_epoch_s: int
+    event_type: str = field(init=False)
+    payload_schema_version: int = field(init=False)
+    payload: dict[str, object] = field(init=False)
+
+    def __post_init__(self) -> None:
+        """Assemble the payload and derive the base ``Event`` fields."""
+        payload: dict[str, object] = {
+            "ticker": self.ticker,
+            "best_bid_pips": self.best_bid_pips,
+            "best_ask_pips": self.best_ask_pips,
+            "fetched_at_epoch_s": self.fetched_at_epoch_s,
+        }
+        _derive_typed_event(self, payload)
+
+
+@dataclass(frozen=True)
+class ScreenDecisionRecorded(Event):
+    """Records one PAPER-loop screening verdict for a market (issue #48).
+
+    Attributes:
+        ticker: The market the verdict is for.
+        eligible: Whether the market passed screening.
+        blocked_by: The screening filters that blocked it (empty when eligible).
+    """
+
+    ticker: str
+    eligible: bool
+    blocked_by: list[str]
+    event_type: str = field(init=False)
+    payload_schema_version: int = field(init=False)
+    payload: dict[str, object] = field(init=False)
+
+    def __post_init__(self) -> None:
+        """Assemble the payload and derive the base ``Event`` fields."""
+        payload: dict[str, object] = {
+            "ticker": self.ticker,
+            "eligible": self.eligible,
+            "blocked_by": self.blocked_by,
+        }
+        _derive_typed_event(self, payload)
+
+
+@dataclass(frozen=True)
+class ForecastCreated(Event):
+    """Records one PAPER-loop forecast's headline figures (issue #48).
+
+    Attributes:
+        forecast_id: The forecast's deterministic id.
+        market_ticker: The market the forecast is for.
+        probability_ppm: The forecast probability, in parts-per-million.
+        eligible_for_live: Whether the forecast may back a live order.
+        abstention_reason: Why the engine abstained, or ``None`` when it did not.
+    """
+
+    forecast_id: str
+    market_ticker: str
+    probability_ppm: int
+    eligible_for_live: bool
+    abstention_reason: str | None
+    event_type: str = field(init=False)
+    payload_schema_version: int = field(init=False)
+    payload: dict[str, object] = field(init=False)
+
+    def __post_init__(self) -> None:
+        """Assemble the payload and derive the base ``Event`` fields."""
+        payload: dict[str, object] = {
+            "forecast_id": self.forecast_id,
+            "market_ticker": self.market_ticker,
+            "probability_ppm": self.probability_ppm,
+            "eligible_for_live": self.eligible_for_live,
+            "abstention_reason": self.abstention_reason,
+        }
+        _derive_typed_event(self, payload)
+
+
+@dataclass(frozen=True)
+class SelectorDecisionRecorded(Event):
+    """Records one PAPER-loop selector decision (issue #48).
+
+    Attributes:
+        forecast_id: The originating forecast's id.
+        market_ticker: The market the decision is for.
+        intent_count: How many normalized intents the selector emitted.
+        reasons: The selector's pinned reasons for its verdict.
+    """
+
+    forecast_id: str
+    market_ticker: str
+    intent_count: int
+    reasons: list[str]
+    event_type: str = field(init=False)
+    payload_schema_version: int = field(init=False)
+    payload: dict[str, object] = field(init=False)
+
+    def __post_init__(self) -> None:
+        """Assemble the payload and derive the base ``Event`` fields."""
+        payload: dict[str, object] = {
+            "forecast_id": self.forecast_id,
+            "market_ticker": self.market_ticker,
+            "intent_count": self.intent_count,
+            "reasons": self.reasons,
+        }
+        _derive_typed_event(self, payload)
+
+
+@dataclass(frozen=True)
+class EquitySampled(Event):
+    """Records one PAPER-loop equity sample against the floor (issue #48).
+
+    Every field is a scaled int (never a float, SPEC S6.1): ``equity_micros`` and
+    ``floor_micros`` are money-micros and ``epoch_s`` is whole epoch seconds.
+
+    Attributes:
+        equity_micros: The sampled account equity, in money-micros.
+        floor_micros: The configured equity floor, in money-micros.
+        epoch_s: When the sample was taken, in whole epoch seconds.
+    """
+
+    equity_micros: int
+    floor_micros: int
+    epoch_s: int
+    event_type: str = field(init=False)
+    payload_schema_version: int = field(init=False)
+    payload: dict[str, object] = field(init=False)
+
+    def __post_init__(self) -> None:
+        """Assemble the payload and derive the base ``Event`` fields."""
+        payload: dict[str, object] = {
+            "equity_micros": self.equity_micros,
+            "floor_micros": self.floor_micros,
+            "epoch_s": self.epoch_s,
+        }
+        _derive_typed_event(self, payload)
+
+
+@dataclass(frozen=True)
+class PositionsSnapshotRecorded(Event):
+    """Records one PAPER-loop snapshot of open positions (issue #48).
+
+    Attributes:
+        positions: One JSON-safe row per held position (empty when flat). Each
+            row's numeric fields (``quantity_centis``/``average_price_pips``) are
+            scaled ints, never floats.
+    """
+
+    positions: list[dict[str, object]]
+    event_type: str = field(init=False)
+    payload_schema_version: int = field(init=False)
+    payload: dict[str, object] = field(init=False)
+
+    def __post_init__(self) -> None:
+        """Assemble the payload and derive the base ``Event`` fields."""
+        payload: dict[str, object] = {"positions": self.positions}
+        _derive_typed_event(self, payload)
+
+
 #: Maps each event_type string to its class, so a persisted envelope can be
 #: reconstructed as ``EVENT_TYPES[event_type](component=..., **data)``.
 EVENT_TYPES: dict[str, type[Event]] = {
@@ -713,4 +888,10 @@ EVENT_TYPES: dict[str, type[Event]] = {
     "RecoveryCompleted": RecoveryCompleted,
     "MarketFreeze": MarketFreeze,
     "ReturnToScreener": ReturnToScreener,
+    "MarketSnapshotRecorded": MarketSnapshotRecorded,
+    "ScreenDecisionRecorded": ScreenDecisionRecorded,
+    "ForecastCreated": ForecastCreated,
+    "SelectorDecisionRecorded": SelectorDecisionRecorded,
+    "EquitySampled": EquitySampled,
+    "PositionsSnapshotRecorded": PositionsSnapshotRecorded,
 }

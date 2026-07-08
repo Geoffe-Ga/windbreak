@@ -22,8 +22,16 @@ from dataclasses import dataclass
 from http import HTTPStatus
 from typing import TYPE_CHECKING, cast
 
+from hedgekit.dashboard.views import (
+    render_decisions,
+    render_equity_vs_floor,
+    render_positions,
+)
+
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from hedgekit.dashboard.views import DashboardReadModels
 
 _LOGGER = logging.getLogger("hedgekit.dashboard")
 
@@ -31,8 +39,14 @@ _LOGGER = logging.getLogger("hedgekit.dashboard")
 #: forbids public inbound, so there is no code path to any other host.
 _BIND_HOST = "127.0.0.1"
 
-#: The single routable path; every other path is a 404.
+#: The status page's routable path; every non-routed path is a 404.
 _ROOT_PATH = "/"
+
+#: The PAPER-loop read-model view paths (issue #48), each gated behind the same
+#: bearer auth as ``/`` and rendered from the injected read-models source.
+_POSITIONS_PATH = "/positions"
+_EQUITY_PATH = "/equity"
+_DECISIONS_PATH = "/decisions"
 
 #: The Authorization scheme the bearer token must be presented under.
 _BEARER_PREFIX = "Bearer "
@@ -60,6 +74,42 @@ _STATUS_TEMPLATE = (
     "</body>\n"
     "</html>\n"
 )
+
+#: HTML skeleton for a PAPER-loop read-model view page. ``title`` is a trusted
+#: literal and ``body`` is already fully escaped by the view renderer.
+_VIEW_TEMPLATE = (
+    "<!DOCTYPE html>\n"
+    '<html lang="en">\n'
+    '<head><meta charset="utf-8"><title>hedgekit {title}</title></head>\n'
+    "<body>\n"
+    "{body}"
+    "</body>\n"
+    "</html>\n"
+)
+
+
+@dataclass(frozen=True)
+class _ViewSpec:
+    """One PAPER-loop read-model view's title, read model, and renderer.
+
+    Attributes:
+        title: The trusted page-title fragment (never ledger-derived).
+        attr: The :class:`~hedgekit.dashboard.views.DashboardReadModels`
+            attribute holding this view's rows.
+        render: The pure renderer projecting those rows into escaped HTML.
+    """
+
+    title: str
+    attr: str
+    render: Callable[[list[dict[str, object]]], str]
+
+
+#: The three PAPER-loop read-model views, keyed by their route path (issue #48).
+_VIEWS: dict[str, _ViewSpec] = {
+    _POSITIONS_PATH: _ViewSpec("positions", "positions", render_positions),
+    _EQUITY_PATH: _ViewSpec("equity", "equity_curve", render_equity_vs_floor),
+    _DECISIONS_PATH: _ViewSpec("decisions", "decisions", render_decisions),
+}
 
 
 @dataclass(frozen=True)
@@ -91,8 +141,9 @@ class _DashboardServer(http.server.ThreadingHTTPServer):
         *,
         token: str,
         status_source: Callable[[], DashboardStatus],
+        read_models_source: Callable[[], DashboardReadModels] | None = None,
     ) -> None:
-        """Bind the server and stash its auth token and status source.
+        """Bind the server and stash its auth token and data sources.
 
         Args:
             server_address: The ``(host, port)`` to bind.
@@ -100,10 +151,15 @@ class _DashboardServer(http.server.ThreadingHTTPServer):
             token: The expected bearer token for every authenticated request.
             status_source: Zero-arg callable returning the current status,
                 invoked fresh on each authenticated request.
+            read_models_source: Zero-arg callable returning the current PAPER-loop
+                read models, invoked fresh on each authenticated view request, or
+                ``None`` (the default) to render every view's "no data yet"
+                placeholder.
         """
         super().__init__(server_address, handler_class)
         self.token = token
         self.status_source = status_source
+        self.read_models_source = read_models_source
 
 
 class _DashboardHandler(http.server.BaseHTTPRequestHandler):
@@ -119,19 +175,35 @@ class _DashboardHandler(http.server.BaseHTTPRequestHandler):
         return cast("_DashboardServer", self.server)
 
     def do_GET(self) -> None:
-        """Route ``GET`` requests: 404 off-root, 401 unauthenticated, else 200.
+        """Route ``GET`` requests: 404 off-route, 401 unauthenticated, else 200.
+
+        The status page (``/``) and the three PAPER-loop read-model views
+        (``/positions``/``/equity``/``/decisions``, issue #48) share the same
+        timing-safe bearer gate; every other path is a 404 regardless of auth.
 
         Named ``do_GET`` because :class:`http.server.BaseHTTPRequestHandler`
         dispatches by ``"do_" + command``; the name is fixed by that contract,
         not a style choice (see the ``ignore-names`` ruff config).
         """
-        if self.path != _ROOT_PATH:
-            self._send(HTTPStatus.NOT_FOUND, _NOT_FOUND_BODY, "text/plain")
+        if self.path == _ROOT_PATH:
+            self._authorized_or(self._send_status)
             return
+        view = _VIEWS.get(self.path)
+        if view is not None:
+            self._authorized_or(lambda: self._send_view(view))
+            return
+        self._send(HTTPStatus.NOT_FOUND, _NOT_FOUND_BODY, "text/plain")
+
+    def _authorized_or(self, send_ok: Callable[[], None]) -> None:
+        """Run ``send_ok`` when the request is authorized, else send a 401.
+
+        Args:
+            send_ok: The zero-arg responder to invoke on a valid bearer token.
+        """
         if not self._is_authorized():
             self._send_unauthorized()
             return
-        self._send_status()
+        send_ok()
 
     def _is_authorized(self) -> bool:
         """Return whether the request carries the exact bearer token.
@@ -173,6 +245,23 @@ class _DashboardHandler(http.server.BaseHTTPRequestHandler):
             mode=html.escape(status.mode),
             heartbeat=html.escape(heartbeat),
         )
+        self._send(HTTPStatus.OK, body, "text/html")
+
+    def _send_view(self, view: _ViewSpec) -> None:
+        """Render one PAPER-loop read-model view (read fresh) as a 200.
+
+        With no ``read_models_source`` wired, the view renders over an empty row
+        list -- the documented "no data yet" placeholder -- rather than 404ing or
+        500ing, mirroring the ``last_heartbeat=None`` -> ``"never"`` precedent.
+
+        Args:
+            view: The view spec selecting the read model and its renderer.
+        """
+        source = self._dashboard_server.read_models_source
+        rows: list[dict[str, object]] = (
+            [] if source is None else getattr(source(), view.attr)
+        )
+        body = _VIEW_TEMPLATE.format(title=view.title, body=view.render(rows))
         self._send(HTTPStatus.OK, body, "text/html")
 
     def _send(
@@ -224,6 +313,7 @@ def create_server(
     token: str,
     status_source: Callable[[], DashboardStatus],
     port: int,
+    read_models_source: Callable[[], DashboardReadModels] | None = None,
 ) -> http.server.ThreadingHTTPServer:
     """Build a loopback-bound dashboard server guarded by a bearer token.
 
@@ -236,6 +326,11 @@ def create_server(
             :class:`DashboardStatus`, invoked fresh on each authenticated
             request so responses always reflect live state.
         port: The loopback TCP port to bind. ``0`` binds an OS-assigned port.
+        read_models_source: Zero-arg callable returning the current PAPER-loop
+            :class:`~hedgekit.dashboard.views.DashboardReadModels`, invoked fresh
+            on each authenticated view request. ``None`` (the default) renders
+            every view's "no data yet" placeholder, so the three view routes
+            still 200 rather than 404 before any PAPER data exists (issue #48).
 
     Returns:
         A :class:`http.server.ThreadingHTTPServer` bound to
@@ -251,4 +346,5 @@ def create_server(
         _DashboardHandler,
         token=token,
         status_source=status_source,
+        read_models_source=read_models_source,
     )

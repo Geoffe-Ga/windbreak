@@ -49,6 +49,10 @@ if TYPE_CHECKING:
 #: approval-token claims carry money-bearing fields (max_fee_micros, ...).
 #: Issue #43 extends the path with the ``hedgekit/selector`` package, whose
 #: decisions carry price/size/notional/probability intents (SPEC S9.1).
+#: Issue #48 extends the path with the ``hedgekit/scheduler`` package, the
+#: always-on PAPER composition root, whose tick computes equity/positions in
+#: scaled-integer micros/centis (SPEC S6.1) -- a strengthening of the gate over
+#: the new money-handling package, never a weakening.
 DENYLISTED_PACKAGES: tuple[str, ...] = (
     "hedgekit/numeric",
     "hedgekit/ledger",
@@ -58,6 +62,7 @@ DENYLISTED_PACKAGES: tuple[str, ...] = (
     "hedgekit/forecast",
     "hedgekit/tokens",
     "hedgekit/selector",
+    "hedgekit/scheduler",
 )
 
 FLOAT_LITERAL_CODE = "FLOAT-001"
