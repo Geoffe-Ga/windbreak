@@ -208,19 +208,32 @@ def _category_eligible() -> EntryCheck:
 def _price_within_bands(inputs: SelectorInputs, figures: EdgeFigures) -> EntryCheck:
     """Check the executable price sits inside the open-price band (SPEC S9.4).
 
-    Consuming the configured band bounds is the whole obligation here; the
-    execution-style band logic is deferred to issue #46.
+    On failure the ``detail`` leads with a greppable token -- ``price_below_min_
+    open_band`` (price below the floor) or ``price_above_max_open_band`` (price
+    above the ceiling), issue #46 -- so a downstream ledger reader can grep the
+    exact band-fail direction from the rendered ``fail:price_within_bands: ...``
+    reason, rather than reconstructing it from a bare price value. The pass-path
+    ``detail`` is unchanged (the goldens depend on its byte-stable form).
     """
     risk = inputs.risk_config.config
     price = figures.executable_price_pips.value
-    within = risk.min_open_price_pips <= price <= risk.max_open_price_pips
+    band = f"band=[{risk.min_open_price_pips},{risk.max_open_price_pips}]"
+    if price < risk.min_open_price_pips:
+        return EntryCheck(
+            name="price_within_bands",
+            passed=False,
+            detail=f"price_below_min_open_band executable_price_pips={price} {band}",
+        )
+    if price > risk.max_open_price_pips:
+        return EntryCheck(
+            name="price_within_bands",
+            passed=False,
+            detail=f"price_above_max_open_band executable_price_pips={price} {band}",
+        )
     return EntryCheck(
         name="price_within_bands",
-        passed=within,
-        detail=(
-            f"executable_price_pips={price} "
-            f"band=[{risk.min_open_price_pips},{risk.max_open_price_pips}]"
-        ),
+        passed=True,
+        detail=f"executable_price_pips={price} {band}",
     )
 
 

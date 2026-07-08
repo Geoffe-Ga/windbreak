@@ -40,9 +40,16 @@ values live inside the already unit-typed
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, TypeAlias
+from typing import TYPE_CHECKING, Literal, TypeAlias
 
 from hedgekit.riskkernel.checks import OrderIntent
+
+#: The two execution styles the selector may stamp on an opening intent (SPEC
+#: S9.7). ``"cross"`` takes liquidity now (the default); ``"rest_inside_spread"``
+#: posts a passive resting order priced inside a wide spread, permitted only when
+#: :func:`hedgekit.selector.execution_style.decide_execution_style` proves the
+#: improved price still clears the edge floor.
+ExecutionStyle: TypeAlias = Literal["cross", "rest_inside_spread"]
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -151,13 +158,81 @@ class PositionReadModelInput:
     notional_today: MoneyMicros
 
 
-#: The selector's order-intent type is, by construction, the very
-#: :class:`~hedgekit.riskkernel.checks.OrderIntent` the Risk Kernel consumes
-#: (SPEC S6.4 + S9.1): the selector emits *already-normalized* intents, so its
-#: output surface aligns with what the order-gateway forwards to the kernel
-#: with no translation step. It is a genuine ``TypeAlias`` -- the identity of
-#: ``OrderIntent`` -- never a parallel redefinition that could drift.
-NormalizedOrderIntent: TypeAlias = OrderIntent
+@dataclass(frozen=True)
+class SelectorOrderIntent(OrderIntent):
+    """A normalized order intent enriched with SPEC S6.4 execution-style fields.
+
+    A genuine subclass of the Risk Kernel's
+    :class:`~hedgekit.riskkernel.checks.OrderIntent` (IS-A, never a parallel
+    redefinition), so a selector-built intent is still directly accepted by the
+    kernel -- whose 24 pre-trade checks read only the base ``OrderIntent`` fields
+    every ``SelectorOrderIntent`` still carries. It *extends by inheritance* with
+    the three SPEC S6.4/S9.7 execution-style / adverse-selection fields the kernel
+    veto shape omits, so there is zero field drift between the two.
+
+    ``slots`` is deliberately not enabled (matching the base ``OrderIntent``,
+    whose own docstring documents why: on CPython, ``frozen`` + ``slots`` routes
+    an undeclared-attribute assignment through a stale ``super()`` cell that
+    raises the wrong error). The three added fields are trailing and defaulted so
+    every base positional/keyword construction still type-checks unchanged.
+
+    Attributes:
+        execution_style: How the intent takes liquidity -- ``"cross"`` (the
+            default: cross the spread now) or ``"rest_inside_spread"`` (post a
+            passive resting order inside a wide spread, SPEC S9.7).
+        resting_ttl_seconds: For a resting intent, how long the passive order may
+            rest before cancellation, in seconds; ``None`` for a ``cross`` intent.
+        cancel_on_move_ticks: For a resting intent, the adverse price move (in
+            ticks) that cancels the resting order; ``None`` for a ``cross`` intent.
+    """
+
+    execution_style: ExecutionStyle = "cross"
+    resting_ttl_seconds: int | None = None
+    cancel_on_move_ticks: int | None = None
+
+    def __post_init__(self) -> None:
+        """Enforce the execution-style / resting-fields invariant (SPEC S9.7).
+
+        A ``rest_inside_spread`` intent must carry *both* resting fields (a
+        passive order needs a ttl and a cancel-on-move guard), and a ``cross``
+        intent must carry *neither* (crossing rests nothing). The base
+        ``OrderIntent`` defines no ``__post_init__``, so no ``super()`` call is
+        needed.
+
+        Raises:
+            ValueError: If a ``rest_inside_spread`` intent is missing either
+                resting field, or a ``cross`` intent supplies either one.
+        """
+        both_present = (
+            self.resting_ttl_seconds is not None
+            and self.cancel_on_move_ticks is not None
+        )
+        both_absent = (
+            self.resting_ttl_seconds is None and self.cancel_on_move_ticks is None
+        )
+        if self.execution_style == "rest_inside_spread" and not both_present:
+            raise ValueError(
+                "rest_inside_spread requires both resting_ttl_seconds and "
+                "cancel_on_move_ticks to be set"
+            )
+        if self.execution_style == "cross" and not both_absent:
+            raise ValueError(
+                "cross requires both resting_ttl_seconds and cancel_on_move_ticks "
+                "to be None"
+            )
+
+
+#: The selector's order-intent type: since issue #46 it is
+#: :class:`SelectorOrderIntent`, a genuine subclass of the Risk Kernel's
+#: :class:`~hedgekit.riskkernel.checks.OrderIntent` that *extends it by
+#: inheritance* (never a parallel redefinition, so zero field drift) with the
+#: SPEC S6.4/S9.7 execution-style and adverse-selection fields the kernel veto
+#: shape omits. A selector-built intent still IS-A kernel ``OrderIntent`` and is
+#: accepted unchanged by the kernel's checks, which read only the base fields.
+#: This supersedes the issue-#43/#44 ``NormalizedOrderIntent is OrderIntent``
+#: identity -- the same documented-supersession precedent this package already
+#: applies elsewhere (e.g. the sizing-shaped golden superseding the stub one).
+NormalizedOrderIntent: TypeAlias = SelectorOrderIntent
 
 
 @dataclass(frozen=True, slots=True)
