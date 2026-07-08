@@ -1,4 +1,4 @@
-"""Golden determinism harness for hedgekit.selector.select (issue #43).
+"""Golden determinism harness for hedgekit.selector.select (issues #43/#44).
 
 The whole point of this module: `select` + `serialize_decision` over a fixed
 input must produce byte-identical output every time it is called, in-process
@@ -7,10 +7,15 @@ of proof, from weakest to strongest:
 
 1. `test_select_is_byte_identical_on_recorded_inputs` -- the issue's own
    verbatim claim: two in-process calls over the same recorded bundle agree.
-2. `test_stub_returns_zero_intents_with_reason` -- pins the *shape* of the
-   issue-#43 stub (zero intents, a `"stub: ..."` reason) so a later issue
-   cannot quietly start fabricating intents before the real selection logic
-   (SPEC S9.2-S9.5, issues #44-#47) exists.
+2. `test_bundle_a_decision_emits_exactly_one_named_yes_buy_intent` -- pins the
+   *shape* of issue #44's real selection logic on bundle A: SPEC S9.1-S9.3
+   evaluate every named condition into `reasons` (never silently empty) and,
+   because bundle A hand-verifiably passes all twelve (see the per-condition
+   values in `tests/selector/fixtures/bundle_a.json` against
+   `tests/selector/test_entry_conditions.py`'s baseline scenario), emit
+   exactly one `"yes"`/`"buy"` intent -- superseding the issue-#43 stub's
+   "always zero intents" pin now that real selection logic exists (SPEC
+   S9.2-S9.3, issue #44).
 3. `test_serialized_output_matches_committed_golden` -- compares against a
    *committed* golden file, so a silent change to field order/formatting is
    caught even if it happens to still be self-consistent.
@@ -33,12 +38,19 @@ the live serialized output before diffing, and
 golden is always exactly ``serialize_decision(...) + "\n"``.
 
 Golden-file regeneration: the two `fixtures/*.golden` files committed
-alongside this module hold the correct issue-#43 **stub** output -- an empty
-`intents` list and the single `"stub: ..."` reason. They will need
-regeneration only once a later issue (#44+) makes `select` emit non-empty
-intents and thereby changes the serialized bytes. Regenerate each from an
-actual `select`/`serialize_decision` run -- never hand-fabricate the bytes,
-and always append the single trailing newline the convention requires:
+alongside this module hold issue #44's real `select` output, regenerated from
+an actual `select`/`serialize_decision` run (never hand-fabricated). Bundle A
+hand-verifiably passes all twelve SPEC S9.3 conditions (per
+`test_bundle_a_decision_emits_exactly_one_named_yes_buy_intent` above) and so
+emits one real intent; bundle B declines for four named reasons -- `net_edge_
+min` (gross edge is already negative: probability 310_000 ppm vs. the walked
+executable price 320_000 ppm), `annualized_hurdle` (the resulting negative net
+edge annualizes below the configured hurdle), `ci_straddles_executable_price`
+(its CI [250_000, 380_000] straddles the 320_000 ppm executable price), and
+`forecast_live_eligible` (`eligible_for_live=False`, forced by its
+`abstention_reason`). Regenerate either golden the same way after any change
+to `select`'s logic or these bundles' fixtures -- never hand-fabricate the
+bytes, and always append the single trailing newline the convention requires:
 
     python -c "
     from tests.selector.fixture_loader import load_inputs
@@ -105,19 +117,23 @@ def test_select_is_byte_identical_on_recorded_inputs(bundle_name: str) -> None:
     assert serialize_decision(select(inputs)) == serialize_decision(select(inputs))
 
 
-def test_stub_returns_zero_intents_with_reason(
+def test_bundle_a_decision_emits_exactly_one_named_yes_buy_intent(
     recorded_inputs_bundle_a: SelectorInputs,
 ) -> None:
-    """The stub `select` returns zero intents and a `"stub: ..."` reason.
-
-    Pins the not-yet-implemented stub's exact contract: it must never raise
-    and never fabricate an intent -- only explain itself via `reasons`.
+    """Bundle A hand-verifiably passes all twelve SPEC S9.3 conditions (see
+    this module's docstring), so `select` must emit exactly one intent -- on
+    the `"yes"` outcome, a `"buy"` action -- and a non-empty, named set of
+    reasons. Supersedes the issue-#43 stub's "always zero intents" pin now
+    that real selection logic exists (SPEC S9.2-S9.3, issue #44).
     """
     decision = select(recorded_inputs_bundle_a)
 
-    assert decision.intents == ()
+    assert len(decision.intents) == 1
+    intent = decision.intents[0]
+    assert intent.outcome == "yes"
+    assert intent.action == "buy"
     assert decision.reasons
-    assert decision.reasons[0].startswith("stub:")
+    assert all(reason for reason in decision.reasons)
 
 
 @pytest.mark.parametrize("bundle_name", _BUNDLE_NAMES)
