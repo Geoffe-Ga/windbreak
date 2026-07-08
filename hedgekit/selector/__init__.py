@@ -1,4 +1,4 @@
-"""The selector: pure forecast-to-intent decision stage (SPEC S9.1-S9.3).
+"""The selector: pure forecast-to-intent decision stage (SPEC S9.1-S9.6).
 
 The selector turns a forecast plus market and account context into a
 ledgerable :class:`SelectorDecision`. Per SPEC S9.1 it is *pure,
@@ -10,10 +10,15 @@ the same inputs always yield the same, byte-identically serializable decision.
 Issue #44 lands the real fee-aware edge and entry logic (SPEC S9.2-S9.3):
 :func:`select` prices a fixed-size probe fill via
 :func:`~hedgekit.selector.edge.compute_executable_edge`, renders every SPEC
-S9.3 entry condition into ``reasons`` (never silently empty), and emits exactly
-one normalized ``yes``/``buy`` intent when -- and only when -- every condition
-passes. Sizing (SPEC S9.5, issue #45) is not built yet, so the probe uses a
-fixed :data:`_PROBE_SIZE_CENTIS` placeholder.
+S9.3 entry condition into ``reasons`` (never silently empty), and only proceeds
+when every condition passes. Issue #45 lands sizing (SPEC S9.5/S9.6): when the
+twelve conditions pass, :func:`select` computes the dispersion-scaled
+fractional-Kelly stake (:func:`~hedgekit.selector.sizing.kelly_size`), clips it
+through the notional/participation caps
+(:func:`~hedgekit.selector.sizing.clip_to_caps`), re-prices the fill at that
+final size, and emits exactly one normalized ``yes``/``buy`` intent sized to it
+-- or declines (no intent) with a pinned sizing reason when the size clips to
+zero.
 """
 
 from __future__ import annotations
@@ -25,6 +30,7 @@ from hedgekit.ledger.events import canonical_json
 from hedgekit.numeric import ContractCentis, MoneyMicros, ProbabilityPpm
 from hedgekit.riskkernel.checks import OrderIntent
 from hedgekit.selector.edge import (
+    EdgeFigures,
     InsufficientDepth,
     NonAnnualizable,
     _fee_micros,
@@ -32,10 +38,15 @@ from hedgekit.selector.edge import (
 )
 from hedgekit.selector.entry import evaluate_entry_conditions
 from hedgekit.selector.serialization import serialize_decision
+from hedgekit.selector.sizing import (
+    clip_to_caps,
+    dispersion_scale,
+    kelly_size,
+)
 from hedgekit.selector.types import (
     FeeModelInput,
     NormalizedOrderIntent,
-    PositionReadModelRef,
+    PositionReadModelInput,
     RiskConfigInput,
     SelectorDecision,
     SelectorInputs,
@@ -43,13 +54,15 @@ from hedgekit.selector.types import (
 )
 
 if TYPE_CHECKING:
-    from hedgekit.selector.edge import EdgeFigures
+    from hedgekit.connector.models import OrderBookSnapshot
     from hedgekit.selector.entry import EntryCheck
+    from hedgekit.selector.sizing import CapClipResult
 
-#: The probe size every evaluation prices at until real sizing lands (SPEC
-#: S9.5, issue #45): a small fixed 1.00-contract order, enough to exercise the
-#: fee-aware edge and entry logic without committing to a sizing model that
-#: does not exist yet.
+#: The probe size that gates entry, before sizing runs (SPEC S9.2-S9.3): a fixed
+#: 1.00-contract fill priced only to feed the twelve entry conditions their
+#: executable-edge figures. It is *no longer the emitted size* -- once every
+#: condition passes, the real dispersion-scaled Kelly size (issue #45)
+#: determines the fill, which is then re-priced at that size.
 _PROBE_SIZE_CENTIS = ContractCentis(100)
 
 #: The single outcome/action the selector emits today: a YES-side opening buy.
@@ -57,14 +70,25 @@ _PROBE_SIZE_CENTIS = ContractCentis(100)
 _OUTCOME_YES = "yes"
 _ACTION_BUY = "buy"
 
+#: The intent-id suffix marking a real, dispersion-scaled-Kelly-sized intent
+#: (issue #45), distinguishing it from the pre-sizing ``:probe`` shape.
+_SIZED_SUFFIX = "sized"
+
+#: Ppm-of-$1 per pip: a pip is 1e-4 $ and a ppm is 1e-6 $, so one pip is 100 ppm.
+#: Converts a level's pip price into the ppm-of-$1 the notional caps clip at.
+_PPM_PER_PIP = 100
+
 __all__ = [
     "FeeModelInput",
     "NormalizedOrderIntent",
-    "PositionReadModelRef",
+    "PositionReadModelInput",
     "RiskConfigInput",
     "SelectorDecision",
     "SelectorInputs",
     "SlippageModelInput",
+    "clip_to_caps",
+    "dispersion_scale",
+    "kelly_size",
     "select",
     "serialize_decision",
 ]
@@ -115,15 +139,21 @@ def _idempotency_key(
     return hashlib.sha256(canonical_json(fields).encode("utf-8")).hexdigest()
 
 
-def _build_intent(inputs: SelectorInputs, figures: EdgeFigures) -> OrderIntent:
-    """Build the single normalized intent for an all-pass evaluation (S9.1).
+def _build_intent(
+    inputs: SelectorInputs, figures: EdgeFigures, size: ContractCentis
+) -> OrderIntent:
+    """Build the single normalized intent for an all-pass, sized evaluation (S9.5).
 
-    Prices at the marginal (deepest-walked) level, sizes at the fixed probe, and
-    caps the notional at the fill's executable cost plus its worst-case fee.
+    Prices at the marginal (deepest-walked) level of the fill re-priced at the
+    final Kelly-clipped ``size``, and caps the notional at that fill's executable
+    cost plus its worst-case fee. The ``:sized`` intent-id suffix and the
+    size-hashed idempotency key reflect the real dispersion-scaled Kelly size
+    (issue #45), not the pre-sizing probe.
 
     Args:
         inputs: The selector inputs the intent is derived from.
-        figures: The executable-edge figures the fill was priced at.
+        figures: The executable-edge figures for the fill priced at ``size``.
+        size: The final, cap-clipped size to emit, in contract-centis.
 
     Returns:
         The normalized :class:`~hedgekit.riskkernel.checks.OrderIntent` to emit.
@@ -131,22 +161,23 @@ def _build_intent(inputs: SelectorInputs, figures: EdgeFigures) -> OrderIntent:
     forecast = inputs.forecast
     price = figures.marginal_price_pips
     fee_micros = _fee_micros(
-        inputs.fee_model, figures.executable_price_pips.value, _PROBE_SIZE_CENTIS.value
+        inputs.fee_model, figures.executable_price_pips.value, size.value
     )
+    intent_id = f"{forecast.forecast_id}:{_OUTCOME_YES}:{_ACTION_BUY}:{_SIZED_SUFFIX}"
     return OrderIntent(
-        intent_id=f"{forecast.forecast_id}:{_OUTCOME_YES}:{_ACTION_BUY}:probe",
+        intent_id=intent_id,
         market_ticker=forecast.market_ticker,
         outcome=_OUTCOME_YES,
         action=_ACTION_BUY,
         price=price,
-        size=_PROBE_SIZE_CENTIS,
+        size=size,
         max_notional=MoneyMicros(figures.executable_cost_micros.value + fee_micros),
         implied_probability=ProbabilityPpm(forecast.probability_ppm),
         idempotency_key=_idempotency_key(
             forecast.forecast_id,
             forecast.market_ticker,
             price.value,
-            _PROBE_SIZE_CENTIS.value,
+            size.value,
         ),
     )
 
@@ -176,26 +207,132 @@ def _decision(
     )
 
 
+def _sizing_reason(raw: ContractCentis, g_ppm: int, clip: CapClipResult) -> str:
+    """Render the pinned sizing reason naming the raw size, scale, and outcome.
+
+    Args:
+        raw: The raw fractional-Kelly size before capping, in contract-centis.
+        g_ppm: The dispersion scale applied, in ppm.
+        clip: The cap-clip result carrying the final size and binding cap.
+
+    Returns:
+        ``"sizing: raw_centis=<R> g_ppm=<G> binding_cap=<C> final_centis=<F>"``,
+        with ``<C>`` the binding cap name or ``"none"``.
+    """
+    return (
+        f"sizing: raw_centis={raw.value} g_ppm={g_ppm} "
+        f"binding_cap={clip.binding_cap or 'none'} final_centis={clip.size.value}"
+    )
+
+
+def _cap_reference_price_ppm(order_book: OrderBookSnapshot) -> int:
+    """Return the worst-case per-contract price the notional caps clip at (S9.6).
+
+    The deepest resting ask's price (``yes_asks`` is best-first, so the last
+    level), in ppm-of-$1. Any participation-limited fill's executable VWAP is at
+    most this price, so a notional cap that holds at it also holds at the fill's
+    own -- never higher -- executable price: the cap is measured against the
+    dearest contract the fill could pay for, never the cheaper probe price (which
+    would understate the fill's cost and over-size the position). Called only
+    after the probe fill priced, so ``yes_asks`` is non-empty.
+
+    Args:
+        order_book: The market's order-book snapshot.
+
+    Returns:
+        The deepest ask's price, in ppm-of-$1.
+    """
+    return order_book.yes_asks[-1].price.value * _PPM_PER_PIP
+
+
+def _size_and_emit(
+    inputs: SelectorInputs, figures: EdgeFigures, reasons: tuple[str, ...]
+) -> SelectorDecision:
+    """Size an all-pass evaluation and emit the sized intent, or decline (S9.5/S9.6).
+
+    Computes the dispersion scale and the fractional-Kelly stake against the
+    probe-priced edge, clips it through the notional/participation caps -- the
+    notional caps measured at the fill's worst-case per-contract price
+    (:func:`_cap_reference_price_ppm`) so they hold at whatever price the
+    participation-limited fill actually pays -- and, when the size survives,
+    re-prices the fill at that final size before emitting one intent. A size
+    clipped to zero, an unfillable re-walk (defensive), or a net edge that no
+    longer clears the floor at the final size each decline with a pinned reason
+    appended after the twelve entry reasons.
+
+    Args:
+        inputs: The evaluated selector inputs.
+        figures: The probe-priced executable-edge figures the entry checks used.
+        reasons: The twelve rendered entry-condition reasons.
+
+    Returns:
+        The decision: one sized intent plus the sizing reason, or no intent plus
+        a pinned decline reason.
+    """
+    risk = inputs.risk_config.config
+    g_ppm = dispersion_scale(
+        inputs.forecast.vote_dispersion_ppm, risk.dispersion_zero_ceiling_ppm
+    )
+    raw = kelly_size(
+        net_edge_ppm=figures.research_cost_adjusted_edge_ppm,
+        min_net_edge_ppm=risk.min_net_edge_ppm,
+        executable_price_ppm=figures.executable_price_ppm,
+        kelly_fraction_ppm=risk.kelly_fraction_ppm,
+        dispersion_scale_ppm=g_ppm,
+        above_floor_capital_micros=inputs.positions.above_floor_capital_micros,
+    )
+    clip = clip_to_caps(
+        raw,
+        executable_price_ppm=_cap_reference_price_ppm(inputs.order_book),
+        order_book=inputs.order_book,
+        risk_config=risk,
+        positions=inputs.positions,
+    )
+    sizing_reason = _sizing_reason(raw, g_ppm, clip)
+    if clip.size.value == 0:
+        return _decision(inputs, (), (*reasons, sizing_reason))
+
+    final = compute_executable_edge(
+        order_book=inputs.order_book,
+        size=clip.size,
+        forecast=inputs.forecast,
+        fee_model=inputs.fee_model,
+        slippage_model=inputs.slippage_model,
+    )
+    if not isinstance(final, EdgeFigures):
+        return _decision(inputs, (), (*reasons, final.reason))
+    net = final.research_cost_adjusted_edge_ppm
+    if net < risk.min_net_edge_ppm:
+        detail = f"net_edge_ppm={net} min_net_edge_ppm={risk.min_net_edge_ppm}"
+        reason = f"fail:net_edge_at_final_size: {detail}"
+        return _decision(inputs, (), (*reasons, reason))
+    intent = _build_intent(inputs, final, clip.size)
+    return _decision(inputs, (intent,), (*reasons, sizing_reason))
+
+
 def select(inputs: SelectorInputs) -> SelectorDecision:
-    """Evaluate the selector inputs into a decision (SPEC S9.1-S9.3).
+    """Evaluate the selector inputs into a decision (SPEC S9.1-S9.6).
 
     Prices a fixed-size probe fill (SPEC S9.2). If the book is too shallow to
     fill it, declines with the depth-shortfall reason and no intents; if the
     fill priced but its return cannot be annualized (a 0-pip price or a
     zero-hour forecast horizon), declines with the non-annualizable reason and
     no intents. Otherwise renders every SPEC S9.3 entry condition into
-    ``reasons`` and, only when all twelve pass, emits exactly one normalized
-    ``yes``/``buy`` intent. Reads no clock and does no I/O, so the decision is a
-    pure function of ``inputs``.
+    ``reasons``; only when all twelve pass does it size the position (SPEC
+    S9.5/S9.6) -- the dispersion-scaled fractional-Kelly stake, clipped through
+    the notional and participation caps and re-priced at the final size -- and
+    emit exactly one normalized ``yes``/``buy`` intent, or decline with a pinned
+    sizing reason when the size clips to zero. Reads no clock and does no I/O, so
+    the decision is a pure function of ``inputs``.
 
     Args:
         inputs: The complete, immutable input bundle to evaluate.
 
     Returns:
         A :class:`SelectorDecision` carrying the emitted intents (one when every
-        entry condition passes, none otherwise) and the non-empty reasons for
-        the verdict, alongside the forecast id, market ticker, and
-        calibration-map version carried over from ``inputs``.
+        entry condition passes and the size survives capping, none otherwise)
+        and the non-empty reasons for the verdict, alongside the forecast id,
+        market ticker, and calibration-map version carried over from ``inputs``.
     """
     figures = compute_executable_edge(
         order_book=inputs.order_book,
@@ -209,6 +346,6 @@ def select(inputs: SelectorInputs) -> SelectorDecision:
 
     checks = evaluate_entry_conditions(inputs, figures)
     reasons = tuple(_render(check) for check in checks)
-    if all(check.passed for check in checks):
-        return _decision(inputs, (_build_intent(inputs, figures),), reasons)
-    return _decision(inputs, (), reasons)
+    if not all(check.passed for check in checks):
+        return _decision(inputs, (), reasons)
+    return _size_and_emit(inputs, figures, reasons)

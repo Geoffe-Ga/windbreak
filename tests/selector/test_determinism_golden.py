@@ -1,4 +1,4 @@
-"""Golden determinism harness for hedgekit.selector.select (issues #43/#44).
+"""Golden determinism harness for hedgekit.selector.select (issues #43/#44/#45).
 
 The whole point of this module: `select` + `serialize_decision` over a fixed
 input must produce byte-identical output every time it is called, in-process
@@ -38,11 +38,14 @@ the live serialized output before diffing, and
 golden is always exactly ``serialize_decision(...) + "\n"``.
 
 Golden-file regeneration: the two `fixtures/*.golden` files committed
-alongside this module hold issue #44's real `select` output, regenerated from
-an actual `select`/`serialize_decision` run (never hand-fabricated). Bundle A
-hand-verifiably passes all twelve SPEC S9.3 conditions (per
+alongside this module hold real `select` output, regenerated from an actual
+`select`/`serialize_decision` run (never hand-fabricated) -- bundle A at the
+post-#45 sized shape (see the issue-#45 note below), bundle B at the #44 shape
+(it declines before sizing). Bundle A hand-verifiably passes all twelve SPEC
+S9.3 conditions (per
 `test_bundle_a_decision_emits_exactly_one_named_yes_buy_intent` above) and so
-emits one real intent; bundle B declines for four named reasons -- `net_edge_
+emits one real, Kelly-sized intent; bundle B declines for four named
+reasons -- `net_edge_
 min` (gross edge is already negative: probability 310_000 ppm vs. the walked
 executable price 320_000 ppm), `annualized_hurdle` (the resulting negative net
 edge annualizes below the configured hurdle), `ci_straddles_executable_price`
@@ -61,6 +64,41 @@ bytes, and always append the single trailing newline the convention requires:
     "
 
 (substitute ``bundle_b`` for the second file).
+
+Issue #45 (dispersion-scaled Kelly sizing): bundle A's ``positions`` object
+(equity/capital huge, every exposure and ``notional_today`` zero -- see
+``tests/selector/fixtures/bundle_a.json``) is deliberately generous enough
+that none of the five notional caps or the participation cap ever bind, so
+Kelly sizing alone determines bundle A's emitted size. Hand computation, off
+the probe-size (100-centi) figures already pinned in
+``test_entry_conditions.py``'s bundle-A cross-reference (probability
+620_000 ppm, executable price 460_000 ppm, net edge
+`research_cost_adjusted_edge_ppm` 110_000 ppm):
+
+    g = dispersion_scale(vote_dispersion_ppm=40_000, ceiling=200_000)
+      = divide((200_000-40_000)*1_000_000, 200_000, floor) = 800_000
+    stake_micros = divide(100_000_000*110_000*100_000*800_000,
+                           540_000*10**12, floor)
+                 = divide(8.8*10**23, 5.4*10**17, floor) = 1_629_629
+    raw_size_centis = divide(1_629_629*100, 460_000, floor)
+                    = divide(162_962_900, 460_000, floor) = 354
+        (460_000*354=162_840_000; remainder=122_900 < 460_000)
+    No cap binds (`binding_cap=None`) -> floor-to-100 quantization takes
+    354 -> 300 -- bundle A's real, post-issue-#45 emitted size is
+    `ContractCentis(300)`, priced at the re-walked marginal 4_600 pips
+    (still within the book's now-deepened first level; unchanged from the
+    probe's own marginal price, since 300 <= 50_000).
+
+`bundle_a.golden` has been regenerated (via the command above) to this
+post-#45 sized shape (`intent_id` suffix `:sized`, `size=300`, thirteen
+reasons ending in the pinned ``sizing: raw_centis=354 g_ppm=800000
+binding_cap=none final_centis=300`` line), so
+`test_serialized_output_matches_committed_golden[bundle_a]` and
+`test_fresh_interpreter_produces_identical_bytes[bundle_a]` pass against it.
+`bundle_b.golden` is byte-unchanged from the #44 shape: bundle B declines at
+the entry conditions, before sizing runs, so its serialized decision is
+identical. Regenerate either golden the same way (never hand-fabricate) after
+any change to `select`'s logic or these bundles' fixtures.
 """
 
 from __future__ import annotations

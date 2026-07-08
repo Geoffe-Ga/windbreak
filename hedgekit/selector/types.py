@@ -1,12 +1,13 @@
-"""Core types for the selector (SPEC S9.1-S9.3, issues #43/#44).
+"""Core types for the selector (SPEC S9.1-S9.3, issues #43/#44/#45).
 
 The selector is the pure decision stage that turns a forecast plus market and
 account context into a ledgerable :class:`SelectorDecision`. SPEC S9.1 fixes
 its shape as *pure, credentialless, no-I/O, no-clock*: it never opens a socket,
 reads a secret, or calls the wall clock -- freshness is judged by comparing
 timestamps carried *inside* the inputs, never against ``datetime.now``. This
-module holds the input/output value types, the three concrete seam carriers the
-fee-aware edge work (issue #44) needs, and the still-opaque position handle.
+module holds the input/output value types and the four concrete seam carriers
+the fee-aware edge work (issue #44) and the dispersion-scaled Kelly sizing
+(issue #45) read.
 
 Issue #44 enriches three of the four issue-#43 placeholder ``*Ref`` seams into
 concrete *input* carriers -- :class:`FeeModelInput` (a real
@@ -15,13 +16,23 @@ concrete *input* carriers -- :class:`FeeModelInput` (a real
 :class:`RiskConfigInput` (a real :class:`~hedgekit.config.schema.RiskConfig`
 plus its content hash) -- because SPEC S9.2's executable-edge and S9.3's
 entry-condition arithmetic must read those values, not merely name them.
-:class:`PositionReadModelRef` stays an opaque handle: concentration/sizing
-(issues #45-#47) does not run yet.
+Issue #45 realizes the fourth and last seam: :class:`PositionReadModelInput`,
+a concrete carrier of the capital and exposure figures the sizing stage
+(SPEC S9.5/S9.6) reads -- the fractional-Kelly stake sizes against
+``above_floor_capital_micros`` and its five notional caps clip against the
+equity, per-dimension exposures, deploy cap, and daily notional. The carrier
+mirrors the *shape* of :class:`~hedgekit.riskkernel.context.AccountState` but
+is defined here, importing nothing from the kernel, so the selector stays
+kernel-independent (SPEC S9.9 defense-in-depth). Bucket *tagging* remains
+issue #47's, and the mode-gated caps stay fenced (see :mod:`hedgekit.selector.
+sizing`).
 
 Every type here is a frozen, slotted dataclass so a decision's inputs and
 outputs are immutable by construction and cheap to hold, and no numeric field
-is ever a float (SPEC S6.1) -- the arithmetic-bearing values live inside the
-already unit-typed :class:`~hedgekit.forecast.records.ForecastRecord`,
+is ever a float (SPEC S6.1) -- the money-valued position figures are carried in
+:class:`~hedgekit.numeric.MoneyMicros`, and the remaining arithmetic-bearing
+values live inside the already unit-typed
+:class:`~hedgekit.forecast.records.ForecastRecord`,
 :class:`~hedgekit.connector.models.OrderBookSnapshot`, and
 :class:`~hedgekit.connector.fees.FeeModel`.
 """
@@ -40,6 +51,7 @@ if TYPE_CHECKING:
     from hedgekit.connector.fees import FeeModel
     from hedgekit.connector.models import OrderBookSnapshot
     from hedgekit.forecast.records import ForecastRecord
+    from hedgekit.numeric import MoneyMicros
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,20 +108,47 @@ class RiskConfigInput:
 
 
 @dataclass(frozen=True, slots=True)
-class PositionReadModelRef:
-    """Placeholder reference to the position read model an evaluation reads.
+class PositionReadModelInput:
+    """The account capital and exposure figures the sizing stage reads (S9.5/S9.6).
 
-    SPEC S9.1 lists the current positions among the selector's inputs; the
-    concrete position snapshot and its concentration arithmetic are realized by
-    the later sizing/concentration work (issues #45-#47). Until then this stays
-    an opaque, immutable handle -- unlike the fee/slippage/risk seams, which
-    issue #44's edge and entry logic already reads concretely.
+    Realizes the issue-#43 opaque ``PositionReadModelRef`` placeholder into the
+    concrete carrier the dispersion-scaled fractional-Kelly sizing consumes: the
+    stake sizes against ``above_floor_capital_micros`` (SPEC S9.5), and its five
+    notional caps clip against the equity, the three per-dimension exposures, the
+    deploy cap, and the day's traded notional (SPEC S9.6). Every money field is a
+    :class:`~hedgekit.numeric.MoneyMicros` (SPEC S6.1, no floats on the money
+    path). The field naming mirrors
+    :class:`~hedgekit.riskkernel.context.AccountState`, but this type imports
+    nothing from the kernel so the selector stays kernel-independent (SPEC S9.9
+    defense-in-depth: the selector sizes conservatively, the kernel re-checks).
 
     Attributes:
-        snapshot_id: Opaque identifier of the position read-model snapshot.
+        snapshot_id: Identifier of the position read-model snapshot, for ledger
+            traceability.
+        equity_micros: Total account equity, in micros; the base the three
+            percentage-of-equity concentration ceilings are taken from.
+        above_floor_capital_micros: Capital above the equity floor the Kelly
+            stake sizes against, in micros (SPEC S9.5).
+        total_deploy_cap_micros: The absolute ceiling on total deployed capital,
+            in micros; the total-deployed cap's headroom is measured against it.
+        market_exposure: Current exposure to the single market, in micros.
+        event_exposure: Current exposure to the parent event, in micros.
+        bucket_exposure: Current exposure to the correlation bucket, in micros.
+        total_exposure: Current total portfolio exposure, in micros; the
+            total-deployed cap's used capital.
+        notional_today: Notional traded so far today, in micros; the
+            daily-notional cap's used amount.
     """
 
     snapshot_id: str
+    equity_micros: MoneyMicros
+    above_floor_capital_micros: MoneyMicros
+    total_deploy_cap_micros: MoneyMicros
+    market_exposure: MoneyMicros
+    event_exposure: MoneyMicros
+    bucket_exposure: MoneyMicros
+    total_exposure: MoneyMicros
+    notional_today: MoneyMicros
 
 
 #: The selector's order-intent type is, by construction, the very
@@ -140,7 +179,8 @@ class SelectorInputs:
             timestamp used for freshness comparison.
         fee_model: The fee schedule (and its ``as_of`` stamp) to price with.
         slippage_model: The per-contract slippage buffer to apply.
-        positions: Reference to the current-positions read-model snapshot.
+        positions: The current-positions capital/exposure figures the sizing
+            stage reads (SPEC S9.5/S9.6).
         risk_config: The risk configuration (and its hash) to honor.
         correlation_tags: Correlation/event tags grouping related markets, as
             an immutable tuple.
@@ -151,7 +191,7 @@ class SelectorInputs:
     order_book: OrderBookSnapshot
     fee_model: FeeModelInput
     slippage_model: SlippageModelInput
-    positions: PositionReadModelRef
+    positions: PositionReadModelInput
     risk_config: RiskConfigInput
     correlation_tags: tuple[str, ...]
 

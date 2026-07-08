@@ -10,14 +10,17 @@ type at load time (mirroring `hedgekit.connector.fake.FakeExchange`'s
 `_market_from_dict` / `_book_from_dict` fixture-loading convention). No
 float ever appears in a bundle file or in the objects built from it.
 
-Issue #44 enriches the three placeholder seams into concrete carriers: a
+Issue #44 enriches three placeholder seams into concrete carriers: a
 bundle's `fee_model` object becomes a `FeeModelInput` wrapping a real,
 post-init-validated `hedgekit.connector.fees.FeeModel` plus its `as_of`
 freshness timestamp; `slippage_model` becomes a `SlippageModelInput`;
 `risk_config` becomes a `RiskConfigInput` wrapping a real
 `hedgekit.config.schema.RiskConfig` built from the bundle's override fields
-over the schema's own defaults. `positions` stays the opaque
-`PositionReadModelRef` placeholder (unused this issue).
+over the schema's own defaults. Issue #45 enriches the fourth and last
+placeholder: a bundle's `positions` object becomes a `PositionReadModelInput`
+carrying the snapshot id plus the eight money-valued capital/exposure fields
+the dispersion-scaled Kelly sizing (and its five notional caps) reads, each
+wrapped in `hedgekit.numeric.MoneyMicros` at load time.
 
 This module is deliberately free of any `pytest` import: `test_determinism_
 golden.py`'s fresh-interpreter check imports it from a bare `python -c`
@@ -36,11 +39,11 @@ from hedgekit.config.schema import RiskConfig
 from hedgekit.connector.fees import FeeModel
 from hedgekit.connector.models import OrderBookLevel, OrderBookSnapshot
 from hedgekit.forecast.records import Citation, ForecastRecord, ModelVote
-from hedgekit.numeric import ContractCentis, PricePips
+from hedgekit.numeric import ContractCentis, MoneyMicros, PricePips
 from hedgekit.selector import SelectorInputs
 from hedgekit.selector.types import (
     FeeModelInput,
-    PositionReadModelRef,
+    PositionReadModelInput,
     RiskConfigInput,
     SlippageModelInput,
 )
@@ -218,6 +221,31 @@ def _slippage_input_from_dict(data: Mapping[str, object]) -> SlippageModelInput:
     )
 
 
+def _positions_input_from_dict(data: Mapping[str, object]) -> PositionReadModelInput:
+    """Build a :class:`PositionReadModelInput` from a bundle's `positions` object.
+
+    Args:
+        data: The raw ``positions`` mapping from a bundle JSON file, carrying
+            the snapshot id plus the eight money-valued capital/exposure
+            fields the dispersion-scaled Kelly sizing (issue #45) reads.
+
+    Returns:
+        The constructed :class:`PositionReadModelInput`, with every money
+        field wrapped in :class:`~hedgekit.numeric.MoneyMicros`.
+    """
+    return PositionReadModelInput(
+        snapshot_id=data["snapshot_id"],
+        equity_micros=MoneyMicros(data["equity_micros"]),
+        above_floor_capital_micros=MoneyMicros(data["above_floor_capital_micros"]),
+        total_deploy_cap_micros=MoneyMicros(data["total_deploy_cap_micros"]),
+        market_exposure=MoneyMicros(data["market_exposure"]),
+        event_exposure=MoneyMicros(data["event_exposure"]),
+        bucket_exposure=MoneyMicros(data["bucket_exposure"]),
+        total_exposure=MoneyMicros(data["total_exposure"]),
+        notional_today=MoneyMicros(data["notional_today"]),
+    )
+
+
 def _risk_config_input_from_dict(data: Mapping[str, object]) -> RiskConfigInput:
     """Build a :class:`RiskConfigInput` from a bundle's ``risk_config`` object.
 
@@ -257,7 +285,7 @@ def load_inputs(path: str | Path) -> SelectorInputs:
         order_book=_order_book_from_dict(raw["order_book"]),
         fee_model=_fee_model_input_from_dict(raw["fee_model"]),
         slippage_model=_slippage_input_from_dict(raw["slippage_model"]),
-        positions=PositionReadModelRef(raw["positions_snapshot_id"]),
+        positions=_positions_input_from_dict(raw["positions"]),
         risk_config=_risk_config_input_from_dict(raw["risk_config"]),
         correlation_tags=tuple(raw["correlation_tags"]),
     )

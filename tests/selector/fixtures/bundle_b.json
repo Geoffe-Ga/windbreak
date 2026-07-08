@@ -74,7 +74,17 @@
     "model_id": "slippage-model-sqrt",
     "per_contract_buffer_ppm": 8000
   },
-  "positions_snapshot_id": "positions-snap-0002",
+  "positions": {
+    "snapshot_id": "positions-snap-0002",
+    "equity_micros": 1000000000000,
+    "above_floor_capital_micros": 100000000,
+    "total_deploy_cap_micros": 1000000000000,
+    "market_exposure": 0,
+    "event_exposure": 0,
+    "bucket_exposure": 0,
+    "total_exposure": 0,
+    "notional_today": 0
+  },
   "risk_config": {
     "config_hash": "sha256:risk-config-b"
   },
