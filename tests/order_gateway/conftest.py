@@ -1,12 +1,12 @@
 """Shared fixtures/builders for `tests/order_gateway/*` (issue #37, RED).
 
-None of `hedgekit/order_gateway/{tokens,state_machine,gateway}.py` exist yet
--- only the empty package marker `hedgekit/order_gateway/__init__.py` does --
+None of `windbreak/order_gateway/{tokens,state_machine,gateway}.py` exist yet
+-- only the empty package marker `windbreak/order_gateway/__init__.py` does --
 so importing any of them fails collection with `ModuleNotFoundError: No
-module named 'hedgekit.order_gateway.tokens'` (or `.state_machine` /
+module named 'windbreak.order_gateway.tokens'` (or `.state_machine` /
 `.gateway`), the expected Gate 1 RED state for issue #37. This module itself
-imports only already-shipped machinery (`hedgekit.riskkernel.{signing,tokens}`,
-`hedgekit.tokens.verify`, `hedgekit.connector.paper`), so it collects cleanly
+imports only already-shipped machinery (`windbreak.riskkernel.{signing,tokens}`,
+`windbreak.tokens.verify`, `windbreak.connector.paper`), so it collects cleanly
 on its own; the `ModuleNotFoundError` surfaces from the three `test_*.py`
 files that import the not-yet-existing Order Gateway modules directly.
 
@@ -18,7 +18,7 @@ the single 32-byte HMAC key every test in this package signs *and* verifies
 under: SPEC S10.6 approval tokens are symmetric, so the identical bytes mint
 via `TokenIssuer`/`SigningKeyHandle` (the Risk Kernel side, reused unmodified
 here per issue #37's "Reuse" list) and will verify via
-`hedgekit.order_gateway.tokens.verify_and_consume` (the Gateway side).
+`windbreak.order_gateway.tokens.verify_and_consume` (the Gateway side).
 
 Implementation note (mirrors `tests/riskkernel/conftest.py`'s own docstring):
 `make_claims_for_intent` builds one fully-populated `ApprovalTokenClaims`
@@ -37,19 +37,19 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from hedgekit.numeric.types import (
+from windbreak.numeric.types import (
     ContractCentis,
     MoneyMicros,
     PricePips,
     ProbabilityPpm,
 )
-from hedgekit.riskkernel.checks import OrderIntent
-from hedgekit.riskkernel.signing import SigningKeyHandle
-from hedgekit.riskkernel.tokens import TokenIssuer
-from hedgekit.tokens.verify import ApprovalTokenClaims, SignedApprovalToken
+from windbreak.riskkernel.checks import OrderIntent
+from windbreak.riskkernel.signing import SigningKeyHandle
+from windbreak.riskkernel.tokens import TokenIssuer
+from windbreak.tokens.verify import ApprovalTokenClaims, SignedApprovalToken
 
 if TYPE_CHECKING:
-    from hedgekit.connector.paper import PaperExchange
+    from windbreak.connector.paper import PaperExchange
 
 #: The single 32-byte HMAC key shared by every mint/verify pair in this
 #: package's tests. SPEC S10.6 approval tokens are symmetric: the exact same
@@ -69,7 +69,7 @@ DEFAULT_MARKET_TICKER = "MKT-DEEP"
 #: moving just one side of the comparison.
 DEFAULT_NOW_EPOCH_S = 1_700_000_000
 
-#: One `hedgekit.riskkernel.tokens.DEFAULT_TOKEN_TTL_SECONDS` (60s) past
+#: One `windbreak.riskkernel.tokens.DEFAULT_TOKEN_TTL_SECONDS` (60s) past
 #: `DEFAULT_NOW_EPOCH_S`, so a default token is unexpired unless a test
 #: deliberately overrides `expires_at`.
 DEFAULT_EXPIRES_AT = DEFAULT_NOW_EPOCH_S + 60
@@ -209,7 +209,7 @@ def paper_exchange() -> PaperExchange:
     ticker is `MKT-DEEP`, matching `DEFAULT_MARKET_TICKER` above, so
     `make_intent()`'s defaults are directly tradeable against it.
     """
-    from hedgekit.connector.paper import PaperExchange
+    from windbreak.connector.paper import PaperExchange
 
     books_dir = Path(__file__).resolve().parents[1] / "fixtures" / "books" / "deep_walk"
     return PaperExchange.from_fixture_dir(books_dir)

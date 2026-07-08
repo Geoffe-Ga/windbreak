@@ -1,8 +1,8 @@
-"""Gate 1 RED tests for `hedgekit.selector.exits` (issue #46).
+"""Gate 1 RED tests for `windbreak.selector.exits` (issue #46).
 
-`hedgekit/selector/exits.py` does not exist yet, so every test below fails
+`windbreak/selector/exits.py` does not exist yet, so every test below fails
 collection with `ModuleNotFoundError: No module named
-'hedgekit.selector.exits'` -- the expected Gate 1 RED state for issue #46's
+'windbreak.selector.exits'` -- the expected Gate 1 RED state for issue #46's
 close-side seam.
 
 `CloseTrigger` is a closed, three-member enum (`KILL_PATH`, `KERNEL_DERISK`,
@@ -20,7 +20,7 @@ itself construct a `"sell_to_close"` intent, behaviorally (every intent it
 emits, across two recorded bundles and a wide-spread scenario, is a `"buy"`)
 and structurally (the literal substring `"sell_to_close"` never appears in
 the source of any module on `select()`'s call graph, and appears only in
-`hedgekit.selector.exits` -- the sole selector module that can construct a
+`windbreak.selector.exits` -- the sole selector module that can construct a
 close).
 """
 
@@ -33,23 +33,23 @@ from datetime import UTC, datetime
 
 import pytest
 
-import hedgekit.selector as selector_module
-import hedgekit.selector.edge as edge_module
-import hedgekit.selector.entry as entry_module
-import hedgekit.selector.execution_style as execution_style_module
-import hedgekit.selector.exits as exits_module
-import hedgekit.selector.serialization as serialization_module
-import hedgekit.selector.sizing as sizing_module
-import hedgekit.selector.types as types_module
-from hedgekit.config.schema import RiskConfig
-from hedgekit.connector.fees import FeeModel
-from hedgekit.connector.models import OrderBookLevel, OrderBookSnapshot, Position
-from hedgekit.forecast.records import Citation, ForecastRecord
-from hedgekit.ledger.events import canonical_json
-from hedgekit.numeric import ContractCentis, MoneyMicros, PricePips
-from hedgekit.selector import SelectorInputs, select
-from hedgekit.selector.exits import CloseTrigger, build_close_intent
-from hedgekit.selector.types import (
+import windbreak.selector as selector_module
+import windbreak.selector.edge as edge_module
+import windbreak.selector.entry as entry_module
+import windbreak.selector.execution_style as execution_style_module
+import windbreak.selector.exits as exits_module
+import windbreak.selector.serialization as serialization_module
+import windbreak.selector.sizing as sizing_module
+import windbreak.selector.types as types_module
+from windbreak.config.schema import RiskConfig
+from windbreak.connector.fees import FeeModel
+from windbreak.connector.models import OrderBookLevel, OrderBookSnapshot, Position
+from windbreak.forecast.records import Citation, ForecastRecord
+from windbreak.ledger.events import canonical_json
+from windbreak.numeric import ContractCentis, MoneyMicros, PricePips
+from windbreak.selector import SelectorInputs, select
+from windbreak.selector.exits import CloseTrigger, build_close_intent
+from windbreak.selector.types import (
     FeeModelInput,
     PositionReadModelInput,
     RiskConfigInput,
@@ -316,8 +316,8 @@ def test_build_close_intent_idempotency_key_is_deterministic_and_trigger_scoped(
     """Two calls with identical arguments agree on the idempotency key, and
     the key -- like the intent id -- changes when only the trigger differs,
     hashed via the same `hashlib.sha256(canonical_json(...))` primitive
-    `hedgekit.order_gateway.client_order_id` and
-    `hedgekit.selector.__init__._idempotency_key` already use elsewhere in
+    `windbreak.order_gateway.client_order_id` and
+    `windbreak.selector.__init__._idempotency_key` already use elsewhere in
     this repo, applied here to the six named fields `{trigger, market_ticker,
     outcome, action, price, size}` (`trigger` hashed as its string `.value`,
     since a bare `CloseTrigger` member is not itself JSON-serializable).
@@ -357,7 +357,7 @@ def test_select_never_emits_a_sell_to_close_action_across_scenarios(
     """Every intent `select()` emits -- across the two recorded bundles (one
     emits, one declines) and a wide-spread scenario that rests rather than
     crosses -- is a `"buy"`, never a `"sell_to_close"`: `select` only ever
-    opens, closes belong exclusively to `hedgekit.selector.exits`.
+    opens, closes belong exclusively to `windbreak.selector.exits`.
     """
     scenarios = (
         recorded_inputs_bundle_a,
@@ -378,7 +378,7 @@ def test_select_never_emits_a_sell_to_close_action_across_scenarios(
 def test_close_construction_is_confined_to_the_exits_module() -> None:
     """Structural proof complementing the behavioral one above:
     `"sell_to_close"` never appears in the source of any module on
-    `select()`'s call graph, and appears only in `hedgekit.selector.exits`
+    `select()`'s call graph, and appears only in `windbreak.selector.exits`
     -- the sole selector module that can construct a close.
     """
     non_close_modules = (

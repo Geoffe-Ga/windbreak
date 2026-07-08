@@ -5,7 +5,7 @@ SPEC §7.3 ("Balance-semantics contract") calls the `BalanceSemantics` record a
 one of its eight fields is `unknown`. This directory holds the fixtures that
 back Kalshi's recorded answers -- one fixture (or fixture pair) per field --
 so each field's value in
-`hedgekit.connector.kalshi.adapter.KALSHI_BALANCE_SEMANTICS` is proven by a
+`windbreak.connector.kalshi.adapter.KALSHI_BALANCE_SEMANTICS` is proven by a
 concrete before/after payload rather than asserted from memory. The tests in
 `tests/connector/kalshi/test_balance_semantics.py` pin the record against
 this evidence.
@@ -15,7 +15,7 @@ this evidence.
 | Field | Resolved value | Fixture(s) | Justification |
 |---|---|---|---|
 | `fee_debit_timing` | `FeeDebitTiming.AT_EXECUTION` | `fills.json` | Each fill record carries its own non-null `fee`, recorded at the fill's `created_time` -- i.e. at execution, not deferred to settlement. |
-| `fee_rounding` | `FeeRounding.UP_TO_NEXT_CENT` | `series_KXFED.json` | Kalshi's documented fee formula (`fee = ceil(rate * C * P * (1-P))`) rounds every fee up to the next whole cent; see `hedgekit.connector.fees.FeeModel.max_trading_fee_micros`, which mirrors this rounding as its conservative (overstate-cost) bound. |
+| `fee_rounding` | `FeeRounding.UP_TO_NEXT_CENT` | `series_KXFED.json` | Kalshi's documented fee formula (`fee = ceil(rate * C * P * (1-P))`) rounds every fee up to the next whole cent; see `windbreak.connector.fees.FeeModel.max_trading_fee_micros`, which mirrors this rounding as its conservative (overstate-cost) bound. |
 | `partial_fill_representation` | `PartialFillRepresentation.PER_FILL_RECORDS` | `fills.json` | `trade-1` and `trade-2` share one `order_id` (`"order-abc123"`) but are two distinct fill records, each with its own `count` and `fee`, rather than one aggregated fill. |
 | `unsettled_proceeds` | `UnsettledProceeds.EXCLUDED_UNTIL_CREDITED` | `settlements.json` | `balance_before_settlement` (89,000,000 micros) only becomes `balance_after_settlement` (189,000,000 micros -- a jump of exactly the `revenue` field: 10,000 cents = 100,000,000 micros) strictly after `settled_time`; proceeds are never visible earlier. |
 | `open_order_collateral_in_available` | `OrderCollateralInAvailable.DEDUCTED_FROM_AVAILABLE` | `resting_order_balance.json` | `balance_before_order` vs. `balance_after_order` shows `available_balance` drop by exactly the resting order's max cost (50 contracts x 45c = 2,250 cents = 22,500,000 micros: 100,000,000 -> 77,500,000), while `balance` (total) is unchanged. |
@@ -101,7 +101,7 @@ Kalshi-raw-shape sibling used only as semantics evidence, not loaded by
 ## `faults/`: schema-drift fixtures (issue #20)
 
 Two hand-authored variants of the recorded `orderbook_KXFED-24DEC.json`
-payload back `hedgekit.connector.validation`'s fail-closed schema-drift
+payload back `windbreak.connector.validation`'s fail-closed schema-drift
 tests (`tests/connector/test_validation.py`,
 `tests/connector/kalshi/test_client_resilience.py`):
 

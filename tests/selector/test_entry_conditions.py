@@ -1,7 +1,7 @@
-"""Gate 1 RED tests for `hedgekit.selector.entry` (issue #44, SPEC S9.3).
+"""Gate 1 RED tests for `windbreak.selector.entry` (issue #44, SPEC S9.3).
 
-`hedgekit/selector/entry.py` does not exist yet, so every test below fails
-collection with `ModuleNotFoundError: No module named 'hedgekit.selector.entry'`
+`windbreak/selector/entry.py` does not exist yet, so every test below fails
+collection with `ModuleNotFoundError: No module named 'windbreak.selector.entry'`
 -- the expected Gate 1 RED state for issue #44's entry-condition seam.
 
 `evaluate_entry_conditions(inputs, figures)` renders the twelve SPEC S9.3
@@ -17,7 +17,7 @@ alongside it) to pin each condition's failure boundary -- including the
 inclusive CI-straddle boundary and the "just below threshold" boundaries for
 `net_edge_min` and `annualized_hurdle`.
 
-A final test exercises `hedgekit.selector.select` end-to-end over the all-pass
+A final test exercises `windbreak.selector.select` end-to-end over the all-pass
 baseline: the emitted intent's price/size/max_notional/idempotency_key are
 hand-derived (the idempotency key via the same
 `hashlib.sha256(canonical_json(...))` primitive `client_order_id` already uses
@@ -30,16 +30,16 @@ from __future__ import annotations
 import hashlib
 from datetime import UTC, datetime, timedelta
 
-from hedgekit.config.schema import RiskConfig
-from hedgekit.connector.fees import FeeModel
-from hedgekit.connector.models import OrderBookLevel, OrderBookSnapshot
-from hedgekit.forecast.records import Citation, ForecastRecord
-from hedgekit.ledger.events import canonical_json
-from hedgekit.numeric import ContractCentis, MoneyMicros, PricePips, ProbabilityPpm
-from hedgekit.selector import SelectorInputs, select, serialize_decision
-from hedgekit.selector.edge import EdgeFigures, compute_executable_edge
-from hedgekit.selector.entry import evaluate_entry_conditions
-from hedgekit.selector.types import (
+from windbreak.config.schema import RiskConfig
+from windbreak.connector.fees import FeeModel
+from windbreak.connector.models import OrderBookLevel, OrderBookSnapshot
+from windbreak.forecast.records import Citation, ForecastRecord
+from windbreak.ledger.events import canonical_json
+from windbreak.numeric import ContractCentis, MoneyMicros, PricePips, ProbabilityPpm
+from windbreak.selector import SelectorInputs, select, serialize_decision
+from windbreak.selector.edge import EdgeFigures, compute_executable_edge
+from windbreak.selector.entry import evaluate_entry_conditions
+from windbreak.selector.types import (
     FeeModelInput,
     PositionReadModelInput,
     RiskConfigInput,
@@ -852,7 +852,7 @@ def test_select_emits_one_sized_intent_with_hand_expected_deterministic_fields()
     idempotency_key = sha256(canonical_json({forecast_id, market_ticker,
         outcome, action, price.value, size.value})).hexdigest() -- the same
         `hashlib.sha256(canonical_json(...))` primitive
-        `hedgekit.order_gateway.client_order_id` already uses elsewhere in
+        `windbreak.order_gateway.client_order_id` already uses elsewhere in
         this repo, applied here to exactly the six named fields (never
         derived by calling `select` itself).
     """

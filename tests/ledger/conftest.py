@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from hedgekit.ledger.store import SqliteLedgerStore
+from windbreak.ledger.store import SqliteLedgerStore
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator

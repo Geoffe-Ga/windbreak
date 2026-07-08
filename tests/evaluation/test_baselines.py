@@ -1,8 +1,8 @@
 """Failing-first tests for the evaluation baselines module (issue #50, RED).
 
-`hedgekit.evaluation.baselines` does not exist yet, so every import below
+`windbreak.evaluation.baselines` does not exist yet, so every import below
 fails collection with `ModuleNotFoundError: No module named
-'hedgekit.evaluation.baselines'` -- the expected Gate 1 RED state for issue
+'windbreak.evaluation.baselines'` -- the expected Gate 1 RED state for issue
 #50.
 
 Pins the reference-baseline computation (SPEC-EPIC_07, #50): for every
@@ -31,7 +31,7 @@ from typing import Any
 
 import pytest
 
-from hedgekit.numeric.types import PricePips, ProbabilityPpm
+from windbreak.numeric.types import PricePips, ProbabilityPpm
 
 #: The epic-wide known-answer fixture shared by issues #49-#55; see its own
 #: "description" key for the hand-computed baseline arithmetic this suite
@@ -145,7 +145,7 @@ def test_compute_baselines_matches_every_hand_computed_value_over_the_fixture() 
     previous-forecast baseline (every forecast here is the first, and only,
     forecast on its market).
     """
-    from hedgekit.evaluation.baselines import (
+    from windbreak.evaluation.baselines import (
         UNIFORM_BASELINE_PPM,
         baseline_inputs_from_fixture,
         compute_baselines,
@@ -185,7 +185,7 @@ def test_compute_baselines_preserves_forecast_order() -> None:
     """`compute_baselines` returns one `BaselineSet` per forecast, in the
     same order the forecasts were given in.
     """
-    from hedgekit.evaluation.baselines import (
+    from windbreak.evaluation.baselines import (
         baseline_inputs_from_fixture,
         compute_baselines,
     )
@@ -211,7 +211,7 @@ def test_primary_baseline_reads_own_snapshot_never_a_later_one() -> None:
     referenced snapshot -- the existence of a later snapshot for the same
     market never leaks into an earlier forecast's baseline.
     """
-    from hedgekit.evaluation.baselines import (
+    from windbreak.evaluation.baselines import (
         BaselineForecast,
         BaselineInputs,
         QuoteSnapshot,
@@ -263,7 +263,7 @@ def test_previous_forecast_baseline_omitted_not_zero_filled_and_per_ticker() -> 
     the prior forecast's own `probability_ppm`, tracked per market ticker
     even when forecasts on different markets are interleaved.
     """
-    from hedgekit.evaluation.baselines import (
+    from windbreak.evaluation.baselines import (
         BaselineForecast,
         BaselineInputs,
         QuoteSnapshot,
@@ -319,7 +319,7 @@ def test_midpoint_and_primary_baselines_use_exact_integer_arithmetic() -> None:
     multiplications with no rounding: midpoint `(1 + 2) * 50 == 150` ppm,
     primary `2 * 100 == 200` ppm.
     """
-    from hedgekit.evaluation.baselines import (
+    from windbreak.evaluation.baselines import (
         BaselineForecast,
         BaselineInputs,
         QuoteSnapshot,
@@ -366,7 +366,7 @@ def test_quote_snapshot_rejects_bid_above_ask() -> None:
     """`yes_bid_pips > yes_ask_pips` raises `ValueError` -- a crossed quote
     is not a valid market state.
     """
-    from hedgekit.evaluation.baselines import QuoteSnapshot
+    from windbreak.evaluation.baselines import QuoteSnapshot
 
     with pytest.raises(ValueError, match="bid"):
         QuoteSnapshot(
@@ -380,7 +380,7 @@ def test_quote_snapshot_rejects_ask_above_ten_thousand_pips() -> None:
     """`yes_ask_pips > 10_000` (i.e. above $1.00) raises `ValueError` -- a
     binary "yes" price can never exceed full payout.
     """
-    from hedgekit.evaluation.baselines import QuoteSnapshot
+    from windbreak.evaluation.baselines import QuoteSnapshot
 
     with pytest.raises(ValueError, match="ask"):
         QuoteSnapshot(
@@ -394,7 +394,7 @@ def test_quote_snapshot_rejects_negative_bid() -> None:
     """A negative `yes_bid_pips` raises `ValueError` -- prices are bounded
     below by zero.
     """
-    from hedgekit.evaluation.baselines import QuoteSnapshot
+    from windbreak.evaluation.baselines import QuoteSnapshot
 
     with pytest.raises(ValueError, match="bid"):
         QuoteSnapshot(
@@ -406,11 +406,11 @@ def test_quote_snapshot_rejects_negative_bid() -> None:
 
 def test_quote_snapshot_rejects_bool_as_int_pips() -> None:
     """A `bool` masquerading as a pips value raises `TypeError`, inherited
-    from `hedgekit.numeric.types._IntUnit`'s "no bool-as-int" guard -- the
+    from `windbreak.numeric.types._IntUnit`'s "no bool-as-int" guard -- the
     guard fires while constructing the `PricePips` passed into
     `QuoteSnapshot`, before `QuoteSnapshot.__post_init__` ever runs.
     """
-    from hedgekit.evaluation.baselines import QuoteSnapshot
+    from windbreak.evaluation.baselines import QuoteSnapshot
 
     with pytest.raises(TypeError):
         QuoteSnapshot(
@@ -432,7 +432,7 @@ def test_compute_baselines_rejects_unknown_snapshot_id_naming_field_and_forecast
     in `quote_snapshots` raises `ValueError` naming both the
     `baseline_quote_snapshot_id` field and the offending `forecast_id`.
     """
-    from hedgekit.evaluation.baselines import (
+    from windbreak.evaluation.baselines import (
         BaselineForecast,
         BaselineInputs,
         compute_baselines,
@@ -458,7 +458,7 @@ def test_baseline_inputs_from_fixture_rejects_duplicate_snapshot_id() -> None:
     """Two `quote_snapshots` entries sharing a `snapshot_id` raise
     `ValueError` naming `snapshot_id`.
     """
-    from hedgekit.evaluation.baselines import baseline_inputs_from_fixture
+    from windbreak.evaluation.baselines import baseline_inputs_from_fixture
 
     fixture = {
         "forecasts": [_MINIMAL_BASELINE_FORECAST_ENTRY],
@@ -474,7 +474,7 @@ def test_baseline_inputs_from_fixture_rejects_duplicate_forecast_id() -> None:
     """Two `forecasts` entries sharing a `forecast_id` raise `ValueError`
     naming `forecast_id`.
     """
-    from hedgekit.evaluation.baselines import baseline_inputs_from_fixture
+    from windbreak.evaluation.baselines import baseline_inputs_from_fixture
 
     duplicate_forecast = {
         **_MINIMAL_BASELINE_FORECAST_ENTRY,

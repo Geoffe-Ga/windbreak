@@ -1,7 +1,7 @@
-"""Gate 1 RED tests for `hedgekit.selector.edge` (issue #44, SPEC S9.2).
+"""Gate 1 RED tests for `windbreak.selector.edge` (issue #44, SPEC S9.2).
 
-`hedgekit/selector/edge.py` does not exist yet, so every test below fails
-collection with `ModuleNotFoundError: No module named 'hedgekit.selector.edge'`
+`windbreak/selector/edge.py` does not exist yet, so every test below fails
+collection with `ModuleNotFoundError: No module named 'windbreak.selector.edge'`
 -- the expected Gate 1 RED state for issue #44's edge-figures seam. Once the
 implementation specialist lands `edge.py`, these tests pin its exact contract:
 
@@ -37,17 +37,17 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from hedgekit.connector.fees import FeeModel
-from hedgekit.connector.models import OrderBookLevel, OrderBookSnapshot
-from hedgekit.forecast.records import ForecastRecord
-from hedgekit.numeric import ContractCentis, MoneyMicros, PricePips
-from hedgekit.selector.edge import (
+from windbreak.connector.fees import FeeModel
+from windbreak.connector.models import OrderBookLevel, OrderBookSnapshot
+from windbreak.forecast.records import ForecastRecord
+from windbreak.numeric import ContractCentis, MoneyMicros, PricePips
+from windbreak.selector.edge import (
     EdgeFigures,
     InsufficientDepth,
     NonAnnualizable,
     compute_executable_edge,
 )
-from hedgekit.selector.types import FeeModelInput, SlippageModelInput
+from windbreak.selector.types import FeeModelInput, SlippageModelInput
 
 if TYPE_CHECKING:
     from collections.abc import Iterable

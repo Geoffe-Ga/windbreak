@@ -1,4 +1,4 @@
-"""Tests for hedgekit.selector's core types (issues #43/#44/#45).
+"""Tests for windbreak.selector's core types (issues #43/#44/#45).
 
 Pins the frozen/slots invariants of `SelectorInputs`, `SelectorDecision`, the
 issue-#44 concrete seam carriers (`FeeModelInput`, `SlippageModelInput`,
@@ -6,7 +6,7 @@ issue-#44 concrete seam carriers (`FeeModelInput`, `SlippageModelInput`,
 the issue-#43 opaque `PositionReadModelRef` placeholder now that
 concentration/sizing arithmetic reads its nine fields), the
 `NormalizedOrderIntent` type alias identity with
-`hedgekit.riskkernel.checks.OrderIntent`, and that `fixture_loader.load_inputs`
+`windbreak.riskkernel.checks.OrderIntent`, and that `fixture_loader.load_inputs`
 round-trips both committed bundles into real, post-init-validated
 `ForecastRecord` / `OrderBookSnapshot` instances.
 """
@@ -19,14 +19,14 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from hedgekit.config.schema import RiskConfig
-from hedgekit.connector.fees import FeeModel
-from hedgekit.connector.models import OrderBookSnapshot
-from hedgekit.forecast.records import ForecastRecord
-from hedgekit.numeric import ContractCentis, MoneyMicros, PricePips, ProbabilityPpm
-from hedgekit.riskkernel.checks import OrderIntent
-from hedgekit.selector import NormalizedOrderIntent, SelectorDecision
-from hedgekit.selector.types import (
+from windbreak.config.schema import RiskConfig
+from windbreak.connector.fees import FeeModel
+from windbreak.connector.models import OrderBookSnapshot
+from windbreak.forecast.records import ForecastRecord
+from windbreak.numeric import ContractCentis, MoneyMicros, PricePips, ProbabilityPpm
+from windbreak.riskkernel.checks import OrderIntent
+from windbreak.selector import NormalizedOrderIntent, SelectorDecision
+from windbreak.selector.types import (
     FeeModelInput,
     PositionReadModelInput,
     RiskConfigInput,
@@ -35,7 +35,7 @@ from hedgekit.selector.types import (
 )
 
 if TYPE_CHECKING:
-    from hedgekit.selector import SelectorInputs
+    from windbreak.selector import SelectorInputs
 
 #: A fixed reference instant for the fee-model carrier's `as_of` stamp.
 _AS_OF = datetime(2025, 1, 1, tzinfo=UTC)

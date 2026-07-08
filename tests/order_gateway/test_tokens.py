@@ -1,9 +1,9 @@
-"""Failing-first tests for `hedgekit.order_gateway.tokens` (issue #37, RED).
+"""Failing-first tests for `windbreak.order_gateway.tokens` (issue #37, RED).
 
-`hedgekit/order_gateway/tokens.py` does not exist yet (only the empty package
-marker `hedgekit/order_gateway/__init__.py` does), so importing it fails
+`windbreak/order_gateway/tokens.py` does not exist yet (only the empty package
+marker `windbreak/order_gateway/__init__.py` does), so importing it fails
 collection with `ModuleNotFoundError: No module named
-'hedgekit.order_gateway.tokens'` -- the expected Gate 1 RED state for issue
+'windbreak.order_gateway.tokens'` -- the expected Gate 1 RED state for issue
 #37.
 
 This module pins `verify_and_consume`'s pinned step order and full branch
@@ -13,7 +13,7 @@ S10.6 fields `intent_id`/`market_ticker`/`outcome`/`action`/`price.value`/
 fields), so a mismatch returns `INTENT_MISMATCH` *without* touching the
 single-use registry -- proven by re-verifying the identical token against the
 true, matching intent afterward. Only once the intent matches does
-`verify_and_consume` delegate to the shared `hedgekit.tokens.verify.verify_token`
+`verify_and_consume` delegate to the shared `windbreak.tokens.verify.verify_token`
 and map its `reason` string onto a `VerifyResult`: `valid=True` -> `OK`;
 "signature mismatch" -> `BAD_SIGNATURE`; "token expired" -> `EXPIRED`; "token
 already consumed" -> `REPLAYED`; anything else (a malformed-hex "verification
@@ -29,20 +29,6 @@ import dataclasses
 
 import pytest
 
-from hedgekit.numeric.types import (
-    ContractCentis,
-    MoneyMicros,
-    PricePips,
-    ProbabilityPpm,
-)
-from hedgekit.order_gateway.tokens import (
-    VerifyResult,
-    intent_matches_claims,
-    verify_and_consume,
-)
-from hedgekit.riskkernel.signing import SigningKeyHandle
-from hedgekit.riskkernel.tokens import TokenIssuer
-from hedgekit.tokens.verify import InMemorySingleUseRegistry
 from tests.order_gateway.conftest import (
     DEFAULT_NOW_EPOCH_S,
     KEY_MATERIAL,
@@ -50,6 +36,20 @@ from tests.order_gateway.conftest import (
     make_claims_for_intent,
     make_intent,
 )
+from windbreak.numeric.types import (
+    ContractCentis,
+    MoneyMicros,
+    PricePips,
+    ProbabilityPpm,
+)
+from windbreak.order_gateway.tokens import (
+    VerifyResult,
+    intent_matches_claims,
+    verify_and_consume,
+)
+from windbreak.riskkernel.signing import SigningKeyHandle
+from windbreak.riskkernel.tokens import TokenIssuer
+from windbreak.tokens.verify import InMemorySingleUseRegistry
 
 #: The 7 SPEC S10.6 fields `intent_matches_claims` compares, each paired with
 #: a value that differs from `make_intent()`'s own default for that field --

@@ -1,13 +1,13 @@
-"""Tests for hedgekit.forecast.pipeline (issue #22): the SPEC S8.2 stub wiring.
+"""Tests for windbreak.forecast.pipeline (issue #22): the SPEC S8.2 stub wiring.
 
 Pins the four issue-mandated pipeline behaviors: (a) a schema-valid
 `ForecastRecord` comes out the other end, (b) identical inputs produce
 byte-identical output, (c) the output record is truly immutable, and (d)
 replaying over a `ForbiddenLiveTransport` with a fully-populated cassette
 completes purely from recorded responses while an empty cassette fails closed
-with `CassetteMissError` -- never a live fallback. `hedgekit/forecast/` does
-not exist yet, so importing `hedgekit.forecast.pipeline` fails collection with
-`ModuleNotFoundError: No module named 'hedgekit.forecast'` -- the expected
+with `CassetteMissError` -- never a live fallback. `windbreak/forecast/` does
+not exist yet, so importing `windbreak.forecast.pipeline` fails collection with
+`ModuleNotFoundError: No module named 'windbreak.forecast'` -- the expected
 Gate 1 RED state for issue #22.
 """
 
@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from hedgekit.forecast.cassettes import (
+from windbreak.forecast.cassettes import (
     CassetteMissError,
     ForbiddenLiveTransport,
     LiveCallForbiddenError,
@@ -27,7 +27,7 @@ from hedgekit.forecast.cassettes import (
     RecordingCassette,
     ReplayCassette,
 )
-from hedgekit.forecast.pipeline import (
+from windbreak.forecast.pipeline import (
     aggregate_median,
     apply_calibration_map,
     build_forecast_record,
@@ -35,20 +35,20 @@ from hedgekit.forecast.pipeline import (
     run_pipeline,
     shrink_toward_baseline,
 )
-from hedgekit.forecast.records import forecast_record_to_payload
+from windbreak.forecast.records import forecast_record_to_payload
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from datetime import datetime
     from pathlib import Path
 
-    from hedgekit.connector.models import NormalizedMarket
-    from hedgekit.forecast.records import BaselineQuoteSnapshot
-    from hedgekit.forecast.sandbox import ResearchTools
+    from windbreak.connector.models import NormalizedMarket
+    from windbreak.forecast.records import BaselineQuoteSnapshot
+    from windbreak.forecast.sandbox import ResearchTools
 
     #: `make_fake_vote_transport` (see tests/forecast/conftest.py) is a factory
     #: for `FakeVoteTransport`, a network-free `LlmTransport` double defined in
-    #: the conftest module (not part of the `hedgekit` package under test), so
+    #: the conftest module (not part of the `windbreak` package under test), so
     #: it is typed structurally here rather than imported by name.
     FakeVoteTransportFactory = Callable[[], object]
 

@@ -1,12 +1,12 @@
-"""Tests for hedgekit.forecast.cassettes (issue #22): the offline LLM harness.
+"""Tests for windbreak.forecast.cassettes (issue #22): the offline LLM harness.
 
 Pins `LlmRequest.request_hash()` determinism (a stable sha256 hex digest over
 canonical JSON of its fields), `ReplayCassette` hit/miss behavior,
 `RecordingCassette` -> `ReplayCassette` round-tripping, and
 `ForbiddenLiveTransport` as the structural proof that a stage never reaches a
-live network. `hedgekit/forecast/` does not exist yet, so importing
-`hedgekit.forecast.cassettes` fails collection with `ModuleNotFoundError: No
-module named 'hedgekit.forecast'` -- the expected Gate 1 RED state for
+live network. `windbreak/forecast/` does not exist yet, so importing
+`windbreak.forecast.cassettes` fails collection with `ModuleNotFoundError: No
+module named 'windbreak.forecast'` -- the expected Gate 1 RED state for
 issue #22.
 
 See `tests/forecast/conftest.py`'s "Cassette-fixture choice" docstring note for
@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from hedgekit.forecast.cassettes import (
+from windbreak.forecast.cassettes import (
     CassetteMissError,
     ForbiddenLiveTransport,
     LiveCallForbiddenError,

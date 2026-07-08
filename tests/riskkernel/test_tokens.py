@@ -2,22 +2,22 @@
 
 Issue #31 gives the Risk Kernel real approval-token machinery:
 
-    * :mod:`hedgekit.riskkernel.signing` -- `SigningKeyHandle` grows real
+    * :mod:`windbreak.riskkernel.signing` -- `SigningKeyHandle` grows real
       HMAC-SHA256 signing over injectable key material, plus
       `SigningKeyHandle.from_env` to load that key material from an
       environment mapping.
-    * :mod:`hedgekit.tokens.verify` -- a *shared*, Gateway-consumable module
-      (never importing `hedgekit.riskkernel.signing`) defining
+    * :mod:`windbreak.tokens.verify` -- a *shared*, Gateway-consumable module
+      (never importing `windbreak.riskkernel.signing`) defining
       `ApprovalTokenClaims` (SPEC S10.6), the exact canonical byte encoding
       those claims are signed over (`canonical_claims_bytes`), and the
       `SignedApprovalToken` / `VerificationResult` / `SingleUseRegistry`
       shapes `verify_token` operates on.
-    * :mod:`hedgekit.riskkernel.tokens` -- `TokenIssuer`, pairing a
+    * :mod:`windbreak.riskkernel.tokens` -- `TokenIssuer`, pairing a
       `SigningKeyHandle` with `canonical_claims_bytes` to produce a
       `SignedApprovalToken`.
 
-None of `hedgekit/riskkernel/tokens.py`, `hedgekit/tokens/__init__.py`, or
-`hedgekit/tokens/verify.py` exist yet, and `SigningKeyHandle` does not yet
+None of `windbreak/riskkernel/tokens.py`, `windbreak/tokens/__init__.py`, or
+`windbreak/tokens/verify.py` exist yet, and `SigningKeyHandle` does not yet
 accept key material, so every import and construction below fails at
 collection or at call time -- the expected Gate 1 RED state for issue #31.
 
@@ -42,11 +42,11 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from hedgekit.ledger.events import canonical_json
-from hedgekit.numeric.types import ContractCentis, MoneyMicros, PricePips
-from hedgekit.riskkernel.signing import SigningKeyHandle
-from hedgekit.riskkernel.tokens import DEFAULT_TOKEN_TTL_SECONDS, TokenIssuer
-from hedgekit.tokens.verify import (
+from windbreak.ledger.events import canonical_json
+from windbreak.numeric.types import ContractCentis, MoneyMicros, PricePips
+from windbreak.riskkernel.signing import SigningKeyHandle
+from windbreak.riskkernel.tokens import DEFAULT_TOKEN_TTL_SECONDS, TokenIssuer
+from windbreak.tokens.verify import (
     ApprovalTokenClaims,
     InMemorySingleUseRegistry,
     SignedApprovalToken,
@@ -57,8 +57,8 @@ from hedgekit.tokens.verify import (
 
 #: The domain-separation prefix SPEC S10.6 prepends to every canonical
 #: encoding, so an approval-token signature can never be replayed as a
-#: signature over some other hedgekit-signed artifact.
-_DOMAIN_PREFIX = b"hedgekit.approval-token.v1\x00"
+#: signature over some other windbreak-signed artifact.
+_DOMAIN_PREFIX = b"windbreak.approval-token.v1\x00"
 
 #: A fixed, valid (>=32-byte) key used throughout this file's known-answer
 #: and round-trip tests.
@@ -181,7 +181,7 @@ def test_signing_key_handle_pickling_is_blocked() -> None:
 def test_signing_key_handle_from_env_happy_path_decodes_hex_key() -> None:
     """`from_env` hex-decodes the configured variable into working key
     material."""
-    environ = {"HEDGEKIT_APPROVAL_TOKEN_KEY": _KEY_MATERIAL.hex()}
+    environ = {"WINDBREAK_APPROVAL_TOKEN_KEY": _KEY_MATERIAL.hex()}
 
     handle = SigningKeyHandle.from_env(environ)
 
@@ -190,14 +190,14 @@ def test_signing_key_handle_from_env_happy_path_decodes_hex_key() -> None:
 
 def test_signing_key_handle_from_env_missing_var_raises_value_error() -> None:
     """A missing environment variable raises `ValueError` naming it."""
-    with pytest.raises(ValueError, match="HEDGEKIT_APPROVAL_TOKEN_KEY"):
+    with pytest.raises(ValueError, match="WINDBREAK_APPROVAL_TOKEN_KEY"):
         SigningKeyHandle.from_env({})
 
 
 def test_signing_key_handle_from_env_undecodable_hex_raises_value_error() -> None:
     """A value that is not valid hex raises `ValueError`."""
     with pytest.raises(ValueError):
-        SigningKeyHandle.from_env({"HEDGEKIT_APPROVAL_TOKEN_KEY": "not-hex-at-all!!"})
+        SigningKeyHandle.from_env({"WINDBREAK_APPROVAL_TOKEN_KEY": "not-hex-at-all!!"})
 
 
 def test_signing_key_handle_from_env_short_key_raises_value_error() -> None:
@@ -205,7 +205,7 @@ def test_signing_key_handle_from_env_short_key_raises_value_error() -> None:
     short_key_hex = (b"k" * 16).hex()
 
     with pytest.raises(ValueError, match="32"):
-        SigningKeyHandle.from_env({"HEDGEKIT_APPROVAL_TOKEN_KEY": short_key_hex})
+        SigningKeyHandle.from_env({"WINDBREAK_APPROVAL_TOKEN_KEY": short_key_hex})
 
 
 def test_signing_key_handle_from_env_uses_a_custom_var_name() -> None:
@@ -434,7 +434,7 @@ def test_token_issuer_from_key_material_signs_identically_to_handle_ctor() -> No
     """`TokenIssuer.from_key_material(key)` builds the handle internally so it
     signs identically to `TokenIssuer(SigningKeyHandle(key))` -- the boundary-safe
     factory the PAPER scheduler uses to mint tokens without importing
-    `hedgekit.riskkernel.signing` itself (issue #48).
+    `windbreak.riskkernel.signing` itself (issue #48).
     """
     claims = make_claims()
 

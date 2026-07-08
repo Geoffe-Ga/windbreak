@@ -1,4 +1,4 @@
-"""Tests for the `hedgekit run --config` flag (issue #11).
+"""Tests for the `windbreak run --config` flag (issue #11).
 
 Exercises config loading through the CLI's `run` subcommand: the
 tracer invariant (no `--config` still heartbeats on defaults), a valid
@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 
 import yaml
 
-from hedgekit.main import build_parser, main
+from windbreak.main import build_parser, main
 
 if TYPE_CHECKING:
     import pytest

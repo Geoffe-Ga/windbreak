@@ -72,7 +72,7 @@ See [documentation-rules.md](../shared/documentation-rules.md) for documentation
 **Component**: Quality check plugins API
 
 **Documentation**: Overview and features, installation/import guide, quick start examples, complete API
-reference (with types and error handling), advanced usage patterns, integration with hedgekit workflow,
+reference (with types and error handling), advanced usage patterns, integration with windbreak workflow,
 migration guide.
 
 ---

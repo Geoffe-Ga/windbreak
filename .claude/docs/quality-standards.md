@@ -134,10 +134,10 @@ The following patterns are NEVER allowed without explicit justification and issu
 import keyring
 
 # Store API key (one-time setup)
-keyring.set_password("hedgekit", "api_key", api_key)
+keyring.set_password("windbreak", "api_key", api_key)
 
 # Retrieve API key
-api_key = keyring.get_password("hedgekit", "api_key")
+api_key = keyring.get_password("windbreak", "api_key")
 if not api_key:
     msg = "API key not found in OS keyring"
     raise ValueError(msg)

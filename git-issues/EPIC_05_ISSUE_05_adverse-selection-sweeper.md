@@ -1,6 +1,6 @@
 ## Role
 
-You are a senior Python engineer working in this repo's `hedgekit/order_gateway/` package, experienced with market microstructure and order-lifecycle management.
+You are a senior Python engineer working in this repo's `windbreak/order_gateway/` package, experienced with market microstructure and order-lifecycle management.
 
 ## Goal
 
@@ -12,8 +12,8 @@ A stale-order sweeper cancels any resting order whose `resting_ttl_seconds` has 
 - **Predecessor issue(s):** #40 (must be merged first — the sweeper's cancels must survive crashes via the WAL/Reconciler)
 - **SPEC section:** `plans/SPEC_v3.md` §9.7 (execution style & adverse-selection controls: TTL default 900s, `cancel_on_move_ticks` default 2, volatility freeze), §11.2 ("run the adverse-selection sweeper — cancel resting orders on TTL expiry or cancel_on_move_ticks breach"), §11.5 (sweeper verified against recorded volatile-market fixtures), §4 row T13, §2 rationale ("a resting limit order… is a free option for anyone with faster news access")
 - **Files involved:**
-  - `hedgekit/order_gateway/sweeper.py` — new: periodic scan of resting orders; TTL and price-move checks; cancel via the §11.3 `CANCEL_REQUESTED → CANCELLED` path
-  - `hedgekit/order_gateway/gateway.py` — start/stop sweeper with the process; expose freeze events
+  - `windbreak/order_gateway/sweeper.py` — new: periodic scan of resting orders; TTL and price-move checks; cancel via the §11.3 `CANCEL_REQUESTED → CANCELLED` path
+  - `windbreak/order_gateway/gateway.py` — start/stop sweeper with the process; expose freeze events
   - `tests/order_gateway/test_sweeper.py` — TTL expiry, tick-move breach, cancel/fill race (order fills as cancel is issued), freeze-and-return-to-screener event
   - `tests/fixtures/volatile_markets/` — recorded volatile-market order-book fixtures (from the M1 fixture corpus)
 - **Prior decisions:** TTL and tick parameters ride on each `NormalizedOrderIntent` (`resting_ttl_seconds`, `cancel_on_move_ticks`, §6.4) — the sweeper reads them from the intent, never from global config, so per-intent overrides stay honored. Price-move reference is the intent's `quote_snapshot_id` baseline. The "return to screener" is a ledgered event the pipeline consumes; the Gateway does not call screener code (§5.1 process isolation).

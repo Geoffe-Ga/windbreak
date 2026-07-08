@@ -1,8 +1,8 @@
 """End-to-end failing-first tests for the always-on PAPER loop (issue #48, RED).
 
-`hedgekit.scheduler.loop` does not exist yet, so every test below fails at
+`windbreak.scheduler.loop` does not exist yet, so every test below fails at
 collection or call time with `ModuleNotFoundError: No module named
-'hedgekit.scheduler'` -- the expected Gate 1 RED state for issue #48.
+'windbreak.scheduler'` -- the expected Gate 1 RED state for issue #48.
 
 Three scenarios, per the issue's own test-writing brief:
 
@@ -17,7 +17,7 @@ Three scenarios, per the issue's own test-writing brief:
    selector having emitted an intent at all. That condition is intentionally
    soft: whether the stock, unmodified forecast pipeline's fixed
    `research_cost_micros` (amortized against the selector's fixed 1-contract
-   probe fill, `hedgekit/selector/__init__.py::_PROBE_SIZE_CENTIS`) ever
+   probe fill, `windbreak/selector/__init__.py::_PROBE_SIZE_CENTIS`) ever
    clears `net_edge_min` for *any* market/forecast combination is a real,
    open economic-modeling question this issue does not resolve -- orthogonal
    to what #48 composes. `tests/scheduler/test_loop.py`'s
@@ -38,7 +38,7 @@ Three scenarios, per the issue's own test-writing brief:
    real Gateway still verifies the token's signature and the real exchange
    still fills the order.
 4. `test_tracer_invariant_research_ceiling_produces_zero_paper_events` -- with
-   `mode_ceiling: research` (even with every PAPER flag supplied), `hedgekit
+   `mode_ceiling: research` (even with every PAPER flag supplied), `windbreak
    run` never wires the PAPER loop at all: no ledger file is ever created,
    and the RESEARCH heartbeat output is unaffected.
 """
@@ -60,7 +60,7 @@ if TYPE_CHECKING:
 
     import pytest
 
-    from hedgekit.config.schema import HedgekitConfig
+    from windbreak.config.schema import WindbreakConfig
 
 #: The two `#110` stub veto reasons that must appear whenever the real kernel
 #: vetoes an intent this loop's selector emits (see the module docstring's
@@ -95,7 +95,7 @@ def _build_deps(
     cassette_path: Path,
     ledger_path: Path,
     report_dir: Path,
-    config: HedgekitConfig,
+    config: WindbreakConfig,
     research_tools_factory,
 ):
     """Build one `PaperTickDeps` over the shared offline fixtures.
@@ -112,7 +112,7 @@ def _build_deps(
     Returns:
         A fully wired `PaperTickDeps`.
     """
-    from hedgekit.scheduler.loop import build_paper_deps
+    from windbreak.scheduler.loop import build_paper_deps
 
     return build_paper_deps(
         books_dir=books_dir,
@@ -129,7 +129,7 @@ def test_real_kernel_tick_ledgers_full_stage_sequence(
     books_dir: Path,
     cassette_path: Path,
     report_dir: Path,
-    paper_config: HedgekitConfig,
+    paper_config: WindbreakConfig,
     research_tools_factory,
     tmp_path: Path,
 ) -> None:
@@ -147,7 +147,7 @@ def test_real_kernel_tick_ledgers_full_stage_sequence(
         research_tools_factory=research_tools_factory,
     )
 
-    from hedgekit.scheduler.loop import run_single_tick
+    from windbreak.scheduler.loop import run_single_tick
 
     outcome = run_single_tick(deps, beat=1)
 
@@ -177,12 +177,12 @@ def test_two_real_kernel_ticks_are_content_deterministic(
     books_dir: Path,
     cassette_path: Path,
     report_dir: Path,
-    paper_config: HedgekitConfig,
+    paper_config: WindbreakConfig,
     research_tools_factory,
     tmp_path: Path,
 ) -> None:
     """Two independent ticks over identical inputs ledger identical content."""
-    from hedgekit.scheduler.loop import run_single_tick
+    from windbreak.scheduler.loop import run_single_tick
 
     deps_a = _build_deps(
         books_dir=books_dir,
@@ -213,7 +213,7 @@ def test_fill_leg_via_doubled_approval_seam_reaches_a_terminal_gateway_state(
     books_dir: Path,
     cassette_path: Path,
     report_dir: Path,
-    paper_config: HedgekitConfig,
+    paper_config: WindbreakConfig,
     research_tools_factory,
     tmp_path: Path,
 ) -> None:
@@ -231,9 +231,9 @@ def test_fill_leg_via_doubled_approval_seam_reaches_a_terminal_gateway_state(
     """
     import dataclasses
 
-    from hedgekit.order_gateway.gateway import SubmitOutcome
-    from hedgekit.riskkernel.checks import Decision
-    from hedgekit.riskkernel.reservations import ApprovalOutcome
+    from windbreak.order_gateway.gateway import SubmitOutcome
+    from windbreak.riskkernel.checks import Decision
+    from windbreak.riskkernel.reservations import ApprovalOutcome
 
     deps = _build_deps(
         books_dir=books_dir,
@@ -300,7 +300,7 @@ def test_fill_leg_via_doubled_approval_seam_reaches_a_terminal_gateway_state(
     reconcile_outcome = doubled_deps.reconciler.run_once()
     assert reconcile_outcome.halted is False
 
-    from hedgekit.scheduler.loop import run_single_tick
+    from windbreak.scheduler.loop import run_single_tick
 
     run_single_tick(doubled_deps, beat=2)
     later_records = doubled_deps.store.read_all()
@@ -331,7 +331,7 @@ def test_tracer_invariant_research_ceiling_produces_zero_paper_events(
     PAPER flag supplied: no ledger file is ever created and the RESEARCH
     heartbeat output is byte-for-byte unaffected by the four new flags.
     """
-    from hedgekit.main import main
+    from windbreak.main import main
 
     config_path = tmp_path / "config.yaml"
     config_path.write_text("mode_ceiling: research\n", encoding="utf-8")

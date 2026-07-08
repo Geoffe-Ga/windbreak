@@ -2,25 +2,25 @@
 
 `load_inputs` parses one recorded "bundle" JSON file (see
 `tests/selector/fixtures/bundle_a.json` / `bundle_b.json`) into a real
-`hedgekit.selector.SelectorInputs` -- built from the actual, post-init
-validated `hedgekit.forecast.records.ForecastRecord` and
-`hedgekit.connector.models.OrderBookSnapshot` domain types, with every
-arithmetic-bearing value wrapped in its `hedgekit.numeric` scaled-integer unit
-type at load time (mirroring `hedgekit.connector.fake.FakeExchange`'s
+`windbreak.selector.SelectorInputs` -- built from the actual, post-init
+validated `windbreak.forecast.records.ForecastRecord` and
+`windbreak.connector.models.OrderBookSnapshot` domain types, with every
+arithmetic-bearing value wrapped in its `windbreak.numeric` scaled-integer unit
+type at load time (mirroring `windbreak.connector.fake.FakeExchange`'s
 `_market_from_dict` / `_book_from_dict` fixture-loading convention). No
 float ever appears in a bundle file or in the objects built from it.
 
 Issue #44 enriches three placeholder seams into concrete carriers: a
 bundle's `fee_model` object becomes a `FeeModelInput` wrapping a real,
-post-init-validated `hedgekit.connector.fees.FeeModel` plus its `as_of`
+post-init-validated `windbreak.connector.fees.FeeModel` plus its `as_of`
 freshness timestamp; `slippage_model` becomes a `SlippageModelInput`;
 `risk_config` becomes a `RiskConfigInput` wrapping a real
-`hedgekit.config.schema.RiskConfig` built from the bundle's override fields
+`windbreak.config.schema.RiskConfig` built from the bundle's override fields
 over the schema's own defaults. Issue #45 enriches the fourth and last
 placeholder: a bundle's `positions` object becomes a `PositionReadModelInput`
 carrying the snapshot id plus the eight money-valued capital/exposure fields
 the dispersion-scaled Kelly sizing (and its five notional caps) reads, each
-wrapped in `hedgekit.numeric.MoneyMicros` at load time.
+wrapped in `windbreak.numeric.MoneyMicros` at load time.
 
 This module is deliberately free of any `pytest` import: `test_determinism_
 golden.py`'s fresh-interpreter check imports it from a bare `python -c`
@@ -35,14 +35,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from hedgekit.config.schema import RiskConfig
-from hedgekit.connector.fees import FeeModel
-from hedgekit.connector.models import OrderBookLevel, OrderBookSnapshot
-from hedgekit.forecast.records import Citation, ForecastRecord, ModelVote
-from hedgekit.numeric import ContractCentis, MoneyMicros, PricePips
-from hedgekit.selector import SelectorInputs
-from hedgekit.selector.correlation import BucketExposureEntry, CorrelationTag
-from hedgekit.selector.types import (
+from windbreak.config.schema import RiskConfig
+from windbreak.connector.fees import FeeModel
+from windbreak.connector.models import OrderBookLevel, OrderBookSnapshot
+from windbreak.forecast.records import Citation, ForecastRecord, ModelVote
+from windbreak.numeric import ContractCentis, MoneyMicros, PricePips
+from windbreak.selector import SelectorInputs
+from windbreak.selector.correlation import BucketExposureEntry, CorrelationTag
+from windbreak.selector.types import (
     FeeModelInput,
     PositionReadModelInput,
     RiskConfigInput,
@@ -196,7 +196,7 @@ def _fee_model_input_from_dict(data: Mapping[str, object]) -> FeeModelInput:
 
     Returns:
         The constructed :class:`FeeModelInput`, wrapping a real,
-        post-init-validated :class:`~hedgekit.connector.fees.FeeModel`.
+        post-init-validated :class:`~windbreak.connector.fees.FeeModel`.
     """
     model = FeeModel(
         schedule_id=data["schedule_id"],
@@ -232,7 +232,7 @@ def _positions_input_from_dict(data: Mapping[str, object]) -> PositionReadModelI
 
     Returns:
         The constructed :class:`PositionReadModelInput`, with every money
-        field wrapped in :class:`~hedgekit.numeric.MoneyMicros`.
+        field wrapped in :class:`~windbreak.numeric.MoneyMicros`.
     """
     return PositionReadModelInput(
         snapshot_id=data["snapshot_id"],
@@ -251,7 +251,7 @@ def _risk_config_input_from_dict(data: Mapping[str, object]) -> RiskConfigInput:
     """Build a :class:`RiskConfigInput` from a bundle's ``risk_config`` object.
 
     Every key besides ``config_hash`` is passed through verbatim as a
-    :class:`~hedgekit.config.schema.RiskConfig` field override, so a bundle
+    :class:`~windbreak.config.schema.RiskConfig` field override, so a bundle
     that supplies none inherits every :class:`RiskConfig` default.
 
     Args:
@@ -293,7 +293,7 @@ def _bucket_peer_from_dict(data: Mapping[str, object]) -> BucketExposureEntry:
 
     Returns:
         The constructed :class:`BucketExposureEntry`, with ``exposure_micros``
-        wrapped in :class:`~hedgekit.numeric.MoneyMicros`.
+        wrapped in :class:`~windbreak.numeric.MoneyMicros`.
     """
     return BucketExposureEntry(
         market_ticker=data["market_ticker"],
@@ -312,7 +312,7 @@ def load_inputs(path: str | Path) -> SelectorInputs:
     Returns:
         A fully constructed `SelectorInputs`, with its `forecast` and
         `order_book` built from the real, post-init-validated domain types
-        and every placeholder ref wrapped in its `hedgekit.selector.types`
+        and every placeholder ref wrapped in its `windbreak.selector.types`
         dataclass.
     """
     raw = json.loads(Path(path).read_text(encoding="utf-8"))

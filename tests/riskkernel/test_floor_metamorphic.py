@@ -1,4 +1,4 @@
-"""Metamorphic (Hypothesis) tests for hedgekit.riskkernel.floor (issue #30, RED).
+"""Metamorphic (Hypothesis) tests for windbreak.riskkernel.floor (issue #30, RED).
 
 These tests generate integer inputs -- never floats, per SPEC S6.1 -- and
 check *relationships* that must hold for every input, rather than pinning one
@@ -9,7 +9,7 @@ whenever `checks.floor_invariant` approves an open, the recomputed
 `worst_case_equity - worst_case_cost` really is `>=` the floor; and every
 result is a true `int`-backed `MoneyMicros`.
 
-`hedgekit/riskkernel/floor.py` and `hedgekit/riskkernel/context.py` do not
+`windbreak/riskkernel/floor.py` and `windbreak/riskkernel/context.py` do not
 exist yet, so the imports below fail collection with `ModuleNotFoundError` --
 the expected Gate 1 RED state for issue #30.
 """
@@ -19,10 +19,10 @@ from __future__ import annotations
 from hypothesis import given
 from hypothesis import strategies as st
 
-from hedgekit.numeric.types import ContractCentis, MoneyMicros, PricePips
-from hedgekit.riskkernel.checks import DEFAULT_CHECKS
-from hedgekit.riskkernel.floor import worst_case_cost, worst_case_equity
 from tests.riskkernel.conftest import make_context, make_intent
+from windbreak.numeric.types import ContractCentis, MoneyMicros, PricePips
+from windbreak.riskkernel.checks import DEFAULT_CHECKS
+from windbreak.riskkernel.floor import worst_case_cost, worst_case_equity
 
 #: `floor_invariant`, looked up by its own `.name` (see `test_checks.py`'s
 #: `_real_check` for the same self-describing lookup rationale).

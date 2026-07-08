@@ -63,8 +63,8 @@ evaluation:
   observation_window: latest_before_close
 
 ops:
-  state_dir: "~/.local/share/hedgekit"
-  backup_dir: "~/hedgekit-backups"
+  state_dir: "~/.local/share/windbreak"
+  backup_dir: "~/windbreak-backups"
   min_free_disk_mb: 1000
   cancel_open_orders_on_shutdown: true
 

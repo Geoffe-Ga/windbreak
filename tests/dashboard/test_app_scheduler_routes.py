@@ -1,6 +1,6 @@
 """Failing-first tests for the dashboard's new PAPER-loop routes (issue #48, RED).
 
-`hedgekit.dashboard.app.create_server` does not yet accept a
+`windbreak.dashboard.app.create_server` does not yet accept a
 `read_models_source` keyword, so every fixture/test below that passes it fails
 at call time with `TypeError: create_server() got an unexpected keyword
 argument 'read_models_source'` -- the expected Gate 1 RED state for issue #48.
@@ -11,7 +11,7 @@ these tests pin:
   (401 without/with-wrong bearer, 200 with the correct one).
 - With `read_models_source=None` (the default), every new route still 200s
   with a "no data yet" placeholder body, rather than 404 or 500 -- mirroring
-  `hedgekit/dashboard/app.py`'s existing `last_heartbeat=None` ->
+  `windbreak/dashboard/app.py`'s existing `last_heartbeat=None` ->
   `"never"`-placeholder precedent.
 - A hostile (forged-HTML) reason string flowing through `/decisions` is
   rendered escaped, never raw (mirrors
@@ -51,7 +51,7 @@ def _make_read_models_source(rows: dict[str, list[dict[str, object]]]):
     """
 
     def _source() -> object:
-        from hedgekit.dashboard.views import DashboardReadModels
+        from windbreak.dashboard.views import DashboardReadModels
 
         return DashboardReadModels(
             positions=rows.get("positions", []),
@@ -67,7 +67,7 @@ def dashboard_server_with_read_models() -> Iterator[
     tuple[http.server.ThreadingHTTPServer, tuple[str, int]]
 ]:
     """Start a dashboard server wired with a fixed, non-empty read-models source."""
-    from hedgekit.dashboard.app import DashboardStatus, create_server
+    from windbreak.dashboard.app import DashboardStatus, create_server
 
     rows = {
         "positions": [
@@ -131,7 +131,7 @@ def dashboard_server_without_read_models() -> Iterator[
     tuple[http.server.ThreadingHTTPServer, tuple[str, int]]
 ]:
     """Start a dashboard server with `read_models_source` left at its default `None`."""
-    from hedgekit.dashboard.app import DashboardStatus, create_server
+    from windbreak.dashboard.app import DashboardStatus, create_server
 
     server = create_server(
         token=TEST_TOKEN,
@@ -257,4 +257,4 @@ def test_root_path_is_unaffected_by_read_models_source_being_wired(
     status, _headers, body = _get(address, "/", headers=_bearer(TEST_TOKEN))
 
     assert status == 200
-    assert "hedgekit dashboard" in body
+    assert "windbreak dashboard" in body

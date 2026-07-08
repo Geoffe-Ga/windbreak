@@ -1,6 +1,6 @@
 ## Role
 
-You are a senior Python engineer working in this repo's `hedgekit/order_gateway/` package, experienced with idempotent distributed-systems write paths and append-only ledgers.
+You are a senior Python engineer working in this repo's `windbreak/order_gateway/` package, experienced with idempotent distributed-systems write paths and append-only ledgers.
 
 ## Goal
 
@@ -12,9 +12,9 @@ Replace the stubbed submitter with the real submission path: limit orders only, 
 - **Predecessor issue(s):** #37 (must be merged first — skeleton, token verification, state machine)
 - **SPEC section:** `plans/SPEC_v3.md` §11.2 (requirements: limit orders only, deterministic client order IDs, ledger every transition before the next action, refuse when paused/unknown), §11.3 (state machine), §5.3 (order flow), §4 row T3 (runaway order loop)
 - **Files involved:**
-  - `hedgekit/order_gateway/gateway.py` — replace stub submitter with real path through the connector's `place_order(normalized_intent, approval_token)` / `cancel_order(id)` interface (§7.2)
-  - `hedgekit/order_gateway/client_order_id.py` — new: deterministic ID = hash of canonical intent serialization
-  - `hedgekit/order_gateway/ledger_writer.py` — transition ledgering helper enforcing write-before-next-action ordering
+  - `windbreak/order_gateway/gateway.py` — replace stub submitter with real path through the connector's `place_order(normalized_intent, approval_token)` / `cancel_order(id)` interface (§7.2)
+  - `windbreak/order_gateway/client_order_id.py` — new: deterministic ID = hash of canonical intent serialization
+  - `windbreak/order_gateway/ledger_writer.py` — transition ledgering helper enforcing write-before-next-action ordering
   - `tests/order_gateway/test_submission.py` — happy path, duplicate submission, paused exchange, unknown status
   - `tests/order_gateway/test_idempotency.py` — same intent resubmitted N times → exactly one exchange order
 - **Prior decisions:** Client order ID derivation must be pure and reproducible across process restarts (crash recovery in #40 depends on it to match in-flight orders to intents). Exchange status comes from `get_exchange_status()` (§7.2); maintenance windows suspend submission (§7.4).

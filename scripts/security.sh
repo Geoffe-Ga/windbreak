@@ -64,7 +64,7 @@ echo "=== Security Checks (Bandit) ==="
 if $VERBOSE; then
     echo "Running Bandit security scanner..."
 fi
-bandit -c pyproject.toml -r hedgekit/ || { echo "✗ Bandit found issues" >&2; exit 1; }
+bandit -c pyproject.toml -r windbreak/ || { echo "✗ Bandit found issues" >&2; exit 1; }
 
 echo "=== Security Checks (pip-audit) ==="
 

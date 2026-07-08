@@ -15,7 +15,7 @@ Property tests over random concurrent intent streams with crashes injected at ev
   - `tests/riskkernel/test_property_concurrent.py` — new: hypothesis stateful/concurrent intent-stream tests
   - `tests/riskkernel/test_crash_injection.py` — new: crash points at every reserve/approve/ack edge
   - `tests/riskkernel/test_matrix.py` — new: §17.2 scenario matrix
-  - `scripts/mutation.sh` / `pyproject.toml` mutmut config — scope to `hedgekit/riskkernel/`, `hedgekit/accounting/`, `hedgekit/tokens/` with a ≥90% threshold gate
+  - `scripts/mutation.sh` / `pyproject.toml` mutmut config — scope to `windbreak/riskkernel/`, `windbreak/accounting/`, `windbreak/tokens/` with a ≥90% threshold gate
   - Production files ONLY where a surviving mutant exposes a real gap (each such fix documented in the PR body)
 - **Prior decisions:** §17.2 matrix to cover: random concurrent intents; partial fills; cancels; expired approvals; crash between reserve/approve and approve/submit; balance mismatch; schema drift; fee-model outage; clock skew; jurisdiction unknown; floor-lowering governance; ratchet; token replay/mutation/expiry; human-ack expiry. Property invariant: after ANY interleaving + crash/restart, `worst_case_equity ≥ floor` and no reservation is leaked or double-spent. Hypothesis seeds logged for reproducibility (§3.5).
 - **State of the world:** All Kernel features exist (#01–#07) with unit/branch coverage at 100% on riskkernel; no cross-feature concurrent property suite; mutmut configured repo-wide by the scaffold but not threshold-gated per package.

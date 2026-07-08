@@ -1,52 +1,52 @@
 # Forecast-engine import boundary (SPEC S8.3).
 #
 # Notes:
-#   1. `hedgekit.connector.models` is deliberately allowed: it holds read-only
+#   1. `windbreak.connector.models` is deliberately allowed: it holds read-only
 #      data models (NormalizedMarket) that pipeline.py imports only under
-#      TYPE_CHECKING. This forbidden-modules contract bans `hedgekit.connector`
+#      TYPE_CHECKING. This forbidden-modules contract bans `windbreak.connector`
 #      submodules individually rather than the whole package precisely so that
 #      the models submodule stays reachable.
 #   2. The PRIMARY, CI-enforced guarantee is the pure-stdlib `ast` check in
 #      tests/forecast/test_sandbox.py, which is strictly STRONGER than this
-#      config: it also forbids a bare `from hedgekit.connector import X`
+#      config: it also forbids a bare `from windbreak.connector import X`
 #      (module-plus-symbol) import AND every relative import (`from ..ledger
 #      import store`, `from . import config`) -- loopholes a forbidden-modules
 #      contract cannot express -- while carving out the same
-#      `hedgekit.connector.models` allowance.
+#      `windbreak.connector.models` allowance.
 #   3. Wiring import-linter (plans/architecture/run-check.sh) into CI is a
 #      follow-up (chore(ci): wire import-linter into CI). Until then this file
 #      documents the contract; the pytest AST check is the enforcing gate.
 
 [importlinter]
-root_package = hedgekit
+root_package = windbreak
 
 [importlinter:contract:forecast-sandbox-boundary]
 name = Forecast engine may not reach ledger/order/risk/config machinery (SPEC S8.3)
 type = forbidden
 source_modules =
-    hedgekit.forecast
+    windbreak.forecast
 forbidden_modules =
-    hedgekit.ledger
-    hedgekit.order_gateway
-    hedgekit.riskkernel
-    hedgekit.config
-    hedgekit.connector.interface
-    hedgekit.connector.snapshot
-    hedgekit.connector.fake
-    hedgekit.connector.kalshi
+    windbreak.ledger
+    windbreak.order_gateway
+    windbreak.riskkernel
+    windbreak.config
+    windbreak.connector.interface
+    windbreak.connector.snapshot
+    windbreak.connector.fake
+    windbreak.connector.kalshi
 
 # Signing-key isolation boundary (SPEC S5.3).
 #
 # Notes:
-#   1. Only the `hedgekit.riskkernel` package may import the approval-token
+#   1. Only the `windbreak.riskkernel` package may import the approval-token
 #      signing key handle; every other shipped module is enumerated below as a
-#      forbidden source. `hedgekit.riskkernel` itself is deliberately absent
+#      forbidden source. `windbreak.riskkernel` itself is deliberately absent
 #      from `source_modules`, so the package that owns the key may still reach
 #      its own signing submodule.
 #   2. As with the forecast boundary above, the PRIMARY, enforcing gate is the
 #      pure-stdlib `ast` check in tests/riskkernel/test_process_isolation.py --
 #      it is strictly STRONGER than this config (it also flags a bare
-#      `from hedgekit.riskkernel import signing` module-plus-symbol import AND
+#      `from windbreak.riskkernel import signing` module-plus-symbol import AND
 #      every relative import, loopholes a forbidden-modules contract cannot
 #      express). Wiring import-linter into CI is a follow-up; until then this
 #      file documents the contract and the pytest AST check enforces it.
@@ -55,41 +55,41 @@ forbidden_modules =
 name = Only the Risk Kernel may import the approval-token signing key handle (SPEC S5.3)
 type = forbidden
 source_modules =
-    hedgekit.alerts
-    hedgekit.config
-    hedgekit.connector
-    hedgekit.dashboard
-    hedgekit.forecast
-    hedgekit.ledger
-    hedgekit.numeric
-    hedgekit.order_gateway
-    hedgekit.pipeline
-    hedgekit.screener
-    hedgekit.tokens
-    hedgekit.main
-    hedgekit.logging_setup
+    windbreak.alerts
+    windbreak.config
+    windbreak.connector
+    windbreak.dashboard
+    windbreak.forecast
+    windbreak.ledger
+    windbreak.numeric
+    windbreak.order_gateway
+    windbreak.pipeline
+    windbreak.screener
+    windbreak.tokens
+    windbreak.main
+    windbreak.logging_setup
 forbidden_modules =
-    hedgekit.riskkernel.signing
+    windbreak.riskkernel.signing
 
 # Order-submission-client isolation boundary (SPEC S5.2/S5.3).
 #
 # Notes:
-#   1. Only the `hedgekit.order_gateway` package -- and, since issue #48, the
-#      `hedgekit.scheduler` PAPER-mode composition root -- may import the
-#      exchange order-submission client `hedgekit.connector.paper`; every other
+#   1. Only the `windbreak.order_gateway` package -- and, since issue #48, the
+#      `windbreak.scheduler` PAPER-mode composition root -- may import the
+#      exchange order-submission client `windbreak.connector.paper`; every other
 #      shipped module is enumerated below as a forbidden source.
-#      `hedgekit.order_gateway` (the sole intended trading consumer, issue #37's
-#      `PaperSubmitter`), `hedgekit.connector` (where `PaperExchange` itself is
-#      defined and already re-exported), and `hedgekit.scheduler` (which
+#      `windbreak.order_gateway` (the sole intended trading consumer, issue #37's
+#      `PaperSubmitter`), `windbreak.connector` (where `PaperExchange` itself is
+#      defined and already re-exported), and `windbreak.scheduler` (which
 #      constructs a `PaperExchange` ONLY inside its `build_paper_deps` PAPER
 #      factory -- the boundary's intent, keeping the paper fake out of the
 #      RESEARCH/LIVE trading path, is preserved because the RESEARCH loop never
-#      imports `hedgekit.scheduler` at all) are deliberately absent from
+#      imports `windbreak.scheduler` at all) are deliberately absent from
 #      `source_modules`.
 #   2. As with the boundaries above, the PRIMARY, enforcing gate is the
 #      pure-stdlib `ast` check in tests/architecture/test_import_boundaries.py --
 #      it is strictly STRONGER than this config (it also flags a bare
-#      `from hedgekit.connector import paper` / `... import PaperExchange`
+#      `from windbreak.connector import paper` / `... import PaperExchange`
 #      module-plus-symbol import AND every relative import, loopholes a
 #      forbidden-modules contract cannot express). Wiring import-linter into CI
 #      is a follow-up; until then this file documents the contract and the
@@ -99,17 +99,17 @@ forbidden_modules =
 name = Only the Order Gateway may import the exchange order-submission client (SPEC S5.2/S5.3)
 type = forbidden
 source_modules =
-    hedgekit.alerts
-    hedgekit.config
-    hedgekit.dashboard
-    hedgekit.forecast
-    hedgekit.ledger
-    hedgekit.numeric
-    hedgekit.pipeline
-    hedgekit.riskkernel
-    hedgekit.screener
-    hedgekit.tokens
-    hedgekit.main
-    hedgekit.logging_setup
+    windbreak.alerts
+    windbreak.config
+    windbreak.dashboard
+    windbreak.forecast
+    windbreak.ledger
+    windbreak.numeric
+    windbreak.pipeline
+    windbreak.riskkernel
+    windbreak.screener
+    windbreak.tokens
+    windbreak.main
+    windbreak.logging_setup
 forbidden_modules =
-    hedgekit.connector.paper
+    windbreak.connector.paper

@@ -1,9 +1,9 @@
-"""Failing-first tests for `hedgekit.evaluation.bootstrap` (issue #51, RED;
+"""Failing-first tests for `windbreak.evaluation.bootstrap` (issue #51, RED;
 SPEC-EPIC_07 S13.5, S21 glossary "clustered bootstrap").
 
-`hedgekit.evaluation.bootstrap` does not exist yet, so every test below fails
+`windbreak.evaluation.bootstrap` does not exist yet, so every test below fails
 collection/execution with `ModuleNotFoundError: No module named
-'hedgekit.evaluation.bootstrap'` -- the expected Gate 1 RED state for issue
+'windbreak.evaluation.bootstrap'` -- the expected Gate 1 RED state for issue
 #51.
 
 Pins the clustered-bootstrap confidence interval for the headline Brier skill
@@ -34,13 +34,13 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from hedgekit.evaluation import (
+from windbreak.evaluation import (
     EvaluationInputs,
     FixtureForecast,
     ObservationWindow,
     ResolutionOutcome,
 )
-from hedgekit.numeric.types import ProbabilityPpm
+from windbreak.numeric.types import ProbabilityPpm
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -226,7 +226,7 @@ def unclustered_width_reference() -> int:
         The `ci_width` of the stripped-input bootstrap result, using the
         same confidence level and seed as the primary clustered-fixture test.
     """
-    from hedgekit.evaluation.bootstrap import brier_skill_ci
+    from windbreak.evaluation.bootstrap import brier_skill_ci
 
     stripped = _stripped_of_correlation_groups(clustered_fixture())
     result = brier_skill_ci(stripped, confidence_ppm=950_000, seed=42, window=_WINDOW)
@@ -242,7 +242,7 @@ def test_bootstrap_replicates_constant_is_one_thousand() -> None:
     """`BOOTSTRAP_REPLICATES` is `1_000`, the documented default replicate
     count (matches the issue's own worked percentile-index example).
     """
-    from hedgekit.evaluation.bootstrap import BOOTSTRAP_REPLICATES
+    from windbreak.evaluation.bootstrap import BOOTSTRAP_REPLICATES
 
     assert BOOTSTRAP_REPLICATES == 1_000
 
@@ -261,7 +261,7 @@ def test_percentile_indices_for_one_thousand_replicates_at_ninety_five_percent()
             = divide(25_000_000, 1_000_000, floor) = 25`;
     `hi_idx = 1_000 - 1 - 25 = 974`.
     """
-    from hedgekit.evaluation.bootstrap import _percentile_indices
+    from windbreak.evaluation.bootstrap import _percentile_indices
 
     lo_idx, hi_idx = _percentile_indices(replicates=1_000, confidence_ppm=950_000)
 
@@ -278,7 +278,7 @@ def test_clustered_ci_result_is_a_frozen_dataclass_with_the_documented_fields() 
     """`ClusteredCiResult` carries exactly the documented fields and cannot
     be mutated after construction.
     """
-    from hedgekit.evaluation.bootstrap import ClusteredCiResult
+    from windbreak.evaluation.bootstrap import ClusteredCiResult
 
     result = ClusteredCiResult(
         point_estimate_ppm=100_000,
@@ -302,7 +302,7 @@ def test_brier_skill_ci_degrades_to_one_singleton_cluster_per_market() -> None:
     every one of the 10 resolved markets is its own singleton cluster, so
     `effective_n == 10`.
     """
-    from hedgekit.evaluation.bootstrap import brier_skill_ci
+    from windbreak.evaluation.bootstrap import brier_skill_ci
 
     result = brier_skill_ci(
         _synthetic_inputs(), confidence_ppm=950_000, seed=1, window=_WINDOW
@@ -320,7 +320,7 @@ def test_brier_skill_ci_is_deterministic_for_identical_inputs_and_seed() -> None
     """Two calls with identical inputs and seed produce a byte-identical
     `ClusteredCiResult` (SPEC S3.5).
     """
-    from hedgekit.evaluation.bootstrap import brier_skill_ci
+    from windbreak.evaluation.bootstrap import brier_skill_ci
 
     inputs = clustered_fixture()
 
@@ -341,7 +341,7 @@ def test_clustered_ci_respects_correlation_groups() -> None:
     unclustered (group-id-stripped) reference computed via the same public
     API.
     """
-    from hedgekit.evaluation.bootstrap import brier_skill_ci
+    from windbreak.evaluation.bootstrap import brier_skill_ci
 
     result = brier_skill_ci(
         clustered_fixture(), confidence_ppm=950_000, seed=42, window=_WINDOW
@@ -367,7 +367,7 @@ def test_every_replicate_bound_is_within_the_clustered_support_set() -> None:
     derived 10-multiset support set, for a second, independent seed -- not
     just the issue's own pinned `seed=42` example.
     """
-    from hedgekit.evaluation.bootstrap import brier_skill_ci
+    from windbreak.evaluation.bootstrap import brier_skill_ci
 
     result = brier_skill_ci(
         clustered_fixture(), confidence_ppm=950_000, seed=1_234, window=_WINDOW
@@ -389,7 +389,7 @@ def test_brier_skill_ci_rejects_confidence_ppm_outside_open_unit_interval(
     """`confidence_ppm` outside the open interval `(0, 1_000_000)` raises
     `ValueError`.
     """
-    from hedgekit.evaluation.bootstrap import brier_skill_ci
+    from windbreak.evaluation.bootstrap import brier_skill_ci
 
     with pytest.raises(ValueError, match="confidence_ppm"):
         brier_skill_ci(
@@ -402,7 +402,7 @@ def test_brier_skill_ci_rejects_bool_as_confidence_ppm() -> None:
     this issue's own spec: "confidence_ppm outside (0,1e6) or bool ->
     ValueError").
     """
-    from hedgekit.evaluation.bootstrap import brier_skill_ci
+    from windbreak.evaluation.bootstrap import brier_skill_ci
 
     with pytest.raises(ValueError, match="confidence_ppm"):
         brier_skill_ci(

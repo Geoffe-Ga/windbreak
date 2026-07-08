@@ -117,7 +117,7 @@ TOTAL=$((KILLED + SURVIVED + SUSPICIOUS + TIMEOUT))
 if [ "$TOTAL" -eq 0 ]; then
     echo "Warning: No mutants were generated" >&2
     echo "This might indicate:"
-    echo "  - No code to mutate in hedgekit/"
+    echo "  - No code to mutate in windbreak/"
     echo "  - Configuration issue with mutmut"
     echo ""
     echo "Skipping mutation score validation"

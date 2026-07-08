@@ -1,4 +1,4 @@
-"""Shared fixtures for hedgekit.connector.kalshi tests (issues #17, #18, #20).
+"""Shared fixtures for windbreak.connector.kalshi tests (issues #17, #18, #20).
 
 Serves the checked-in Kalshi-shaped JSON fixtures in
 `tests/fixtures/exchange/kalshi/` through a fake, `requests`-like session
@@ -48,9 +48,9 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from hedgekit.connector.kalshi.adapter import KalshiConnector
-from hedgekit.connector.kalshi.client import KalshiClient
-from hedgekit.connector.snapshot import InMemoryEventLedgerWriter
+from windbreak.connector.kalshi.adapter import KalshiConnector
+from windbreak.connector.kalshi.client import KalshiClient
+from windbreak.connector.snapshot import InMemoryEventLedgerWriter
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping

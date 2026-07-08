@@ -1,6 +1,6 @@
 ## Epic Summary
 
-This workstream delivers the Market Connector — the layer that normalizes exchange APIs into hedgekit's domain model — plus the PaperExchange simulator that makes safe, pessimistic paper trading possible. It covers SPEC_v3 §7 (Market Connector) end-to-end, producing `NormalizedMarket` records (§6.2), a proven balance-semantics contract (§7.3), and the §17.4 pessimistic fill model. Per §18, this is milestone M1: "snapshots and screen decisions ledgered on schedule."
+This workstream delivers the Market Connector — the layer that normalizes exchange APIs into windbreak's domain model — plus the PaperExchange simulator that makes safe, pessimistic paper trading possible. It covers SPEC_v3 §7 (Market Connector) end-to-end, producing `NormalizedMarket` records (§6.2), a proven balance-semantics contract (§7.3), and the §17.4 pessimistic fill model. Per §18, this is milestone M1: "snapshots and screen decisions ledgered on schedule."
 
 ## Scope
 
@@ -24,7 +24,7 @@ This workstream delivers the Market Connector — the layer that normalizes exch
 
 The epic is done when:
 
-- [ ] `hedgekit run` in RESEARCH mode ledgers market snapshots and screen decisions on schedule using the Kalshi adapter (demo environment) or FakeExchange
+- [ ] `windbreak run` in RESEARCH mode ledgers market snapshots and screen decisions on schedule using the Kalshi adapter (demo environment) or FakeExchange
 - [ ] The adapter publishes a `BalanceSemantics` record with zero `unknown` fields against recorded fixtures (§7.3 — a blocker for live trading later)
 - [ ] PaperExchange property test proves no simulated fill is ever better than the recorded book allows (§7.6)
 - [ ] Unknown money/risk-relevant fields in any exchange response halt trading (T8), proven by schema-drift fixtures

@@ -1,7 +1,7 @@
-"""Tests for hedgekit.forecast.sandbox (issue #24): the bounded research sandbox.
+"""Tests for windbreak.forecast.sandbox (issue #24): the bounded research sandbox.
 
-`hedgekit/forecast/sandbox.py` does not exist yet, so importing it below fails
-collection with `ModuleNotFoundError: No module named 'hedgekit.forecast.sandbox'`
+`windbreak/forecast/sandbox.py` does not exist yet, so importing it below fails
+collection with `ModuleNotFoundError: No module named 'windbreak.forecast.sandbox'`
 -- the expected Gate 1 RED state for issue #24. This module pins the structural
 tool boundary the sandbox must enforce:
 
@@ -20,12 +20,12 @@ tool boundary the sandbox must enforce:
   issue #26; no verification logic ships in issue #24.
 * **No privileged handle** -- nothing reachable from a `ResearchTools`
   instance, nor any parameter of `build_research_tools`, ever touches
-  `hedgekit.ledger`, `hedgekit.config`, or `hedgekit.connector`.
+  `windbreak.ledger`, `windbreak.config`, or `windbreak.connector`.
 * **Import boundary** -- a self-contained, stdlib-`ast`-based checker (the "CI
   teeth" for the previous bullet, at the source-file level rather than one
-  object graph) scans every `hedgekit/forecast/*.py` file for the same
+  object graph) scans every `windbreak/forecast/*.py` file for the same
   forbidden prefixes -- with one narrow, source-level allowance the instance
-  check above does not need: `hedgekit.connector.models`, the read-only
+  check above does not need: `windbreak.connector.models`, the read-only
   `NormalizedMarket` data shape `bounded_web_research` (stage 5) is handed by
   the rest of the pipeline.
 * **Pipeline integration** -- `run_pipeline`'s new, required `research_tools`
@@ -46,9 +46,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from hedgekit.forecast.pipeline import run_pipeline
-from hedgekit.forecast.records import forecast_record_to_payload
-from hedgekit.forecast.sandbox import (
+from windbreak.forecast.pipeline import run_pipeline
+from windbreak.forecast.records import forecast_record_to_payload
+from windbreak.forecast.sandbox import (
     EgressDeniedError,
     ResearchCache,
     ResearchTools,
@@ -61,12 +61,12 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from datetime import datetime
 
-    from hedgekit.connector.models import NormalizedMarket
-    from hedgekit.forecast.records import BaselineQuoteSnapshot
+    from windbreak.connector.models import NormalizedMarket
+    from windbreak.forecast.records import BaselineQuoteSnapshot
 
     #: `make_fake_vote_transport` / `research_tools_factory` (see
     #: tests/forecast/conftest.py) are factories for fixture doubles defined in
-    #: the conftest module (not part of the `hedgekit` package under test), so
+    #: the conftest module (not part of the `windbreak` package under test), so
     #: they are typed structurally here rather than imported by name.
     FakeVoteTransportFactory = Callable[[], object]
     ResearchToolsFactory = Callable[..., ResearchTools]
@@ -76,7 +76,7 @@ if TYPE_CHECKING:
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 #: Every real, shipped module under the package this test suite guards.
-_FORECAST_PACKAGE_DIR = _REPO_ROOT / "hedgekit" / "forecast"
+_FORECAST_PACKAGE_DIR = _REPO_ROOT / "windbreak" / "forecast"
 
 
 class _StaticSearchTransport:
@@ -410,14 +410,14 @@ def test_verify_citation_is_registered_but_reserved(
 def test_research_tools_instance_holds_no_privileged_module_handles(
     research_tools: ResearchTools,
 ) -> None:
-    """No slot value's type lives in `hedgekit.ledger`, `hedgekit.config`, or
-    `hedgekit.connector` -- a `ResearchTools` instance holds only its cache,
+    """No slot value's type lives in `windbreak.ledger`, `windbreak.config`, or
+    `windbreak.connector` -- a `ResearchTools` instance holds only its cache,
     allowlist, and the two injected transports, never a privileged handle.
     """
     forbidden_module_prefixes = (
-        "hedgekit.ledger",
-        "hedgekit.config",
-        "hedgekit.connector",
+        "windbreak.ledger",
+        "windbreak.config",
+        "windbreak.connector",
     )
     for slot_name in type(research_tools).__slots__:
         value = getattr(research_tools, slot_name, None)
@@ -448,17 +448,17 @@ def test_build_research_tools_signature_has_no_privileged_parameters() -> None:
 
 _FORBIDDEN_IMPORT_PREFIXES: frozenset[str] = frozenset(
     {
-        "hedgekit.ledger",
-        "hedgekit.order_gateway",
-        "hedgekit.riskkernel",
-        "hedgekit.config",
-        "hedgekit.connector",
+        "windbreak.ledger",
+        "windbreak.order_gateway",
+        "windbreak.riskkernel",
+        "windbreak.config",
+        "windbreak.connector",
     }
 )
 
-#: The single, narrow allowance carved out of the broader `hedgekit.connector`
+#: The single, narrow allowance carved out of the broader `windbreak.connector`
 #: prohibition: the read-only, dataclass-only `NormalizedMarket` shapes.
-_ALLOWED_IMPORT_NAMES: frozenset[str] = frozenset({"hedgekit.connector.models"})
+_ALLOWED_IMPORT_NAMES: frozenset[str] = frozenset({"windbreak.connector.models"})
 
 
 def _matches_prefix(candidate: str, prefixes: frozenset[str]) -> bool:
@@ -487,18 +487,18 @@ def _find_forbidden_imports(
     For a plain `import a.b.c`, `alias.name` (`"a.b.c"`) is tested directly.
     For an *absolute* `from a.b import c`, both `"a.b"` (the module) and
     `"a.b.c"` (the module plus the imported symbol) are candidates -- so `from
-    hedgekit.connector import MarketConnector` is caught even though
-    `hedgekit.connector.MarketConnector` is not a real submodule path. The
+    windbreak.connector import MarketConnector` is caught even though
+    `windbreak.connector.MarketConnector` is not a real submodule path. The
     `allowed_names` allowance is consulted *before* the forbidden-prefix test,
-    and against both candidates, so `from hedgekit.connector import models`
-    (module-plus-symbol == the allowed `hedgekit.connector.models`) and `from
-    hedgekit.connector.models import NormalizedMarket` (module itself ==
+    and against both candidates, so `from windbreak.connector import models`
+    (module-plus-symbol == the allowed `windbreak.connector.models`) and `from
+    windbreak.connector.models import NormalizedMarket` (module itself ==
     the allowance) are both left unflagged.
 
     A *relative* `from`-import (any `node.level > 0`, including a bare
     `from . import config` whose `node.module` is `None`) is **always** flagged.
     Two reasons: a relative import can name a forbidden module
-    (`from ..ledger import store` resolves to `hedgekit.ledger`) yet its
+    (`from ..ledger import store` resolves to `windbreak.ledger`) yet its
     `node.module` alone (`"ledger"`) matches no absolute prefix, so resolving it
     correctly would require the importer's package path; and the forecast
     package convention is absolute imports throughout (verified: zero relative
@@ -547,8 +547,8 @@ def _find_forbidden_imports(
     return tuple(found)
 
 
-def test_hedgekit_forecast_package_has_zero_forbidden_imports() -> None:
-    """Every shipped `hedgekit/forecast/*.py` module imports across the boundary
+def test_windbreak_forecast_package_has_zero_forbidden_imports() -> None:
+    """Every shipped `windbreak/forecast/*.py` module imports across the boundary
     cleanly -- zero forbidden-prefix hits anywhere in the package.
     """
     violations: list[str] = []
@@ -567,12 +567,12 @@ def test_hedgekit_forecast_package_has_zero_forbidden_imports() -> None:
 @pytest.mark.parametrize(
     "source",
     [
-        "import hedgekit.ledger.store\n",
-        "import hedgekit.order_gateway\n",
-        "import hedgekit.riskkernel\n",
-        "import hedgekit.config\n",
-        "import hedgekit.connector.interface\n",
-        "from hedgekit.connector import MarketConnector\n",
+        "import windbreak.ledger.store\n",
+        "import windbreak.order_gateway\n",
+        "import windbreak.riskkernel\n",
+        "import windbreak.config\n",
+        "import windbreak.connector.interface\n",
+        "from windbreak.connector import MarketConnector\n",
         # Relative imports are always flagged: a `..`-hop can reach a forbidden
         # module, and a bare `from . import x` hides its target from the check.
         "from ..ledger import store\n",
@@ -592,15 +592,15 @@ def test_ast_checker_flags_each_seeded_forbidden_import(source: str) -> None:
 @pytest.mark.parametrize(
     "source",
     [
-        "from hedgekit.connector.models import NormalizedMarket\n",
-        "from hedgekit.connector import models\n",
+        "from windbreak.connector.models import NormalizedMarket\n",
+        "from windbreak.connector import models\n",
     ],
 )
 def test_ast_checker_does_not_flag_the_connector_models_allowance(
     source: str,
 ) -> None:
-    """The `hedgekit.connector.models` allowance is not flagged, either as a
-    direct import or via `from hedgekit.connector import models`.
+    """The `windbreak.connector.models` allowance is not flagged, either as a
+    direct import or via `from windbreak.connector import models`.
     """
     violations = _find_forbidden_imports(
         source, _FORBIDDEN_IMPORT_PREFIXES, _ALLOWED_IMPORT_NAMES

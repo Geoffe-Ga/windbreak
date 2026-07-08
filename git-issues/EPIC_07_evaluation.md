@@ -1,6 +1,6 @@
 ## Epic Summary
 
-Build the Evaluation & Calibration subsystem (SPEC_v3 §13, milestone M6 in §18): the three-track measurement machinery (forecast quality / selection quality / execution quality) that decides — from data, not narrative — whether hedgekit's forecasts have any edge. This epic makes the PAPER→LIVE_MICRO promotion gate *measurable*; whether it is ever *met* depends on the data, not the code. It also implements the anti-Goodhart pre-registration flow (T15), temporal-integrity enforcement (T14 / §1.1-6), and dual-path gate computation (T12).
+Build the Evaluation & Calibration subsystem (SPEC_v3 §13, milestone M6 in §18): the three-track measurement machinery (forecast quality / selection quality / execution quality) that decides — from data, not narrative — whether windbreak's forecasts have any edge. This epic makes the PAPER→LIVE_MICRO promotion gate *measurable*; whether it is ever *met* depends on the data, not the code. It also implements the anti-Goodhart pre-registration flow (T15), temporal-integrity enforcement (T14 / §1.1-6), and dual-path gate computation (T12).
 
 ## Scope
 

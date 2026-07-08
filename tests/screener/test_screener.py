@@ -1,15 +1,15 @@
-"""Tests for `hedgekit.screener.screener.Screener`, the real §16 screener
+"""Tests for `windbreak.screener.screener.Screener`, the real §16 screener
 (issue #21).
 
-`hedgekit.screener.screener` does not exist yet, so importing it fails
+`windbreak.screener.screener` does not exist yet, so importing it fails
 collection with `ModuleNotFoundError: No module named
-'hedgekit.screener.screener'` -- the expected Gate 1 RED state for issue #21.
+'windbreak.screener.screener'` -- the expected Gate 1 RED state for issue #21.
 
 The production API these tests pin:
 
     * `Screener(config, writer, *, clock, acknowledgements=())` -- `config` is
-      a `hedgekit.config.ScreenerConfig`, `writer` is an
-      `hedgekit.connector.snapshot.EventLedgerWriter`, `clock` is a
+      a `windbreak.config.ScreenerConfig`, `writer` is an
+      `windbreak.connector.snapshot.EventLedgerWriter`, `clock` is a
       zero-argument callable returning the current `datetime` ("now"),
       `acknowledgements` is a tuple of `LegalRiskAcknowledgement`. At
       construction, exactly one `LEGAL_RISK_ACK` event is emitted per supplied
@@ -36,14 +36,14 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from hedgekit.config import HorizonDays, ScreenerConfig
-from hedgekit.connector.models import NormalizedMarket
-from hedgekit.connector.snapshot import (
+from windbreak.config import HorizonDays, ScreenerConfig
+from windbreak.connector.models import NormalizedMarket
+from windbreak.connector.snapshot import (
     SCREEN_DECISION_EVENT,
     InMemoryEventLedgerWriter,
 )
-from hedgekit.numeric import ContractCentis, MoneyMicros
-from hedgekit.screener.filters import (
+from windbreak.numeric import ContractCentis, MoneyMicros
+from windbreak.screener.filters import (
     CATEGORY_BLOCKLIST,
     HORIZON_DAYS,
     MIN_DEPTH,
@@ -55,7 +55,7 @@ from hedgekit.screener.filters import (
     min_depth_filter,
     min_volume_filter,
 )
-from hedgekit.screener.screener import (
+from windbreak.screener.screener import (
     LEGAL_RISK_ACK_EVENT,
     LegalRiskAcknowledgement,
     Screener,

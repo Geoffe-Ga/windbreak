@@ -1,6 +1,6 @@
 """Failing-first tests for the stub localhost dashboard (issue #15, RED).
 
-`hedgekit.dashboard.app` does not exist yet -- only the package's
+`windbreak.dashboard.app` does not exist yet -- only the package's
 docstring-only `__init__.py` does -- so the import below fails the whole
 module at collection with `ModuleNotFoundError`. Once the implementation
 specialist adds `DashboardStatus` and `create_server`, these tests pin the
@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from hedgekit.dashboard.app import DashboardStatus, create_server
+from windbreak.dashboard.app import DashboardStatus, create_server
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

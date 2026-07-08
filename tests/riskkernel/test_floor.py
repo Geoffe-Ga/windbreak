@@ -1,14 +1,14 @@
-"""Failing-first tests for hedgekit.riskkernel.floor (issue #30, RED).
+"""Failing-first tests for windbreak.riskkernel.floor (issue #30, RED).
 
 Issue #30 gives the Risk Kernel its two worst-case arithmetic primitives:
 `worst_case_equity` (cash + terminal value - reservations - fee upper bounds -
 reconciliation buffer) and `worst_case_cost` (notional, rounded conservatively,
 plus trading fee, settlement fee, and a rounding buffer). Both are exact
-integer arithmetic over `hedgekit.numeric` scaled-int types -- never a float.
+integer arithmetic over `windbreak.numeric` scaled-int types -- never a float.
 
-`hedgekit/riskkernel/floor.py` does not exist yet, so the import below fails
+`windbreak/riskkernel/floor.py` does not exist yet, so the import below fails
 the whole module at collection with `ModuleNotFoundError: No module named
-'hedgekit.riskkernel.floor'` -- the expected Gate 1 RED state for issue #30.
+'windbreak.riskkernel.floor'` -- the expected Gate 1 RED state for issue #30.
 Once the module exists, this file pins: the exact arithmetic (not just its
 sign); that every one of the 5 equity terms and 4 cost terms independently
 moves the result by exactly the expected amount per 1-unit perturbation
@@ -21,9 +21,9 @@ from __future__ import annotations
 
 import pytest
 
-from hedgekit.numeric import RoundingDirection
-from hedgekit.numeric.types import ContractCentis, MoneyMicros, PricePips
-from hedgekit.riskkernel.floor import worst_case_cost, worst_case_equity
+from windbreak.numeric import RoundingDirection
+from windbreak.numeric.types import ContractCentis, MoneyMicros, PricePips
+from windbreak.riskkernel.floor import worst_case_cost, worst_case_equity
 
 # --- worst_case_equity: exact value ---------------------------------------------
 
@@ -232,11 +232,11 @@ def test_worst_case_cost_computes_notional_with_overstate_cost_rounding(
     never `UNDERSTATE_EQUITY` -- since a cost must never be understated.
 
     Assumes `floor.py` imports `money_from_price_and_count` directly at
-    module scope (`from hedgekit.numeric import ... money_from_price_and_count`),
-    matching `hedgekit.connector.fees`'s own "import the function, call it
-    bare" convention (see that module's `from hedgekit.numeric import
+    module scope (`from windbreak.numeric import ... money_from_price_and_count`),
+    matching `windbreak.connector.fees`'s own "import the function, call it
+    bare" convention (see that module's `from windbreak.numeric import
     RoundingDirection, divide`), so it is spyable at
-    `hedgekit.riskkernel.floor.money_from_price_and_count`.
+    `windbreak.riskkernel.floor.money_from_price_and_count`.
     """
     calls: list[tuple[PricePips, ContractCentis, RoundingDirection]] = []
 
@@ -246,7 +246,7 @@ def test_worst_case_cost_computes_notional_with_overstate_cost_rounding(
         calls.append((price, size, rounding))
         return MoneyMicros(0)
 
-    monkeypatch.setattr("hedgekit.riskkernel.floor.money_from_price_and_count", _spy)
+    monkeypatch.setattr("windbreak.riskkernel.floor.money_from_price_and_count", _spy)
     price = PricePips(2_500)
     size = ContractCentis(400)
 

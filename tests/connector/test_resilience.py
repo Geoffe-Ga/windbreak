@@ -1,4 +1,4 @@
-"""Tests for hedgekit.connector.resilience (issue #20): rate limit / retry / breaker.
+"""Tests for windbreak.connector.resilience (issue #20): rate limit / retry / breaker.
 
 Three cooperating, independently-testable pieces:
 
@@ -25,7 +25,7 @@ depends on wall-clock time. All jitter comes from a seeded `random.Random`
 so expected sleeper arguments are computed exactly, not merely
 range-checked.
 
-`hedgekit.connector.resilience` does not exist yet, so importing it fails
+`windbreak.connector.resilience` does not exist yet, so importing it fails
 collection with `ModuleNotFoundError` -- the expected Gate 1 RED state for
 issue #20.
 
@@ -60,8 +60,8 @@ from datetime import UTC, datetime
 
 import pytest
 
-from hedgekit.connector.kalshi.client import KalshiApiError
-from hedgekit.connector.resilience import (
+from windbreak.connector.kalshi.client import KalshiApiError
+from windbreak.connector.resilience import (
     CONNECTOR_HALT_EVENT,
     DEFAULT_RESILIENCE_POLICY,
     CircuitBreaker,
@@ -73,7 +73,7 @@ from hedgekit.connector.resilience import (
     TokenBucket,
     build_default_resilient_caller,
 )
-from hedgekit.connector.snapshot import InMemoryEventLedgerWriter
+from windbreak.connector.snapshot import InMemoryEventLedgerWriter
 
 #: The fixed wall-clock datetime every `ResilientCaller` in this module uses;
 #: never wall-clock time, so `CONNECTOR_HALT` event timestamps are exact.
@@ -81,7 +81,7 @@ _WALL_CLOCK_DATETIME = datetime(2026, 7, 4, 12, 0, 0, tzinfo=UTC)
 
 #: The ISO-Z rendering `CONNECTOR_HALT` events must stamp, matching the
 #: `%Y-%m-%dT%H:%M:%S.%f` + `"Z"` convention already used throughout
-#: `hedgekit.connector` (see `snapshot.utc_now_iso` / `adapter._iso_timestamp`).
+#: `windbreak.connector` (see `snapshot.utc_now_iso` / `adapter._iso_timestamp`).
 _WALL_CLOCK_ISO = "2026-07-04T12:00:00.000000Z"
 
 

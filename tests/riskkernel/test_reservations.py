@@ -9,7 +9,7 @@ time-bounded expiry, and one ledgered `Event` per mutation -- plus an
 context, reserves capital, and issues a signed, single-use approval token
 only when the check pipeline does not veto.
 
-`hedgekit/riskkernel/reservations.py` does not exist yet, so every import
+`windbreak/riskkernel/reservations.py` does not exist yet, so every import
 below fails collection with `ModuleNotFoundError` -- the expected Gate 1 RED
 state for issue #31.
 
@@ -26,17 +26,17 @@ import threading
 
 import pytest
 
-from hedgekit.numeric.types import MoneyMicros
-from hedgekit.riskkernel import checks as checks_module
-from hedgekit.riskkernel.process import InMemoryKernelLedgerWriter
-from hedgekit.riskkernel.reservations import (
+from tests.riskkernel.conftest import make_context, make_intent
+from windbreak.numeric.types import MoneyMicros
+from windbreak.riskkernel import checks as checks_module
+from windbreak.riskkernel.process import InMemoryKernelLedgerWriter
+from windbreak.riskkernel.reservations import (
     ApprovalPipeline,
     DuplicateReservationError,
     ReservationLedger,
 )
-from hedgekit.riskkernel.signing import SigningKeyHandle
-from hedgekit.riskkernel.tokens import TokenIssuer
-from tests.riskkernel.conftest import make_context, make_intent
+from windbreak.riskkernel.signing import SigningKeyHandle
+from windbreak.riskkernel.tokens import TokenIssuer
 
 #: A fixed, valid (>=32-byte) signing key shared by every pipeline test below.
 _KEY_MATERIAL = b"k" * 32

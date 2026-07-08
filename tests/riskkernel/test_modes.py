@@ -1,4 +1,4 @@
-"""Failing-first tests for hedgekit.riskkernel.modes (issue #29, RED).
+"""Failing-first tests for windbreak.riskkernel.modes (issue #29, RED).
 
 Issue #29 gives the Risk Kernel (Process B, SPEC S5.1-S5.3) its operating-mode
 state machine: the seven-state ladder RESEARCH -> PAPER -> LIVE_MICRO -> LIVE,
@@ -6,9 +6,9 @@ plus the always-reachable safety states PAUSED, HALT, and KILLED, each guarded
 by a `mode_ceiling` the runtime may never exceed and a typed-confirmation
 re-arm procedure once killed.
 
-`hedgekit/riskkernel/modes.py` does not exist yet, so the import below fails
+`windbreak/riskkernel/modes.py` does not exist yet, so the import below fails
 the whole module at collection with
-`ModuleNotFoundError: No module named 'hedgekit.riskkernel.modes'` -- the
+`ModuleNotFoundError: No module named 'windbreak.riskkernel.modes'` -- the
 expected Gate 1 RED state for issue #29. Once the module exists, this file
 pins the exact transition table (all 49 ordered (from, to) pairs over the
 7-member `Mode` enum), the `mode_ceiling` enforcement (`ModeCeilingExceededError`
@@ -23,8 +23,8 @@ import itertools
 
 import pytest
 
-from hedgekit.config import HedgekitConfig
-from hedgekit.riskkernel.modes import (
+from windbreak.config import WindbreakConfig
+from windbreak.riskkernel.modes import (
     REARM_CONFIRMATION_PHRASE,
     IllegalModeTransitionError,
     KillReArmError,
@@ -314,19 +314,19 @@ def test_from_config_rejects_non_ceiling_tokens(token: str) -> None:
         Mode.from_config(token)
 
 
-def test_from_config_matches_the_default_hedgekit_config_mode_ceiling() -> None:
-    """`HedgekitConfig()`'s default `mode_ceiling` ("paper") parses to
+def test_from_config_matches_the_default_windbreak_config_mode_ceiling() -> None:
+    """`WindbreakConfig()`'s default `mode_ceiling` ("paper") parses to
     `Mode.PAPER` -- the config schema and the mode machine agree on the
     ceiling token vocabulary end to end.
     """
-    assert Mode.from_config(HedgekitConfig().mode_ceiling) == Mode.PAPER
+    assert Mode.from_config(WindbreakConfig().mode_ceiling) == Mode.PAPER
 
 
 # --- Issue #33 additions: promote_one_rung / demote_one_rung / mode_ceiling -----
 #
 # These pin `ModeStateMachine.promote_one_rung`, `.demote_one_rung`, and the
-# `.mode_ceiling` read-only property that `hedgekit/riskkernel/promotion.py`
-# and `hedgekit/riskkernel/demotion.py` build on. Neither method exists yet,
+# `.mode_ceiling` read-only property that `windbreak/riskkernel/promotion.py`
+# and `windbreak/riskkernel/demotion.py` build on. Neither method exists yet,
 # so every test below fails collection alongside the rest of this file with
 # `ModuleNotFoundError` until `modes.py` grows an `effective_ceiling` kwarg and
 # these two methods -- the pre-existing 49-pair `transition()` matrix and the
@@ -433,7 +433,7 @@ def test_demote_one_rung_raises_illegal_transition_with_no_rung_below(
     (the bottom rung) and from every safety mode -- including KILLED -- since
     no ladder rung exists below; `.mode` is left unchanged.
 
-    Note this deliberately differs from `hedgekit.riskkernel.demotion`'s
+    Note this deliberately differs from `windbreak.riskkernel.demotion`'s
     fail-safe `DEMOTE_ONE_MODE` trigger resolution (RESEARCH -> PAUSED): this
     is the low-level state-machine primitive, not the demotion-trigger policy
     built on top of it.

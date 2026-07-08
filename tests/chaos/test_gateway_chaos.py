@@ -32,11 +32,6 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from hedgekit.connector.models import Fill, OpenOrder, Position
-from hedgekit.ledger.events import canonical_json
-from hedgekit.ledger.store import LedgerRecord
-from hedgekit.numeric.types import ContractCentis, PricePips
-from hedgekit.order_gateway.wal import WalRecord
 from tests.chaos.conftest import (
     ALL_FAULT_KINDS,
     ChaosHarness,
@@ -62,13 +57,18 @@ from tests.order_gateway.conftest import (
     make_intent,
 )
 from tests.order_gateway.test_recovery import _KILL_MATRIX
+from windbreak.connector.models import Fill, OpenOrder, Position
+from windbreak.ledger.events import canonical_json
+from windbreak.ledger.store import LedgerRecord
+from windbreak.numeric.types import ContractCentis, PricePips
+from windbreak.order_gateway.wal import WalRecord
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
-    from hedgekit.connector.paper import PaperExchange
-    from hedgekit.order_gateway.gateway import GatewayResult
+    from windbreak.connector.paper import PaperExchange
+    from windbreak.order_gateway.gateway import GatewayResult
 
 #: The `resting_full_consume` fixture's sole ticker (see
 #: `tests/order_gateway/test_reconciler.py`'s own `_FULLCONSUME_TICKER`): a

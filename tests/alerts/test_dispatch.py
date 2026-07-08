@@ -1,4 +1,4 @@
-"""Tests for hedgekit.alerts.dispatch (issue #14): the alert dispatcher.
+"""Tests for windbreak.alerts.dispatch (issue #14): the alert dispatcher.
 
 `AlertDispatcher` fans a single alert out to every configured sink,
 isolating failures so a broken sink never takes down another sink, the
@@ -11,7 +11,7 @@ caller, or the ledger. These tests pin:
 - ledger-writer failure (logged, never re-raised).
 
 `AlertDispatcher`/`AlertEmitted`/`SinkOutcome`/`LoggingLedgerWriter` are
-re-exported from `hedgekit.alerts`; none of them exist yet, so importing
+re-exported from `windbreak.alerts`; none of them exist yet, so importing
 this module fails at collection with `ModuleNotFoundError` -- the expected
 RED state for issue #14's Gate 1.
 """
@@ -25,14 +25,14 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from hedgekit.alerts import (
+from windbreak.alerts import (
     AlertDispatcher,
     AlertEmitted,
     LoggingLedgerWriter,
     SinkOutcome,
 )
-from hedgekit.alerts.registry import AlertSeverity, AlertType, get_registration
-from hedgekit.alerts.sinks import LogOnlySink
+from windbreak.alerts.registry import AlertSeverity, AlertType, get_registration
+from windbreak.alerts.sinks import LogOnlySink
 
 _ISO_UTC = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$")
 

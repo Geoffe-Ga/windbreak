@@ -1,20 +1,20 @@
-"""Failing-first tests for `hedgekit.connector.fills` / `.paper` (issue #19).
+"""Failing-first tests for `windbreak.connector.fills` / `.paper` (issue #19).
 
 SPEC S7.5 (`PaperExchange`), S17.4 (the paper-fill realism model, normative),
 and S9.5 (participation caps) define a pessimistic fill simulator: taker
 orders walk the recorded book and pay the live fee schedule plus a slippage
 haircut (default +25% of modeled fees); resting orders fill only when the
 recorded market *trades through* the limit price (a touch is never a fill).
-Neither `hedgekit.connector.fills` nor `hedgekit.connector.paper` exists yet,
+Neither `windbreak.connector.fills` nor `windbreak.connector.paper` exists yet,
 so importing either fails collection with `ModuleNotFoundError: No module
-named 'hedgekit.connector.fills'` -- the expected Gate 1 RED state for issue
-#19. (`hedgekit.connector` itself, along with `.models`, `.fees`,
+named 'windbreak.connector.fills'` -- the expected Gate 1 RED state for issue
+#19. (`windbreak.connector` itself, along with `.models`, `.fees`,
 `.semantics`, `.interface`, and `.fake`, already exists -- issues #16/#18 are
 merged -- so every *other* import below resolves cleanly.)
 
 Every golden number pinned here is hand-derived from `FeeModel`'s own
 documented formula (`rate_ppm * count * price * (10_000 - price)`, ceil-
-rounded to the cent -- see `hedgekit/connector/fees.py`) plus the haircut
+rounded to the cent -- see `windbreak/connector/fees.py`) plus the haircut
 formula `ceil(fee * haircut_ppm / 1_000_000)`, so a mutation in the walk, the
 participation cap, or the haircut arithmetic flips a concrete assertion
 rather than a vague "no exception raised" check.
@@ -29,11 +29,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from hedgekit.connector import fills, paper
-from hedgekit.connector.fees import FeeModel
-from hedgekit.connector.interface import MarketConnector, UnknownMarketError
-from hedgekit.connector.models import OrderBookLevel
-from hedgekit.connector.semantics import (
+from windbreak.connector import fills, paper
+from windbreak.connector.fees import FeeModel
+from windbreak.connector.interface import MarketConnector, UnknownMarketError
+from windbreak.connector.models import OrderBookLevel
+from windbreak.connector.semantics import (
     BalanceSemantics,
     CancelCollateralRelease,
     FeeDebitTiming,
@@ -44,12 +44,12 @@ from hedgekit.connector.semantics import (
     PartialFillRepresentation,
     UnsettledProceeds,
 )
-from hedgekit.numeric import ContractCentis, MoneyMicros, PricePips
+from windbreak.numeric import ContractCentis, MoneyMicros, PricePips
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from hedgekit.connector.paper import PaperExchange
+    from windbreak.connector.paper import PaperExchange
 
 #: A fixed timestamp for `TradePrint`s that don't need a specific value.
 _TS = datetime(2025, 1, 1, tzinfo=UTC)
@@ -71,7 +71,7 @@ def _fee_model(taker_fee_ppm: int = 70_000) -> FeeModel:
 
 
 # =============================================================================
-# hedgekit.connector.fills: pure taker-walk / resting-fill primitives
+# windbreak.connector.fills: pure taker-walk / resting-fill primitives
 # =============================================================================
 
 
@@ -279,7 +279,7 @@ class TestWalkTakerFill:
         """A non-default haircut_ppm (33.3333%) forces a real ceiling: the fee
         model's own documented minimal-fee example (price=1, count=1,
         taker_fee_ppm=1 -> fee == 10_000 exactly, per
-        `hedgekit/connector/fees.py`'s worked example) times 333_333 ppm is
+        `windbreak/connector/fees.py`'s worked example) times 333_333 ppm is
         3333.33 cents-of-micros, which must ceil to 3334, not floor to 3333.
         """
         levels = (OrderBookLevel(PricePips(1), ContractCentis(1)),)
@@ -683,7 +683,7 @@ class TestAllocateRestingFills:
 
 
 # =============================================================================
-# hedgekit.connector.paper.PaperExchange: the replay-driven MarketConnector
+# windbreak.connector.paper.PaperExchange: the replay-driven MarketConnector
 # =============================================================================
 
 

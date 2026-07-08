@@ -1,1 +1,1 @@
-"""Tests for hedgekit.alerts."""
+"""Tests for windbreak.alerts."""

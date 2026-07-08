@@ -1,6 +1,6 @@
 ## Role
 
-You are a senior Python/SRE engineer who writes operational drills as executable, repeatable tests, working in this repo's `hedgekit/` package and a new `drills/` test surface (Python ≥3.11, mypy --strict, bash where unavoidable).
+You are a senior Python/SRE engineer who writes operational drills as executable, repeatable tests, working in this repo's `windbreak/` package and a new `drills/` test surface (Python ≥3.11, mypy --strict, bash where unavoidable).
 
 ## Goal
 
@@ -12,11 +12,11 @@ Every §19 RUNBOOK-critical procedure — restore-from-backup, kill/re-arm, reco
 - **Predecessor issue(s):** #58 (must be merged first — drills assert against the full live monitoring surface).
 - **SPEC section:** `plans/SPEC_v3.md` §18 M7 ("restore/kill/reconciliation drills on production APIs; profit-sweep + ratchet in anger"), §10.7 (floor governance: ratchet raises freely, profit-sweep advisory alert), §10.11 (kill switch triggers and effects; re-arm is manual), §11.4 (crash recovery/reconciliation), §12 (encrypted backups; restore drills tested; audit-bundle export).
 - **Files involved:**
-  - `hedgekit/drills/` — drill runner + individual drill implementations (create).
-  - `hedgekit/cli.py` (or equivalent) — `hedgekit drill <name> [--production]` entrypoint.
+  - `windbreak/drills/` — drill runner + individual drill implementations (create).
+  - `windbreak/cli.py` (or equivalent) — `windbreak drill <name> [--production]` entrypoint.
   - `tests/drills/` — every drill runs green in CI against PaperExchange/fixtures; the `--production` path only changes the adapter binding.
   - `scripts/` — thin wrappers only if needed; logic lives in the package.
-- **Prior decisions:** kill positions are **held, not dumped** (§10.11); backups are encrypted and restore equivalence is assertable via `hedgekit rebuild` (§12); the dashboard can never lower the floor (§10.7/§14) — drills must not create a bypass. Drills that mutate state (kill, ratchet) must be safe to run during LIVE_MICRO: bounded by the same Kernel checks as any other path, never a privileged side door.
+- **Prior decisions:** kill positions are **held, not dumped** (§10.11); backups are encrypted and restore equivalence is assertable via `windbreak rebuild` (§12); the dashboard can never lower the floor (§10.7/§14) — drills must not create a bypass. Drills that mutate state (kill, ratchet) must be safe to run during LIVE_MICRO: bounded by the same Kernel checks as any other path, never a privileged side door.
 - **State of the world:** kill switch, reconciler, backup/restore, ratchet, and profit-sweep advisory all exist from earlier epics with unit/chaos tests against PaperExchange. Nothing runs them end-to-end against production APIs, and there is no operator-facing drill entrypoint or evidence trail.
 
 ## Output Format
@@ -45,7 +45,7 @@ def test_kill_rearm_drill_holds_positions(paper_exchange_with_positions):
 **Example: operator invocation**
 
 ```
-$ hedgekit drill restore-from-backup
+$ windbreak drill restore-from-backup
 ✓ backup decrypted (age)            ✓ rebuild hash-chain equivalent
 ✓ read models match event replay    → DRILL_COMPLETED ledgered (evidence id 01J...)
 ```

@@ -1,10 +1,10 @@
 ## Role
 
-You are a senior Python engineer working in this repo's `hedgekit/` package, experienced in designing typed adapter interfaces (Protocol/ABC) and event-sourced persistence.
+You are a senior Python engineer working in this repo's `windbreak/` package, experienced in designing typed adapter interfaces (Protocol/ABC) and event-sourced persistence.
 
 ## Goal
 
-A `MarketConnector` interface exists with a fixture-backed `FakeExchange` implementation, and `hedgekit run` (RESEARCH mode) fetches snapshots from it on schedule and writes market snapshots plus screen decisions to the ledger — proven by smoke tests.
+A `MarketConnector` interface exists with a fixture-backed `FakeExchange` implementation, and `windbreak run` (RESEARCH mode) fetches snapshots from it on schedule and writes market snapshots plus screen decisions to the ledger — proven by smoke tests.
 
 ## Context
 
@@ -12,14 +12,14 @@ A `MarketConnector` interface exists with a fixture-backed `FakeExchange` implem
 - **Predecessor issue(s):** none — this is the skeleton issue for this epic (requires EPIC_01/M0 foundations merged: ledger, fixed-point types, config loader, scheduler)
 - **SPEC section:** `plans/SPEC_v3.md` §7.2 (interface), §6.2 (NormalizedMarket), §5.3 (order flow starts at "market snapshot → screen decision"), §18 M1
 - **Files involved:**
-  - `hedgekit/connector/__init__.py` — new subpackage
-  - `hedgekit/connector/interface.py` — `MarketConnector` Protocol/ABC with the §7.2 method set
-  - `hedgekit/connector/fake.py` — `FakeExchange` returning schema-valid stub data from fixtures
-  - `hedgekit/screener/__init__.py` — stub screener that ledgers a `ScreenDecision` per market (pass/blocked + reason; real filters land in ISSUE_06)
+  - `windbreak/connector/__init__.py` — new subpackage
+  - `windbreak/connector/interface.py` — `MarketConnector` Protocol/ABC with the §7.2 method set
+  - `windbreak/connector/fake.py` — `FakeExchange` returning schema-valid stub data from fixtures
+  - `windbreak/screener/__init__.py` — stub screener that ledgers a `ScreenDecision` per market (pass/blocked + reason; real filters land in ISSUE_06)
   - `tests/connector/` — smoke + interface-conformance tests
   - `tests/fixtures/exchange/` — JSON fixtures for stub responses
 - **Prior decisions:** All money/price/probability values are fixed-point integers per §6.1 (`PricePips`, `ContractCentis`, `MoneyMicros`, `ProbabilityPpm`) — the M0 numeric types must be used from day one; no float ever enters these fields. `market_type` is the literal `"fully_collateralized_binary"` only.
-- **State of the world:** `hedgekit/` contains the M0 scaffold (config loader, ledger, scheduler heartbeat, `main.py`). No connector code exists yet.
+- **State of the world:** `windbreak/` contains the M0 scaffold (config loader, ledger, scheduler heartbeat, `main.py`). No connector code exists yet.
 
 ## Output Format
 
@@ -70,7 +70,7 @@ assert isinstance(market.price_tick_pips, int)
 > reference URL, an alternative considered, and a review date. See the
 > `max-quality-no-shortcuts` skill.
 
-**Tracer-code invariant:** The system must remain demoable after this PR merges — `hedgekit run` still idles in RESEARCH with visible heartbeats, now also ledgering snapshots. If your change breaks an unrelated surface, you have gone outside scope — revert and re-plan.
+**Tracer-code invariant:** The system must remain demoable after this PR merges — `windbreak run` still idles in RESEARCH with visible heartbeats, now also ledgering snapshots. If your change breaks an unrelated surface, you have gone outside scope — revert and re-plan.
 
 ## Definition of Done (stay-green)
 

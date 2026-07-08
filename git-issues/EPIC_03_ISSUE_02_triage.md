@@ -1,6 +1,6 @@
 ## Role
 
-You are a senior Python engineer working in this repo's `hedgekit/forecast/` package, comfortable with cost-budgeted LLM orchestration and integer fixed-point accounting.
+You are a senior Python engineer working in this repo's `windbreak/forecast/` package, comfortable with cost-budgeted LLM orchestration and integer fixed-point accounting.
 
 ## Goal
 
@@ -12,9 +12,9 @@ Two-stage triage (SPEC §8.4) gates the expensive research pipeline: a cheap Sta
 - **Predecessor issue(s):** #22 (must be merged first — pipeline skeleton and cassette harness exist).
 - **SPEC section:** `plans/SPEC_v3.md` §8.4 (two-stage triage), §4 T11 (LLM cost blowout), §2 "Why the LLM cost model is part of the strategy", §16 `forecast.triage_model` / `triage_threshold_ppm` / `budget` config keys, §6.3 `triage_stage` and `research_cost_micros` fields.
 - **Files involved:**
-  - `hedgekit/forecast/triage.py` — Stage-0 prior + gating decision (new)
-  - `hedgekit/forecast/pipeline.py` — entry point routes through triage before full run (modify)
-  - `hedgekit/forecast/records.py` — enforce `triage_stage="triage_only"` ⇒ `eligible_for_live=False` invariant (modify)
+  - `windbreak/forecast/triage.py` — Stage-0 prior + gating decision (new)
+  - `windbreak/forecast/pipeline.py` — entry point routes through triage before full run (modify)
+  - `windbreak/forecast/records.py` — enforce `triage_stage="triage_only"` ⇒ `eligible_for_live=False` invariant (modify)
   - `tests/forecast/test_triage.py` — gating, cost, eligibility tests (new)
 - **Prior decisions:** costs are `MoneyMicros` ints; the triage model is a separate pinned config entry (`forecast.triage_model`); every triage decision (run-full vs. stop) is a ledgered event.
 - **State of the world:** pipeline skeleton runs end-to-end on cassettes; `triage_stage` exists on the record but is hardcoded `"full"`; no gating or cost accounting yet.
@@ -23,7 +23,7 @@ Two-stage triage (SPEC §8.4) gates the expensive research pipeline: a cheap Sta
 
 Deliverable is a single PR containing:
 
-- [ ] Production code in `hedgekit/forecast/triage.py` + pipeline wiring
+- [ ] Production code in `windbreak/forecast/triage.py` + pipeline wiring
 - [ ] Tests in `tests/forecast/test_triage.py` proving: below-threshold prior stops the pipeline and stores a `triage_only` record; at/above threshold proceeds to full; operator-flag and refresh-trigger overrides proceed; both stages' costs accumulate into `research_cost_micros`; ledger events emitted for both outcomes
 - [ ] Property test: a `triage_only` record can never have `eligible_for_live=True` (construction raises)
 - [ ] Docstring / doc updates for the new public entry point

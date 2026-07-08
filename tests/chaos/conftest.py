@@ -42,18 +42,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from hedgekit.connector.models import ExchangeStatus
-from hedgekit.ledger.store import SqliteLedgerStore
-from hedgekit.numeric.types import ContractCentis, PricePips
-from hedgekit.order_gateway.gateway import (
-    GatewayHaltedError,
-    OrderGateway,
-    PaperSubmitter,
-)
-from hedgekit.order_gateway.ledger_writer import SqliteGatewayLedgerWriter
-from hedgekit.order_gateway.reconciler import Reconciler
-from hedgekit.order_gateway.sweeper import Sweeper, SweepPolicy
-from hedgekit.order_gateway.wal import WriteAheadLog
 from tests.chaos.invariants import GatewaySnapshot
 from tests.order_gateway.conftest import (
     DEFAULT_MARKET_TICKER,
@@ -62,28 +50,40 @@ from tests.order_gateway.conftest import (
     issue_matching_token,
     make_intent,
 )
+from windbreak.connector.models import ExchangeStatus
+from windbreak.ledger.store import SqliteLedgerStore
+from windbreak.numeric.types import ContractCentis, PricePips
+from windbreak.order_gateway.gateway import (
+    GatewayHaltedError,
+    OrderGateway,
+    PaperSubmitter,
+)
+from windbreak.order_gateway.ledger_writer import SqliteGatewayLedgerWriter
+from windbreak.order_gateway.reconciler import Reconciler
+from windbreak.order_gateway.sweeper import Sweeper, SweepPolicy
+from windbreak.order_gateway.wal import WriteAheadLog
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
     from typing import Literal
 
-    from hedgekit.connector.models import Fill, OpenOrder
-    from hedgekit.connector.paper import PaperExchange
-    from hedgekit.ledger.events import Event
-    from hedgekit.order_gateway.gateway import (
+    from windbreak.connector.models import Fill, OpenOrder
+    from windbreak.connector.paper import PaperExchange
+    from windbreak.ledger.events import Event
+    from windbreak.order_gateway.gateway import (
         GatewayPositionSource,
         GatewayResult,
         GatewayStatusSource,
         OrderSubmitter,
         SubmissionAck,
     )
-    from hedgekit.order_gateway.ledger_writer import GatewayLedgerWriter
-    from hedgekit.order_gateway.reconciler import ReconcileOutcome
-    from hedgekit.order_gateway.recovery import ReconciliationSourceProtocol
-    from hedgekit.order_gateway.sweeper import SweepOutcome
-    from hedgekit.order_gateway.wal import WalRecord, WriteAheadLogProtocol
-    from hedgekit.riskkernel.checks import OrderIntent
-    from hedgekit.tokens.verify import SignedApprovalToken
+    from windbreak.order_gateway.ledger_writer import GatewayLedgerWriter
+    from windbreak.order_gateway.reconciler import ReconcileOutcome
+    from windbreak.order_gateway.recovery import ReconciliationSourceProtocol
+    from windbreak.order_gateway.sweeper import SweepOutcome
+    from windbreak.order_gateway.wal import WalRecord, WriteAheadLogProtocol
+    from windbreak.riskkernel.checks import OrderIntent
+    from windbreak.tokens.verify import SignedApprovalToken
 
 #: A fixed observation instant every synthetic `ExchangeStatus` reading
 #: stamps its `fetched_at` with -- irrelevant to the paused-status fault, but
@@ -120,7 +120,7 @@ def _load_exchange(*parts: str) -> PaperExchange:
     Returns:
         A freshly loaded `PaperExchange`.
     """
-    from hedgekit.connector.paper import PaperExchange
+    from windbreak.connector.paper import PaperExchange
 
     return PaperExchange.from_fixture_dir(_BOOKS_DIR.joinpath(*parts))
 

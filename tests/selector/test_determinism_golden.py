@@ -1,4 +1,4 @@
-"""Golden determinism harness for hedgekit.selector.select (issues #43/#44/#45).
+"""Golden determinism harness for windbreak.selector.select (issues #43/#44/#45).
 
 The whole point of this module: `select` + `serialize_decision` over a fixed
 input must produce byte-identical output every time it is called, in-process
@@ -57,7 +57,7 @@ bytes, and always append the single trailing newline the convention requires:
 
     python -c "
     from tests.selector.fixture_loader import load_inputs
-    from hedgekit.selector import select, serialize_decision
+    from windbreak.selector import select, serialize_decision
     path = 'tests/selector/fixtures/bundle_a'
     bytes_ = serialize_decision(select(load_inputs(path + '.json')))
     open(path + '.golden', 'w').write(bytes_ + '\n')
@@ -123,11 +123,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from hedgekit.selector import select, serialize_decision
 from tests.selector.fixture_loader import load_inputs
+from windbreak.selector import select, serialize_decision
 
 if TYPE_CHECKING:
-    from hedgekit.selector import SelectorInputs
+    from windbreak.selector import SelectorInputs
 
 #: This package's own committed bundle fixtures.
 _FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
@@ -135,7 +135,7 @@ _FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 #: The repository root, computed from this file's location
 #: (`tests/selector/test_determinism_golden.py` -> `tests/selector` ->
 #: `tests` -> repo root), so the fresh-interpreter subprocess below can
-#: import both `hedgekit` and `tests.selector.fixture_loader` regardless of
+#: import both `windbreak` and `tests.selector.fixture_loader` regardless of
 #: its own working directory.
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -238,7 +238,7 @@ def test_fresh_interpreter_produces_identical_bytes(bundle_name: str) -> None:
         "import sys\n"
         f"sys.path.insert(0, {str(_REPO_ROOT)!r})\n"
         "from tests.selector.fixture_loader import load_inputs\n"
-        "from hedgekit.selector import select, serialize_decision\n"
+        "from windbreak.selector import select, serialize_decision\n"
         f"inputs = load_inputs({str(bundle_path)!r})\n"
         "sys.stdout.write(serialize_decision(select(inputs)))\n"
     )

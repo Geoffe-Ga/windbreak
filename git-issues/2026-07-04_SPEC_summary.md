@@ -2,7 +2,7 @@
 
 One-page restatement of [`plans/SPEC_v3.md`](../plans/SPEC_v3.md) and the epic map derived from it.
 
-## What hedgekit is
+## What windbreak is
 
 A local-first, always-on daemon that screens prediction markets, produces calibrated LLM-ensemble probability forecasts with verified citations, compares them against live executable order books, and may emit order intents — which reach an exchange only through an independent veto-holding Risk Kernel and a credential-isolated Order Gateway. v1's success metric is **demonstrated forecast calibration and provable capital safety**, not profit; stopping at paper trading with "no durable edge" is a designed success state.
 
@@ -14,7 +14,7 @@ Floor invariant (worst-case equity ≥ configured floor, arithmetic pre-trade ch
 
 | Epic | Milestone | Delivers | Depends on |
 |------|-----------|----------|------------|
-| EPIC_01 foundations | M0 | Package/process skeleton, config loader, fixed-point types, hash-chained ledger, logging/alerts, deploy skeletons — `hedgekit run` idles with heartbeats | — |
+| EPIC_01 foundations | M0 | Package/process skeleton, config loader, fixed-point types, hash-chained ledger, logging/alerts, deploy skeletons — `windbreak run` idles with heartbeats | — |
 | EPIC_02 connector | M1 | Kalshi adapter, normalization, fee model, balance-semantics contract, pessimistic PaperExchange | EPIC_01 |
 | EPIC_03 forecast_engine | M2 | Research sandbox, triage, ensemble + canaries, citation verification, injection defense | EPIC_01, EPIC_02 (∥ EPIC_04) |
 | EPIC_04 risk_kernel | M3 | Separate-process veto authority: floor, reservations, tokens, governance, kill. **Blocks all real-exchange code.** | EPIC_01, EPIC_02 (∥ EPIC_03) |

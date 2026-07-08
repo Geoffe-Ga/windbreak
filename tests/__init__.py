@@ -1,1 +1,1 @@
-"""Tests for hedgekit."""
+"""Tests for windbreak."""

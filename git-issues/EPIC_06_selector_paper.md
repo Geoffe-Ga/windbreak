@@ -1,6 +1,6 @@
 ## Epic Summary
 
-Deliver the Trade Selector — a pure, credentialless, deterministic function from `(ForecastRecord, calibration map version, fresh order book, fee model, slippage model, position read model, risk-config snapshot, correlation tags)` to zero or more `NormalizedOrderIntent`s — and wire the always-on RESEARCH→PAPER loop so hedgekit runs continuously in paper mode. Covers SPEC_v3 §9 (Trade Selector, entire), §18 M5, threat mitigations T2 (disagreement-scaled sizing), T10 (correlation buckets), and T13 (adverse-selection controls), plus the §14 dashboard views for positions, equity-vs-floor, and selector decisions.
+Deliver the Trade Selector — a pure, credentialless, deterministic function from `(ForecastRecord, calibration map version, fresh order book, fee model, slippage model, position read model, risk-config snapshot, correlation tags)` to zero or more `NormalizedOrderIntent`s — and wire the always-on RESEARCH→PAPER loop so windbreak runs continuously in paper mode. Covers SPEC_v3 §9 (Trade Selector, entire), §18 M5, threat mitigations T2 (disagreement-scaled sizing), T10 (correlation buckets), and T13 (adverse-selection controls), plus the §14 dashboard views for positions, equity-vs-floor, and selector decisions.
 
 ## Scope
 
@@ -25,7 +25,7 @@ The epic is done when:
 - [ ] Golden tests reproduce byte-identical intents from recorded books across two runs and two machines (§9.10).
 - [ ] Property tests prove: sizing monotone in edge, zero below threshold, never exceeds any cap or participation limit, never negative-EV-after-fees, never opens outside price bands, dispersion scaling monotone (§9.10).
 - [ ] No live intent is ever produced for ineligible markets or ineligible forecasts (§9.10).
-- [ ] `hedgekit run` operates continuously in PAPER mode: screens, forecasts, selects, submits through Kernel→Gateway→PaperExchange, and ledgers every decision.
+- [ ] `windbreak run` operates continuously in PAPER mode: screens, forecasts, selects, submits through Kernel→Gateway→PaperExchange, and ledgers every decision.
 - [ ] Dashboard shows open positions, equity curve vs. floor line, and selector decisions with veto reasons (§14).
 - [ ] All child issues are closed.
 - [ ] Smoke tests for the full epic surface pass on `main`.

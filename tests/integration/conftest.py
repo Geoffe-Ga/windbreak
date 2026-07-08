@@ -1,8 +1,8 @@
 """Shared fixtures for `tests/integration/test_paper_loop.py` (issue #48, RED).
 
-`hedgekit.scheduler.loop` does not exist yet, so any fixture/test here that
+`windbreak.scheduler.loop` does not exist yet, so any fixture/test here that
 actually calls `build_paper_deps`/`run_single_tick` fails at call time with
-`ModuleNotFoundError: No module named 'hedgekit.scheduler'` -- the expected
+`ModuleNotFoundError: No module named 'windbreak.scheduler'` -- the expected
 Gate 1 RED state for issue #48. This module itself imports only already-shipped
 machinery, so it collects cleanly.
 
@@ -16,7 +16,7 @@ Fixture-design notes (mirroring the precedents this suite draws on):
   `tests/forecast/conftest.py`'s record-then-replay-over-`tmp_path` pattern.
   It is empty because the offline research double this suite wires
   (`NullSearchTransport`, below) never finds a candidate URL to fetch, so
-  `hedgekit.forecast.pipeline.collect_model_votes` -- the sole stage touching
+  `windbreak.forecast.pipeline.collect_model_votes` -- the sole stage touching
   the LLM transport seam -- is never reached (the pipeline abstains on zero
   verified citations first, `ABSTENTION_NO_VERIFIED_CITATIONS`); an empty
   cassette therefore still proves "replay never touches the network" (a
@@ -36,7 +36,7 @@ from pathlib import Path
 
 import pytest
 
-from hedgekit.config.schema import CapitalConfig, HedgekitConfig, RiskConfig
+from windbreak.config.schema import CapitalConfig, RiskConfig, WindbreakConfig
 
 #: The shared `deep_walk` books fixture (issue #19): sole ticker `MKT-DEEP`.
 _BOOKS_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "books" / "deep_walk"
@@ -126,7 +126,7 @@ def ledger_path_for(tmp_path: Path, name: str = "ledger.db") -> Path:
 
 
 @pytest.fixture
-def paper_config() -> HedgekitConfig:
+def paper_config() -> WindbreakConfig:
     """Provide a PAPER-ceilinged config with a permissive-but-real risk profile.
 
     `mode_ceiling="paper"` is the SPEC S16 token `Mode.from_config` maps to
@@ -139,7 +139,7 @@ def paper_config() -> HedgekitConfig:
     raises), so there is no reason to hand-tune the thresholds toward a
     particular outcome here.
     """
-    return HedgekitConfig(
+    return WindbreakConfig(
         mode_ceiling="paper",
         capital=CapitalConfig(floor_micros=0),
         risk=RiskConfig(),
@@ -150,13 +150,13 @@ def paper_config() -> HedgekitConfig:
 def research_tools_factory(tmp_path: Path):
     """Provide a factory building an offline `ResearchTools` over `NullSearchTransport`.
 
-    Deferred `hedgekit.forecast.sandbox` import (mirrors
+    Deferred `windbreak.forecast.sandbox` import (mirrors
     `tests/forecast/conftest.py::research_tools_factory`) so this conftest
     keeps collecting cleanly regardless of that package's own state.
     """
 
     def _build() -> object:
-        from hedgekit.forecast.sandbox import build_research_tools
+        from windbreak.forecast.sandbox import build_research_tools
 
         cache_dir = tmp_path / "research-cache"
         return build_research_tools(

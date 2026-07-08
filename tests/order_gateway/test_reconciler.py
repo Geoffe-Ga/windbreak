@@ -1,8 +1,8 @@
 """Failing-first tests for the continuous reconciler (issue #40, RED).
 
-`hedgekit/order_gateway/reconciler.py` does not exist yet, so the module-level
+`windbreak/order_gateway/reconciler.py` does not exist yet, so the module-level
 import below fails collection with `ModuleNotFoundError: No module named
-'hedgekit.order_gateway.reconciler'` -- the expected Gate 1 RED state for
+'windbreak.order_gateway.reconciler'` -- the expected Gate 1 RED state for
 issue #40.
 
 Design assumption (flagged for the implementer, since the issue text leaves
@@ -46,13 +46,6 @@ import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from hedgekit.connector.paper import PaperOrderIntent
-from hedgekit.ledger.store import SqliteLedgerStore
-from hedgekit.numeric.types import ContractCentis, PricePips
-from hedgekit.order_gateway.gateway import OrderGateway, PaperSubmitter, SubmitOutcome
-from hedgekit.order_gateway.ledger_writer import SqliteGatewayLedgerWriter
-from hedgekit.order_gateway.reconciler import Reconciler
-from hedgekit.order_gateway.wal import WriteAheadLog
 from tests.order_gateway.conftest import (
     DEFAULT_MARKET_TICKER,
     DEFAULT_NOW_EPOCH_S,
@@ -61,10 +54,17 @@ from tests.order_gateway.conftest import (
     make_intent,
 )
 from tests.order_gateway.test_reduce_only import _position, _StubPositionSource
+from windbreak.connector.paper import PaperOrderIntent
+from windbreak.ledger.store import SqliteLedgerStore
+from windbreak.numeric.types import ContractCentis, PricePips
+from windbreak.order_gateway.gateway import OrderGateway, PaperSubmitter, SubmitOutcome
+from windbreak.order_gateway.ledger_writer import SqliteGatewayLedgerWriter
+from windbreak.order_gateway.reconciler import Reconciler
+from windbreak.order_gateway.wal import WriteAheadLog
 
 if TYPE_CHECKING:
-    from hedgekit.connector.paper import PaperExchange
-    from hedgekit.order_gateway.gateway import GatewayPositionSource
+    from windbreak.connector.paper import PaperExchange
+    from windbreak.order_gateway.gateway import GatewayPositionSource
 
 #: The `resting_full_consume` fixture's sole ticker: a single yes-bid resting
 #: order that fully fills out-of-band on `advance()` via a trade-through
@@ -85,7 +85,7 @@ def _resting_full_consume_exchange() -> PaperExchange:
         yes-bid at 4200 pips (below the 4400-pip ask) that fully fills
         out-of-band on `advance()` via a recorded trade-through print.
     """
-    from hedgekit.connector.paper import PaperExchange
+    from windbreak.connector.paper import PaperExchange
 
     books_dir = (
         Path(__file__).resolve().parents[1] / "fixtures" / "books"

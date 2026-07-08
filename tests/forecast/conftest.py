@@ -1,8 +1,8 @@
-"""Shared fixtures for hedgekit.forecast tests (issue #22, SPEC S8.2 / S6.3).
+"""Shared fixtures for windbreak.forecast tests (issue #22, SPEC S8.2 / S6.3).
 
-`hedgekit/forecast/` does not exist yet, so any test module in this directory
+`windbreak/forecast/` does not exist yet, so any test module in this directory
 that imports from it fails collection with `ModuleNotFoundError: No module
-named 'hedgekit.forecast'` -- the expected Gate 1 RED state for issue #22.
+named 'windbreak.forecast'` -- the expected Gate 1 RED state for issue #22.
 
 Two deliberate fixture-design choices, both explained here because they shape
 every test file in this package:
@@ -11,7 +11,7 @@ Fixture-construction choice (market / baseline)
     `NormalizedMarket` and `BaselineQuoteSnapshot` are constructed directly in
     Python (mirroring `tests/connector/test_models.py`'s `_VALID_KWARGS`
     pattern) rather than loaded from a JSON fixture file. Unlike
-    `FakeExchange.from_fixture_dir`, `hedgekit.forecast` has no existing
+    `FakeExchange.from_fixture_dir`, `windbreak.forecast` has no existing
     "load a normalized model from a fixture directory" helper -- inventing one
     here would test fixture-loading plumbing that has nothing to do with
     issue #22's actual contract (the pipeline stages, the record schema, the
@@ -40,20 +40,20 @@ Cassette-fixture choice (populated replay cassette)
 
 Sandbox-transport fixture choice (issue #24)
     `FixtureSearchTransport` / `FixtureFetchTransport` below are the
-    `hedgekit.forecast.sandbox` analogue of `FakeVoteTransport`: deterministic,
+    `windbreak.forecast.sandbox` analogue of `FakeVoteTransport`: deterministic,
     network-free doubles for the `SearchTransport` / `FetchTransport`
     injection seams. `research_tools_factory` defers its
-    `from hedgekit.forecast.sandbox import build_research_tools` to call time
+    `from windbreak.forecast.sandbox import build_research_tools` to call time
     (inside the returned closure, not at module import time) so this conftest
     module keeps collecting cleanly for every other `tests/forecast/*` module
-    while `hedgekit/forecast/sandbox.py` does not yet exist -- only a test that
+    while `windbreak/forecast/sandbox.py` does not yet exist -- only a test that
     actually calls the factory (or the `research_tools` fixture) hits the
     `ModuleNotFoundError`, which is the expected Gate 1 RED state for
     issue #24.
 
 Citation-verification fixture choice (issue #26)
     `RaisingFetchTransport` and `MutatingRefetchTransport` below are the
-    `hedgekit.forecast.citations` analogue of the sandbox doubles above:
+    `windbreak.forecast.citations` analogue of the sandbox doubles above:
     deterministic `FetchTransport` doubles shared by `test_citations.py`
     (unit-level `verify_citation` checks) and `test_abstention.py`
     (end-to-end `run_pipeline`/`run_triaged_pipeline` abstention checks), so
@@ -74,8 +74,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from hedgekit.connector.models import NormalizedMarket
-from hedgekit.forecast.records import BaselineQuoteSnapshot
+from windbreak.connector.models import NormalizedMarket
+from windbreak.forecast.records import BaselineQuoteSnapshot
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -136,7 +136,7 @@ def make_fake_vote_transport() -> Callable[[], FakeVoteTransport]:
 
 @pytest.fixture
 def fixture_dir() -> Path:
-    """Return the path to hedgekit.forecast's own committed JSON fixtures."""
+    """Return the path to windbreak.forecast's own committed JSON fixtures."""
     return Path(__file__).resolve().parents[1] / "fixtures" / "forecast"
 
 
@@ -243,7 +243,7 @@ def research_tools_factory() -> Callable[..., object]:
     A factory (not one shared fixture) so tests that need an off-allowlist or
     otherwise non-default transport can override just the piece they care
     about while keeping the deterministic fixture doubles for everything
-    else. The `hedgekit.forecast.sandbox` import is deferred to the returned
+    else. The `windbreak.forecast.sandbox` import is deferred to the returned
     closure's call time -- see the module docstring's "Sandbox-transport
     fixture choice" note for why.
     """
@@ -269,7 +269,7 @@ def research_tools_factory() -> Callable[..., object]:
         Returns:
             A `ResearchTools` built by `build_research_tools`.
         """
-        from hedgekit.forecast.sandbox import build_research_tools
+        from windbreak.forecast.sandbox import build_research_tools
 
         return build_research_tools(
             allowed_hosts=allowed_hosts,
@@ -294,7 +294,7 @@ class RaisingFetchTransport:
 
     `fetch` always raises `ConnectionError` -- a subclass of `OSError` -- so
     any citation verified through a `ResearchTools` built over this transport
-    always yields `hedgekit.forecast.citations.verify_citation`'s
+    always yields `windbreak.forecast.citations.verify_citation`'s
     `FAILURE_UNREACHABLE` verdict. The transport never distinguishes by URL:
     the RED-state contract under test is "the transport itself is down", not
     "one specific URL is down", so every call raises unconditionally.
@@ -318,7 +318,7 @@ class MutatingRefetchTransport:
     Issue #26's `bounded_web_research` (pipeline stage 5) fetches each
     subquestion's candidate URL exactly once to build its `Citation` -- the
     content hash and quoted text baked into that citation come from that one
-    fetch. `hedgekit.forecast.citations.verify_citation` then *refetches* the
+    fetch. `windbreak.forecast.citations.verify_citation` then *refetches* the
     same URL through `tools.fetch` to independently recompute the content
     hash, so a citation whose backing URL returns *different* content on that
     second call is guaranteed to fail with a content-hash mismatch. This

@@ -1,11 +1,11 @@
 """Failing-first tests for temporal-integrity enforcement (issue #52, RED).
 
-`hedgekit.evaluation.temporal` does not exist yet. Every test below imports
+`windbreak.evaluation.temporal` does not exist yet. Every test below imports
 its new symbols from that module as the FIRST statement inside the test body
 (rather than at module scope) -- matching this package's established RED
 convention in `test_resolution.py` and `test_baselines.py` -- so every test
 collects independently and each fails on its own
-`ModuleNotFoundError: No module named 'hedgekit.evaluation.temporal'` rather
+`ModuleNotFoundError: No module named 'windbreak.evaluation.temporal'` rather
 than one collection-time explosion that would hide which behaviors are
 covered. The handful of tests that instead exercise only already-existing
 production code (`run_evaluation`, `FixtureForecast`, `MetricSpec`) fail for a
@@ -64,7 +64,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from hedgekit.evaluation import (
+from windbreak.evaluation import (
     EvaluationInputs,
     FixtureForecast,
     MetricSpec,
@@ -75,10 +75,10 @@ from hedgekit.evaluation import (
     Track,
     run_evaluation,
 )
-from hedgekit.numeric.types import ProbabilityPpm
+from windbreak.numeric.types import ProbabilityPpm
 
 if TYPE_CHECKING:
-    from hedgekit.evaluation.registry import EvaluationInputs as _EvaluationInputs
+    from windbreak.evaluation.registry import EvaluationInputs as _EvaluationInputs
 
 #: The epic-wide known-answer fixture shared by issues #49-#55; issue #52
 #: additively pins its `created_sequence` / `mode_transitions` regression.
@@ -172,7 +172,7 @@ def test_resolution_sequences_from_events_pins_first_settlement_not_latest() -> 
     this have been known") was fixed at first settlement, not at whichever
     settlement happens to be the final one.
     """
-    from hedgekit.evaluation.temporal import resolution_sequences_from_events
+    from windbreak.evaluation.temporal import resolution_sequences_from_events
 
     events = (
         SettlementEvent(
@@ -210,7 +210,7 @@ def test_resolution_sequences_from_events_empty_stream_yields_empty_mapping() ->
     """An empty settlement stream returns `{}` -- no ticker has a resolution
     sequence, and this is not an error condition.
     """
-    from hedgekit.evaluation.temporal import resolution_sequences_from_events
+    from windbreak.evaluation.temporal import resolution_sequences_from_events
 
     assert resolution_sequences_from_events(()) == {}
 
@@ -227,7 +227,7 @@ def test_deployment_sequence_from_fixture_takes_the_min_of_multiple_transitions(
     not the first-listed or the max -- deployment is the earliest transition
     ever recorded, regardless of list order.
     """
-    from hedgekit.evaluation.temporal import deployment_sequence_from_fixture
+    from windbreak.evaluation.temporal import deployment_sequence_from_fixture
 
     fixture = {
         "mode_transitions": [
@@ -244,7 +244,7 @@ def test_deployment_sequence_from_fixture_missing_key_raises_value_error() -> No
     """A fixture with no `mode_transitions` key raises `ValueError` naming
     it -- there is no default deployment point to fall back to.
     """
-    from hedgekit.evaluation.temporal import deployment_sequence_from_fixture
+    from windbreak.evaluation.temporal import deployment_sequence_from_fixture
 
     with pytest.raises(ValueError, match="mode_transitions"):
         deployment_sequence_from_fixture({})
@@ -254,7 +254,7 @@ def test_deployment_sequence_from_fixture_empty_list_raises_value_error() -> Non
     """An empty `mode_transitions` list raises `ValueError` naming it -- an
     evaluation run with no known deployment point can never gate anything.
     """
-    from hedgekit.evaluation.temporal import deployment_sequence_from_fixture
+    from windbreak.evaluation.temporal import deployment_sequence_from_fixture
 
     with pytest.raises(ValueError, match="mode_transitions"):
         deployment_sequence_from_fixture({"mode_transitions": []})
@@ -262,10 +262,10 @@ def test_deployment_sequence_from_fixture_empty_list_raises_value_error() -> Non
 
 def test_deployment_sequence_from_fixture_rejects_bool_sequence_number() -> None:
     """A `bool` `sequence_number` (an `int` subclass) raises `TypeError`, per
-    the repo-wide "no bool-as-int" rule (see `hedgekit.numeric.types._IntUnit`
+    the repo-wide "no bool-as-int" rule (see `windbreak.numeric.types._IntUnit`
     and `SettlementEvent`'s identical guard).
     """
-    from hedgekit.evaluation.temporal import deployment_sequence_from_fixture
+    from windbreak.evaluation.temporal import deployment_sequence_from_fixture
 
     fixture = {
         "mode_transitions": [
@@ -287,7 +287,10 @@ def test_enforce_temporal_integrity_admits_all_clean_forecasts() -> None:
     market's resolution, and every market resolves, all forecasts are
     admitted (in fixture order) and the rejection ledger is empty.
     """
-    from hedgekit.evaluation.temporal import TemporalContext, enforce_temporal_integrity
+    from windbreak.evaluation.temporal import (
+        TemporalContext,
+        enforce_temporal_integrity,
+    )
 
     forecasts = (
         _forecast("fc-1", "MKT-A", created_sequence=11),
@@ -319,7 +322,7 @@ def test_backdated_boundary_tie_and_after_reject_one_before_admits() -> None:
     `created_sequence == resolution_sequence - 1` admits -- this kills a
     `>=`-to-`>` mutant on the BACKDATED comparison.
     """
-    from hedgekit.evaluation.temporal import (
+    from windbreak.evaluation.temporal import (
         RejectionReason,
         TemporalContext,
         enforce_temporal_integrity,
@@ -361,7 +364,7 @@ def test_pre_deployment_boundary_tie_and_before_reject_one_after_admits() -> Non
     `created_sequence == deployment_sequence + 1` admits -- this kills a
     `<=`-to-`<` mutant on the PRE_DEPLOYMENT comparison.
     """
-    from hedgekit.evaluation.temporal import (
+    from windbreak.evaluation.temporal import (
         RejectionReason,
         TemporalContext,
         enforce_temporal_integrity,
@@ -404,7 +407,7 @@ def test_unresolved_ticker_not_in_resolutions_is_rejected() -> None:
     is rejected UNRESOLVED, even though its `created_sequence` is otherwise
     perfectly clean relative to deployment.
     """
-    from hedgekit.evaluation.temporal import (
+    from windbreak.evaluation.temporal import (
         RejectionReason,
         TemporalContext,
         enforce_temporal_integrity,
@@ -448,7 +451,7 @@ def test_ticker_in_resolution_sequences_but_not_resolutions_ledgers_unresolved()
     regardless of what the settlement-derived map happens to separately
     know about this ticker.
     """
-    from hedgekit.evaluation.temporal import (
+    from windbreak.evaluation.temporal import (
         RejectionReason,
         TemporalContext,
         enforce_temporal_integrity,
@@ -491,7 +494,7 @@ def test_precedence_pre_deployment_wins_when_all_three_reasons_would_apply() -> 
     exactly ONE event is ledgered, and it is PRE_DEPLOYMENT, the
     first-checked reason.
     """
-    from hedgekit.evaluation.temporal import (
+    from windbreak.evaluation.temporal import (
         RejectionReason,
         TemporalContext,
         enforce_temporal_integrity,
@@ -519,7 +522,7 @@ def test_precedence_preserves_fixture_order_across_multiple_rejected_records() -
     """Multiple rejected records land in the ledger in the same order they
     appear in `inputs.forecasts`, regardless of which reason each triggers.
     """
-    from hedgekit.evaluation.temporal import (
+    from windbreak.evaluation.temporal import (
         RejectionReason,
         TemporalContext,
         enforce_temporal_integrity,
@@ -564,7 +567,7 @@ def test_none_created_sequence_is_rejected_pre_deployment_fail_closed() -> None:
     never silently admitted, matching the gate rule's explicit `is None OR`
     clause.
     """
-    from hedgekit.evaluation.temporal import (
+    from windbreak.evaluation.temporal import (
         RejectionReason,
         TemporalContext,
         enforce_temporal_integrity,
@@ -598,7 +601,10 @@ def test_gating_the_admitted_output_again_is_idempotent() -> None:
     the gate is a pure, idempotent filter, not a one-shot consuming
     transform.
     """
-    from hedgekit.evaluation.temporal import TemporalContext, enforce_temporal_integrity
+    from windbreak.evaluation.temporal import (
+        TemporalContext,
+        enforce_temporal_integrity,
+    )
 
     context = TemporalContext(
         deployment_sequence=10, resolution_sequences={"MKT-A": 100, "MKT-B": 100}
@@ -638,7 +644,7 @@ def test_enforce_temporal_integrity_has_exactly_one_required_no_default_paramete
     """
     import inspect
 
-    from hedgekit.evaluation.temporal import enforce_temporal_integrity
+    from windbreak.evaluation.temporal import enforce_temporal_integrity
 
     signature = inspect.signature(enforce_temporal_integrity)
     parameters = list(signature.parameters.values())
@@ -652,7 +658,7 @@ def test_rejection_reason_has_exactly_the_three_documented_members() -> None:
     `UNRESOLVED` -- no extra escape-hatch member (e.g. no `SKIPPED` or
     `IGNORED`) could ever exist to be silently selected instead.
     """
-    from hedgekit.evaluation.temporal import RejectionReason
+    from windbreak.evaluation.temporal import RejectionReason
 
     assert {member.name for member in RejectionReason} == {
         "BACKDATED",
@@ -671,7 +677,7 @@ def test_temporal_none_with_forecasts_raises_value_error_never_silently_skips() 
     raises `ValueError` -- there is no silent skip of the gate when the
     caller simply forgot to supply a temporal context.
     """
-    from hedgekit.evaluation.temporal import enforce_temporal_integrity
+    from windbreak.evaluation.temporal import enforce_temporal_integrity
 
     forecast = _forecast("fc-1", "MKT-A", created_sequence=11)
     inputs = EvaluationInputs(
@@ -689,7 +695,7 @@ def test_temporal_none_with_empty_forecasts_returns_empty_result_no_raise() -> N
     returns an empty result rather than raising -- there is nothing to gate,
     so there is nothing to be loud about.
     """
-    from hedgekit.evaluation.temporal import enforce_temporal_integrity
+    from windbreak.evaluation.temporal import enforce_temporal_integrity
 
     inputs = EvaluationInputs(forecasts=(), resolutions={}, temporal=None)
 
@@ -712,7 +718,7 @@ def test_no_metricspec_including_a_fake_one_can_receive_a_leaked_record() -> Non
     ungated call path any `MetricSpec` -- real registry metric or a fake one
     built fresh in a test -- can reach around.
     """
-    from hedgekit.evaluation.temporal import TemporalContext
+    from windbreak.evaluation.temporal import TemporalContext
 
     context = TemporalContext(
         deployment_sequence=10,
@@ -803,7 +809,10 @@ def test_run_evaluation_on_temporal_leakage_fixture_admits_only_clean_forecasts(
         sum   = 20_000_000_000
         mean_ppm = sum // (2 * 1_000_000) = 20_000_000_000 // 2_000_000 = 10_000
     """
-    from hedgekit.evaluation.temporal import EVALUATION_RECORD_REJECTED, RejectionReason
+    from windbreak.evaluation.temporal import (
+        EVALUATION_RECORD_REJECTED,
+        RejectionReason,
+    )
 
     report = run_evaluation(fixture_path=TEMPORAL_LEAKAGE_FIXTURE)
 
@@ -934,7 +943,7 @@ def test_rejection_event_requires_resolution_sequence_for_backdated() -> None:
     coherent when a resolution sequence is actually known (that is the
     entire premise of the reason).
     """
-    from hedgekit.evaluation.temporal import RejectionEvent, RejectionReason
+    from windbreak.evaluation.temporal import RejectionEvent, RejectionReason
 
     with pytest.raises(ValueError, match="resolution_sequence"):
         RejectionEvent(
@@ -952,7 +961,7 @@ def test_rejection_event_requires_no_resolution_sequence_for_unresolved() -> Non
     non-`None` `resolution_sequence` raises `ValueError` -- an unresolved
     ticker cannot simultaneously carry a known resolution sequence.
     """
-    from hedgekit.evaluation.temporal import RejectionEvent, RejectionReason
+    from windbreak.evaluation.temporal import RejectionEvent, RejectionReason
 
     with pytest.raises(ValueError, match="resolution_sequence"):
         RejectionEvent(
@@ -971,7 +980,7 @@ def test_rejection_event_type_field_is_not_a_constructor_parameter() -> None:
     time (`init=False`) -- a caller can never forge a different event-type
     token onto a rejection record.
     """
-    from hedgekit.evaluation.temporal import (
+    from windbreak.evaluation.temporal import (
         EVALUATION_RECORD_REJECTED,
         RejectionEvent,
         RejectionReason,

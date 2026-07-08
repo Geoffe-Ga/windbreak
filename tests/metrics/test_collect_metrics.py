@@ -9,7 +9,7 @@
         precommit_status,
     )
 
-That scaffold package is not a hedgekit dependency -- CI's clean
+That scaffold package is not a windbreak dependency -- CI's clean
 ``pip install -e .`` never installs it, so every invocation of
 ``collect_metrics.py`` in CI raises ``ModuleNotFoundError`` before a single
 line of the module body runs. The fix (owned by the implementation

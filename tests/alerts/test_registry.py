@@ -1,11 +1,11 @@
-"""Tests for hedgekit.alerts.registry (issue #14): the SPEC S14 alert catalog.
+"""Tests for windbreak.alerts.registry (issue #14): the SPEC S14 alert catalog.
 
 `AlertType` must carry exactly the 14 verbatim alert strings from SPEC
 Section 14, `ALERT_REGISTRY` must give each one a severity and a
 human-readable description, and `cli_token` must give each one a unique,
 shell-safe identifier for the `alert-test` CLI subcommand.
 
-None of `hedgekit.alerts.registry`'s public names exist yet, so importing
+None of `windbreak.alerts.registry`'s public names exist yet, so importing
 this module fails at collection with `ModuleNotFoundError` -- the expected
 RED state for issue #14's Gate 1.
 """
@@ -17,7 +17,7 @@ import logging
 
 import pytest
 
-from hedgekit.alerts.registry import (
+from windbreak.alerts.registry import (
     ALERT_REGISTRY,
     AlertRegistration,
     AlertSeverity,

@@ -141,7 +141,7 @@ jobs:
             ${{ join(matrix.area.paths, ' | ') }}
 
             The scope includes the TESTS that cover these paths (the mirrored
-            `tests/` tree — `tests/<subpackage>/` covers `hedgekit/<subpackage>/`)
+            `tests/` tree — `tests/<subpackage>/` covers `windbreak/<subpackage>/`)
             — weak and coverage-theater tests are in scope for the taxonomy's
             testing family.
 

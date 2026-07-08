@@ -49,7 +49,7 @@ jobs:
         run: |
           . .venv/bin/activate
           python scripts/collect_metrics.py \
-            --project-name hedgekit \
+            --project-name windbreak \
             --output docs/metrics.json \
             --metrics-mode script \
             --scripts-dir scripts/
@@ -65,7 +65,7 @@ jobs:
         run: |
           echo "## 📊 Metrics Dashboard Updated" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Dashboard URL: https://geoffe-ga.github.io/hedgekit/dashboard.html" >> $GITHUB_STEP_SUMMARY
+          echo "Dashboard URL: https://geoffe-ga.github.io/windbreak/dashboard.html" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Latest Metrics" >> $GITHUB_STEP_SUMMARY
           jq -r '.metrics | to_entries | .[] | "- **\(.key)**: \(.value)"' docs/metrics.json >> $GITHUB_STEP_SUMMARY || true

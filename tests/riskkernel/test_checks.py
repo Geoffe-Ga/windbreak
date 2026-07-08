@@ -1,4 +1,4 @@
-"""Failing-first tests for hedgekit.riskkernel.checks (issues #30, #31, #32,
+"""Failing-first tests for windbreak.riskkernel.checks (issues #30, #31, #32,
 #34, RED).
 
 Issue #30 gave 15 of the 24 SPEC S10.3 pre-trade checks their real logic
@@ -27,9 +27,9 @@ so 21 of the 24 SPEC S10.3 checks are now real; the remaining 3 stay
 deliberate stubs that still veto, each naming the GitHub issue that will
 replace it.
 
-`hedgekit/riskkernel/context.py` does not yet declare `used_intent_ids` /
+`windbreak/riskkernel/context.py` does not yet declare `used_intent_ids` /
 `used_idempotency_keys` / `verification` / `acknowledged_intent_ids` /
-`require_human_ack_above_micros`, and `hedgekit/riskkernel/verification.py`
+`require_human_ack_above_micros`, and `windbreak/riskkernel/verification.py`
 does not exist at all yet (this file's `conftest` import alone triggers the
 collection failure), so importing anything here fails collection with
 `ModuleNotFoundError`/`TypeError` -- the expected Gate 1 RED state for issues
@@ -58,18 +58,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from hedgekit.numeric.types import (
-    ContractCentis,
-    MoneyMicros,
-    PricePips,
-    ProbabilityPpm,
-)
-from hedgekit.riskkernel.checks import (
-    DEFAULT_CHECKS,
-    CheckResult,
-    evaluate_intent,
-)
-from hedgekit.riskkernel.modes import Mode
 from tests.riskkernel.conftest import (
     DEFAULT_MARKET_TICKER,
     DEFAULT_NOW_EPOCH_S,
@@ -77,9 +65,21 @@ from tests.riskkernel.conftest import (
     make_intent,
     make_verification_snapshot,
 )
+from windbreak.numeric.types import (
+    ContractCentis,
+    MoneyMicros,
+    PricePips,
+    ProbabilityPpm,
+)
+from windbreak.riskkernel.checks import (
+    DEFAULT_CHECKS,
+    CheckResult,
+    evaluate_intent,
+)
+from windbreak.riskkernel.modes import Mode
 
 if TYPE_CHECKING:
-    from hedgekit.riskkernel.checks import Check
+    from windbreak.riskkernel.checks import Check
 
 #: The exact SPEC S10.3 check-name sequence, in this exact order -- unchanged
 #: by issue #30 (only each check's internals and arity change).

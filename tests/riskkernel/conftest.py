@@ -1,15 +1,15 @@
 """Shared `OrderIntent`/`EvaluationContext` builders for `tests/riskkernel/*`
 (issues #30/#31/#32/#34, RED).
 
-`hedgekit/riskkernel/context.py` does not exist yet, so importing
+`windbreak/riskkernel/context.py` does not exist yet, so importing
 `EvaluationContext` and its four constituent dataclasses below fails
 collection with `ModuleNotFoundError: No module named
-'hedgekit.riskkernel.context'` -- the expected Gate 1 RED state for issue #30.
+'windbreak.riskkernel.context'` -- the expected Gate 1 RED state for issue #30.
 
 Issue #32 (read-only exchange verification) adds a fifth required field,
 `EvaluationContext.verification: VerificationSnapshot | None` (no default,
 mirroring the `used_intent_ids` fail-loud precedent from issue #31), plus a
-new `RiskLimits.verification_ttl_seconds: int`. `hedgekit/riskkernel/verification.py`
+new `RiskLimits.verification_ttl_seconds: int`. `windbreak/riskkernel/verification.py`
 does not exist yet either, so the `VerificationOutcome`/`VerificationSnapshot`
 import below independently fails collection with `ModuleNotFoundError` --
 also the expected Gate 1 RED state for issue #32.
@@ -63,22 +63,22 @@ from __future__ import annotations
 
 import dataclasses
 
-from hedgekit.numeric.types import (
+from windbreak.numeric.types import (
     ContractCentis,
     MoneyMicros,
     PricePips,
     ProbabilityPpm,
 )
-from hedgekit.riskkernel.checks import OrderIntent
-from hedgekit.riskkernel.context import (
+from windbreak.riskkernel.checks import OrderIntent
+from windbreak.riskkernel.context import (
     AccountState,
     EvaluationContext,
     FeeBounds,
     MarketView,
     RiskLimits,
 )
-from hedgekit.riskkernel.modes import Mode
-from hedgekit.riskkernel.verification import VerificationOutcome, VerificationSnapshot
+from windbreak.riskkernel.modes import Mode
+from windbreak.riskkernel.verification import VerificationOutcome, VerificationSnapshot
 
 #: The exchange ticker every default `OrderIntent`/`RiskLimits.instrument_whitelist`
 #: agree on, so the default context passes `instrument_whitelist` out of the box.

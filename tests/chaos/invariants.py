@@ -28,13 +28,13 @@ Four invariants must hold after *every* chaos scenario reaches quiescence
        module never reaches into.
 
 Every function here is pure: it reads only *public*, durable state -- the
-ledger (:class:`~hedgekit.ledger.store.LedgerRecord`, the same source
-:meth:`~hedgekit.order_gateway.gateway.OrderGateway.recover` and
-:class:`~hedgekit.order_gateway.reconciler.Reconciler` fold), the write-ahead
-log (:class:`~hedgekit.order_gateway.wal.WalRecord`, equally durable and
+ledger (:class:`~windbreak.ledger.store.LedgerRecord`, the same source
+:meth:`~windbreak.order_gateway.gateway.OrderGateway.recover` and
+:class:`~windbreak.order_gateway.reconciler.Reconciler` fold), the write-ahead
+log (:class:`~windbreak.order_gateway.wal.WalRecord`, equally durable and
 public via ``WriteAheadLog.read_all()``), and the venue's live truth
-(:class:`~hedgekit.connector.models.OpenOrder`/``Position``, read exactly as
-:meth:`~hedgekit.connector.paper.PaperExchange.get_open_orders`/
+(:class:`~windbreak.connector.models.OpenOrder`/``Position``, read exactly as
+:meth:`~windbreak.connector.paper.PaperExchange.get_open_orders`/
 ``get_positions`` return them). None ever reaches into a Gateway private
 attribute (``_acks``, ``_tracked``, ``_inflight_closing``, ...).
 """
@@ -45,7 +45,7 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
-from hedgekit.order_gateway.state_machine import (
+from windbreak.order_gateway.state_machine import (
     IllegalTransitionError,
     OrderEvent,
     OrderState,
@@ -55,9 +55,9 @@ from hedgekit.order_gateway.state_machine import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from hedgekit.connector.models import OpenOrder, Position
-    from hedgekit.ledger.store import LedgerRecord
-    from hedgekit.order_gateway.wal import WalRecord
+    from windbreak.connector.models import OpenOrder, Position
+    from windbreak.ledger.store import LedgerRecord
+    from windbreak.order_gateway.wal import WalRecord
 
 #: The ledgered event type recording one order-lifecycle state transition.
 _ORDER_TRANSITION = "OrderTransitionLedgered"
@@ -83,7 +83,7 @@ class GatewaySnapshot:
         positions: The currently held positions, as reported by a wired
             reduce-only position source; empty when enforcement is off (the
             venue itself models no position state, see
-            :meth:`~hedgekit.connector.paper.PaperExchange.get_positions`).
+            :meth:`~windbreak.connector.paper.PaperExchange.get_positions`).
     """
 
     ledger_records: Sequence[LedgerRecord]
@@ -154,7 +154,7 @@ def _reduce_only_halted_tickers(
         The set of ``ticker`` values carried by every ``ReduceOnlyViolation``
         record whose ticker is non-empty. Each such record names exactly the
         one ticker whose close overshot the held position (see
-        :class:`~hedgekit.ledger.events.ReduceOnlyViolation`); the halt it
+        :class:`~windbreak.ledger.events.ReduceOnlyViolation`); the halt it
         latches is process-wide (the Gateway refuses all further work), but
         the invariant only excuses a net-short on the *named* ticker -- an
         unrelated ticker's transient short, with no violation naming it, is
@@ -238,7 +238,7 @@ def assert_no_net_short_positions(snapshot: GatewaySnapshot) -> None:
     convergent, safe outcome the invariant demands, so it excuses the check
     -- but *only* for the ticker the violation names. ``ReduceOnlyViolation``
     carries the one ``ticker`` whose close overshot its held position (see
-    :class:`~hedgekit.ledger.events.ReduceOnlyViolation`); although the halt
+    :class:`~windbreak.ledger.events.ReduceOnlyViolation`); although the halt
     it latches is process-wide (the Gateway refuses all further work), that
     says nothing about any *other* ticker's position, so a short standing on
     an unrelated, unnamed ticker still fails this check -- mirroring how

@@ -1,4 +1,4 @@
-"""Failing-first tests for hedgekit.riskkernel.governance (issue #34, RED).
+"""Failing-first tests for windbreak.riskkernel.governance (issue #34, RED).
 
 Issue #34 gives the Risk Kernel operator-facing floor governance (SPEC S5.1 /
 S10.9-ish): an operator may *raise* the equity floor immediately (never a risk
@@ -10,7 +10,7 @@ highs (a fixed ppm share of each fresh gain, applied with no delay), and an
 advisory (never blocking) alert fires once profit accumulated since the last
 high-water mark crosses a configured threshold.
 
-``hedgekit/riskkernel/governance.py`` does not exist yet, so every import
+``windbreak/riskkernel/governance.py`` does not exist yet, so every import
 below fails collection with ``ModuleNotFoundError`` -- the expected Gate 1 RED
 state for issue #34.
 
@@ -27,7 +27,7 @@ in sync):
   at ``MoneyMicros(0)``; ``observe_equity`` only ratchets/advises on a
   strictly-higher observation (a "fresh HWM crossing"), computing
   ``gain = equity - previous_hwm``.
-* Events are plain, string-discriminated ``hedgekit.ledger.events.Event``s
+* Events are plain, string-discriminated ``windbreak.ledger.events.Event``s
   (mirroring ``process.py``/``reservations.py``, not new dataclass
   subclasses): ``"FloorRaised"`` (``previous_floor_micros``,
   ``new_floor_micros``, ``origin``), ``"FloorLowerRequested"`` (``nonce``,
@@ -55,9 +55,9 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from hedgekit.alerts import AlertDispatcher, AlertType, LoggingLedgerWriter
-from hedgekit.numeric.types import MoneyMicros
-from hedgekit.riskkernel.governance import (
+from windbreak.alerts import AlertDispatcher, AlertType, LoggingLedgerWriter
+from windbreak.numeric.types import MoneyMicros
+from windbreak.riskkernel.governance import (
     DEFAULT_FLOOR_LOWER_COOL_OFF_SECONDS,
     ChangeOrigin,
     CoolOffActiveError,
@@ -67,14 +67,14 @@ from hedgekit.riskkernel.governance import (
     NonceMismatchError,
     NoPendingLowerError,
 )
-from hedgekit.riskkernel.modes import Mode, ModeStateMachine
-from hedgekit.riskkernel.process import InMemoryKernelLedgerWriter
+from windbreak.riskkernel.modes import Mode, ModeStateMachine
+from windbreak.riskkernel.process import InMemoryKernelLedgerWriter
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from hedgekit.alerts.registry import AlertSeverity
-    from hedgekit.ledger.events import Event
+    from windbreak.alerts.registry import AlertSeverity
+    from windbreak.ledger.events import Event
 
 #: A very large threshold/floor ceiling so a test that does not care about the
 #: profit-sweep alert never accidentally trips it.

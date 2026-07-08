@@ -2,39 +2,39 @@
   {
     "id": "connector",
     "paths": [
-      "hedgekit/connector"
+      "windbreak/connector"
     ],
     "charter": "Exchange integration: the Kalshi client/adapter/normalize stack, the fake and paper exchanges, and the fills, fees, freshness, resilience, and validation layers that sit between them. Hunt for duplicated client/adapter variants and copy-paste normalization, for error-handling that has drifted apart between the real Kalshi connector and its fake/paper doubles (so the doubles no longer model real failure), and for dead or unreachable resilience branches (retries, backoff, circuit-breaking) that never fire. Watch for lying validation/freshness flags that report a snapshot as fresh or valid when the underlying check was bypassed."
   },
   {
     "id": "riskkernel",
     "paths": [
-      "hedgekit/riskkernel",
-      "hedgekit/tokens"
+      "windbreak/riskkernel",
+      "windbreak/tokens"
     ],
     "charter": "Risk gating and the trust boundary: promotion/demotion between modes, reservation accounting, the floor and check pipeline, and the token signing/verification that authorizes downstream action. Hunt for layering violations where the kernel reaches past its abstractions, for copy-paste check variants that have subtly diverged, and for safety flags that claim a check passed without actually running it. Pay special attention to duplicated or split token logic across riskkernel/ and tokens/ and to any signing/verification path that can be short-circuited."
   },
   {
     "id": "forecast-screener",
     "paths": [
-      "hedgekit/forecast",
-      "hedgekit/screener"
+      "windbreak/forecast",
+      "windbreak/screener"
     ],
     "charter": "Market screening plus the LLM forecast pipeline: filters, the budget/ensemble/coherence/sanitize stages, the sandbox, and recorded cassettes. Hunt for dead or orphaned pipeline stages that no live path invokes, for coverage-theater tests that assert nothing meaningful about inherently stochastic code, and for orphaned canary/triage code left over from earlier iterations. Look for sanitize/coherence steps that are wired into the type signature but skipped at runtime, and for cassette fixtures that no longer match the code they pretend to record."
   },
   {
     "id": "core-runtime",
     "paths": [
-      "hedgekit/config",
-      "hedgekit/ledger",
-      "hedgekit/numeric",
-      "hedgekit/alerts",
-      "hedgekit/pipeline",
-      "hedgekit/order_gateway",
-      "hedgekit/dashboard",
-      "hedgekit/main.py",
-      "hedgekit/__main__.py",
-      "hedgekit/logging_setup.py"
+      "windbreak/config",
+      "windbreak/ledger",
+      "windbreak/numeric",
+      "windbreak/alerts",
+      "windbreak/pipeline",
+      "windbreak/order_gateway",
+      "windbreak/dashboard",
+      "windbreak/main.py",
+      "windbreak/__main__.py",
+      "windbreak/logging_setup.py"
     ],
     "charter": "The config/ledger/numeric substrate, alert dispatch, the dashboard, and the application wiring (main, __main__, logging_setup). Hunt for stubbed subpackages — pipeline/ and order_gateway/ are near-empty __init__ shells, so classify each as wire-in (with an e2e test) versus delete rather than leaving it as dead scaffolding. Look for dead config branches and schema drift between config/schema.py and its loader/versioning, for ledger rebuild/store logic that has diverged from the event definitions, and for alert sinks or dashboard views that are defined but never dispatched to or rendered."
   }

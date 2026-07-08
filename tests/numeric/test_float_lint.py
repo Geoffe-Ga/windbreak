@@ -1,27 +1,27 @@
 """Failing-first tests for scripts/lint_no_floats.py (issue #12, SPEC S17.3).
 
 The AST float-lint is the enforcement mechanism behind SPEC S6.1's "no
-floats in the money path" rule: `hedgekit/numeric`, `hedgekit/ledger`,
-`hedgekit/riskkernel`, `hedgekit/connector`, `hedgekit/screener`,
-`hedgekit/forecast`, `hedgekit/tokens`, and `hedgekit/selector` must never
+floats in the money path" rule: `windbreak/numeric`, `windbreak/ledger`,
+`windbreak/riskkernel`, `windbreak/connector`, `windbreak/screener`,
+`windbreak/forecast`, `windbreak/tokens`, and `windbreak/selector` must never
 contain a float literal,
 a `float`
 annotation (including forward-ref
 string annotations), a true-division operator, or a `float(...)` cast. This
 module loads the script directly by path
 (`importlib.util.spec_from_file_location`) because it lives outside the
-`hedgekit` package -- it is a repo-maintenance tool, not shipped code. The
+`windbreak` package -- it is a repo-maintenance tool, not shipped code. The
 script does not exist yet: that missing-file state *is* the RED milestone
 for issue #12.
 
-Issue #16 extends the money-path denylist with `hedgekit/connector` (the
+Issue #16 extends the money-path denylist with `windbreak/connector` (the
 exchange-facing numeric types: prices, quantities, balances) and
-`hedgekit/screener` (jurisdiction/eligibility decisions derived from those
-same values); issue #22 then appends `hedgekit/forecast` (the pipeline's
-probability/money-bearing record fields); issue #31 appends `hedgekit/tokens`
+`windbreak/screener` (jurisdiction/eligibility decisions derived from those
+same values); issue #22 then appends `windbreak/forecast` (the pipeline's
+probability/money-bearing record fields); issue #31 appends `windbreak/tokens`
 (the shared approval-token package's money-bearing claims fields); issue #43
-appends `hedgekit/selector` (the pure Trade Selector's fixed-point
-price/edge/sizing paths); issue #48 appends `hedgekit/scheduler` (the always-on
+appends `windbreak/selector` (the pure Trade Selector's fixed-point
+price/edge/sizing paths); issue #48 appends `windbreak/scheduler` (the always-on
 PAPER loop's scaled-integer equity/floor sampling).
 `EXPECTED_DENYLISTED_PACKAGES` below is updated to the nine entries the
 implementations must append to the
@@ -55,26 +55,26 @@ LINT_SCRIPT_PATH = REPO_ROOT / "scripts" / "lint_no_floats.py"
 
 #: Mirrors the script's own DENYLISTED_PACKAGES constant, for a direct
 #: cross-check once the module can be loaded. Issue #16 appends
-#: `hedgekit/connector` and `hedgekit/screener` to the original three
-#: money-path packages from issue #12. Issue #22 appends `hedgekit/forecast`
+#: `windbreak/connector` and `windbreak/screener` to the original three
+#: money-path packages from issue #12. Issue #22 appends `windbreak/forecast`
 #: (the pipeline's probability/money-bearing record fields), bringing the
-#: total to six. Issue #31 appends `hedgekit/tokens` (the shared approval-token
+#: total to six. Issue #31 appends `windbreak/tokens` (the shared approval-token
 #: package, whose claims carry money-bearing scaled-integer fields), bringing
-#: the total to seven. Issue #43 appends `hedgekit/selector` (the pure Trade
+#: the total to seven. Issue #43 appends `windbreak/selector` (the pure Trade
 #: Selector, whose price/edge/sizing paths are fixed-point per SPEC S9.1),
-#: bringing the total to eight. Issue #48 appends `hedgekit/scheduler` (the
+#: bringing the total to eight. Issue #48 appends `windbreak/scheduler` (the
 #: always-on PAPER loop, whose equity/floor sampling is scaled-integer money),
 #: bringing the total to nine.
 EXPECTED_DENYLISTED_PACKAGES = (
-    "hedgekit/numeric",
-    "hedgekit/ledger",
-    "hedgekit/riskkernel",
-    "hedgekit/connector",
-    "hedgekit/screener",
-    "hedgekit/forecast",
-    "hedgekit/tokens",
-    "hedgekit/selector",
-    "hedgekit/scheduler",
+    "windbreak/numeric",
+    "windbreak/ledger",
+    "windbreak/riskkernel",
+    "windbreak/connector",
+    "windbreak/screener",
+    "windbreak/forecast",
+    "windbreak/tokens",
+    "windbreak/selector",
+    "windbreak/scheduler",
 )
 
 
@@ -288,8 +288,8 @@ def test_full_scan_mode_real_repo_denylisted_packages_are_clean() -> None:
     """No path args -> scan DENYLISTED_PACKAGES; today's stubs are float-free.
 
     This test remains meaningful after the RED->GREEN transition too: once
-    types.py/rounding.py exist under hedgekit/numeric/, this is the same
-    check that guards them (and hedgekit/ledger, hedgekit/riskkernel) in CI.
+    types.py/rounding.py exist under windbreak/numeric/, this is the same
+    check that guards them (and windbreak/ledger, windbreak/riskkernel) in CI.
     """
     result = _run_cli()
 
@@ -427,8 +427,8 @@ def test_denylisted_files_only_covers_existing_packages(
     files = lint_module._denylisted_files()
 
     repo_root = lint_module._REPO_ROOT
-    numeric_dir = repo_root / "hedgekit/numeric"
-    # hedgekit/numeric exists in this repo, so at least its files are returned.
+    numeric_dir = repo_root / "windbreak/numeric"
+    # windbreak/numeric exists in this repo, so at least its files are returned.
     assert files, "expected at least the numeric package to be scanned"
     assert all(path.suffix == ".py" for path in files)
     assert any(numeric_dir in path.parents for path in files)
@@ -451,7 +451,7 @@ def test_denylisted_files_skips_nonexistent_packages(
     monkeypatch.setattr(
         lint_module,
         "DENYLISTED_PACKAGES",
-        ("hedgekit/definitely_not_a_real_package",),
+        ("windbreak/definitely_not_a_real_package",),
     )
 
     assert lint_module._denylisted_files() == []

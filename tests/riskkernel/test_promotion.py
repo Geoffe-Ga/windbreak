@@ -1,4 +1,4 @@
-"""Failing-first tests for hedgekit.riskkernel.promotion (issue #33, RED).
+"""Failing-first tests for windbreak.riskkernel.promotion (issue #33, RED).
 
 Issue #33 gives the Risk Kernel its promotion-gate machinery: a pinned set of
 `PromotionGate`s (RESEARCH->PAPER, PAPER->LIVE_MICRO, LIVE_MICRO->LIVE), each a
@@ -7,15 +7,15 @@ pure `evaluate_promotion` function, plus the kernel-level `request_promotion`
 entrypoint that ledgers exactly one `PromotionEvaluated` event per attempt and
 only mutates the mode machine on approval (honoring the ceiling).
 
-Neither `hedgekit/riskkernel/promotion.py` nor the three new
-`hedgekit.ledger.events` classes it needs (`PromotionEvaluated`) exist yet, so
+Neither `windbreak/riskkernel/promotion.py` nor the three new
+`windbreak.ledger.events` classes it needs (`PromotionEvaluated`) exist yet, so
 this file fails collection in two stages depending on which is fixed first:
-today, the `from hedgekit.ledger.events import ... PromotionEvaluated ...`
+today, the `from windbreak.ledger.events import ... PromotionEvaluated ...`
 line raises `ImportError: cannot import name 'PromotionEvaluated' from
-'hedgekit.ledger.events'` (that module exists but does not yet define the
+'windbreak.ledger.events'` (that module exists but does not yet define the
 class); once `events.py` is extended, the next import,
-`from hedgekit.riskkernel.promotion import ...`, would raise
-`ModuleNotFoundError: No module named 'hedgekit.riskkernel.promotion'`. Either
+`from windbreak.riskkernel.promotion import ...`, would raise
+`ModuleNotFoundError: No module named 'windbreak.riskkernel.promotion'`. Either
 way this is the expected Gate 1 RED state for issue #33.
 
 ASSUMPTIONS the implementer must honor or explicitly renegotiate with the
@@ -28,13 +28,13 @@ architect (the approved plan text left these underspecified):
    file pins them to the module-level constants below
    (`_PAPER_MAX_DRAWDOWN_THRESHOLD_PPM`, `_CALIBRATION_SLOPE_LOW_PPM`,
    `_CALIBRATION_SLOPE_HIGH_PPM`, `_LIVE_SLIPPAGE_MAX_PPM`,
-   `_LIVE_BRIER_DEGRADATION_MAX_PPM`). `hedgekit/riskkernel/promotion.py` must
+   `_LIVE_BRIER_DEGRADATION_MAX_PPM`). `windbreak/riskkernel/promotion.py` must
    define equal-valued module constants, or this file and the architect must
    agree on different figures together.
 2. `GateEvidence.to_payload()` / `GateCriterion.to_payload()` /
    `PromotionGate.to_payload()` are assumed to key their output by the
    dataclass's own field names verbatim (mirroring
-   `hedgekit.connector.models.market_to_payload`'s convention), with
+   `windbreak.connector.models.market_to_payload`'s convention), with
    `Comparison`/`Mode` values rendered as their `.name` string and
    `PromotionGate.criteria` rendered as a list of nested criterion payloads.
 3. `PromotionDecision.results` is assumed ordered identically to
@@ -53,16 +53,16 @@ import json
 
 import pytest
 
-from hedgekit.config import EvaluationConfig
-from hedgekit.ledger.events import EVENT_TYPES, PromotionEvaluated, canonical_json
-from hedgekit.riskkernel.modes import (
+from windbreak.config import EvaluationConfig
+from windbreak.ledger.events import EVENT_TYPES, PromotionEvaluated, canonical_json
+from windbreak.riskkernel.modes import (
     IllegalModeTransitionError,
     Mode,
     ModeCeilingExceededError,
     ModeStateMachine,
 )
-from hedgekit.riskkernel.process import InMemoryKernelLedgerWriter, RiskKernel
-from hedgekit.riskkernel.promotion import (
+from windbreak.riskkernel.process import InMemoryKernelLedgerWriter, RiskKernel
+from windbreak.riskkernel.promotion import (
     Comparison,
     CriterionResult,
     GateCriterion,
