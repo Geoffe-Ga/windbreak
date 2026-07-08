@@ -47,6 +47,8 @@ if TYPE_CHECKING:
 #: ``hedgekit/forecast`` package (probability_ppm, research_cost_micros, ...).
 #: Issue #31 extends the path with the shared ``hedgekit/tokens`` package, whose
 #: approval-token claims carry money-bearing fields (max_fee_micros, ...).
+#: Issue #43 extends the path with the ``hedgekit/selector`` package, whose
+#: decisions carry price/size/notional/probability intents (SPEC S9.1).
 DENYLISTED_PACKAGES: tuple[str, ...] = (
     "hedgekit/numeric",
     "hedgekit/ledger",
@@ -55,6 +57,7 @@ DENYLISTED_PACKAGES: tuple[str, ...] = (
     "hedgekit/screener",
     "hedgekit/forecast",
     "hedgekit/tokens",
+    "hedgekit/selector",
 )
 
 FLOAT_LITERAL_CODE = "FLOAT-001"

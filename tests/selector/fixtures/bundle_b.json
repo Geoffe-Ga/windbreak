@@ -1,0 +1,71 @@
+{
+  "forecast": {
+    "forecast_id": "fc-selector-b-0002",
+    "market_ticker": "KXCPI-25JAN",
+    "normalized_question_hash": "sha256:question-hash-b",
+    "probability_ppm": 310000,
+    "ci_low_ppm": 250000,
+    "ci_high_ppm": 380000,
+    "model_votes": [
+      {
+        "provider": "openai",
+        "model_version": "gpt-5-forecast",
+        "declared_training_cutoff": "2024-06-01",
+        "probability_ppm": 300000,
+        "response_fingerprint": "sha256:vote-b-1"
+      },
+      {
+        "provider": "anthropic",
+        "model_version": "claude-5-forecast",
+        "declared_training_cutoff": "2024-08-01",
+        "probability_ppm": 310000,
+        "response_fingerprint": "sha256:vote-b-2"
+      },
+      {
+        "provider": "google",
+        "model_version": "gemini-3-forecast",
+        "declared_training_cutoff": "2024-09-01",
+        "probability_ppm": 320000,
+        "response_fingerprint": "sha256:vote-b-3"
+      }
+    ],
+    "vote_dispersion_ppm": 20000,
+    "rationale_markdown": "## Rationale\n\nBased on recent CPI prints.",
+    "citations": [
+      {
+        "url": "https://example.com/article-b",
+        "content_hash": "sha256:cafebabe-b",
+        "quoted_text": "Core CPI cooled slightly last month.",
+        "publication_date": "2024-12-01T00:00:00.000000Z",
+        "source_type": "news_article"
+      }
+    ],
+    "source_quality_notes": ["secondary source"],
+    "research_cost_micros": 98000,
+    "triage_stage": "full",
+    "created_at": "2024-12-15T09:30:00.000000Z",
+    "forecast_horizon_hours": 72,
+    "market_price_baseline_pips": 3100,
+    "baseline_quote_snapshot_id": "snap-selector-b-0002",
+    "coherence_group_sum_ppm": 1000000,
+    "coherence_flag": false,
+    "abstention_reason": "insufficient_independent_citations",
+    "eligible_for_live": false
+  },
+  "order_book": {
+    "ticker": "KXCPI-25JAN",
+    "yes_bids": [
+      {"price": 3000, "quantity": 200}
+    ],
+    "yes_asks": [
+      {"price": 3200, "quantity": 300}
+    ],
+    "fetched_at": "2024-12-15T09:30:05.000000Z"
+  },
+  "calibration_map_version": "calib-v2",
+  "fee_model_id": "fee-model-tiered",
+  "slippage_model_id": "slippage-model-sqrt",
+  "positions_snapshot_id": "positions-snap-0002",
+  "risk_config_hash": "sha256:risk-config-b",
+  "correlation_tags": ["cpi", "inflation"]
+}

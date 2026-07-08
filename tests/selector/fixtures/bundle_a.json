@@ -1,0 +1,73 @@
+{
+  "forecast": {
+    "forecast_id": "fc-selector-a-0001",
+    "market_ticker": "KXFED-24DEC",
+    "normalized_question_hash": "sha256:question-hash-a",
+    "probability_ppm": 620000,
+    "ci_low_ppm": 550000,
+    "ci_high_ppm": 690000,
+    "model_votes": [
+      {
+        "provider": "openai",
+        "model_version": "gpt-5-forecast",
+        "declared_training_cutoff": "2024-06-01",
+        "probability_ppm": 600000,
+        "response_fingerprint": "sha256:vote-a-1"
+      },
+      {
+        "provider": "anthropic",
+        "model_version": "claude-5-forecast",
+        "declared_training_cutoff": "2024-08-01",
+        "probability_ppm": 620000,
+        "response_fingerprint": "sha256:vote-a-2"
+      },
+      {
+        "provider": "google",
+        "model_version": "gemini-3-forecast",
+        "declared_training_cutoff": "2024-09-01",
+        "probability_ppm": 640000,
+        "response_fingerprint": "sha256:vote-a-3"
+      }
+    ],
+    "vote_dispersion_ppm": 40000,
+    "rationale_markdown": "## Rationale\n\nBased on polling trends.",
+    "citations": [
+      {
+        "url": "https://example.com/article-a",
+        "content_hash": "sha256:cafebabe-a",
+        "quoted_text": "The Fed is expected to raise rates.",
+        "publication_date": "2024-11-01T00:00:00.000000Z",
+        "source_type": "news_article"
+      }
+    ],
+    "source_quality_notes": ["primary source", "cross-checked"],
+    "research_cost_micros": 125000,
+    "triage_stage": "full",
+    "created_at": "2024-12-10T12:00:00.000000Z",
+    "forecast_horizon_hours": 48,
+    "market_price_baseline_pips": 4500,
+    "baseline_quote_snapshot_id": "snap-selector-a-0001",
+    "coherence_group_sum_ppm": null,
+    "coherence_flag": false,
+    "abstention_reason": null,
+    "eligible_for_live": true
+  },
+  "order_book": {
+    "ticker": "KXFED-24DEC",
+    "yes_bids": [
+      {"price": 4400, "quantity": 500},
+      {"price": 4300, "quantity": 1000}
+    ],
+    "yes_asks": [
+      {"price": 4600, "quantity": 500},
+      {"price": 4700, "quantity": 1000}
+    ],
+    "fetched_at": "2024-12-10T12:00:05.000000Z"
+  },
+  "calibration_map_version": "calib-v1",
+  "fee_model_id": "fee-model-standard",
+  "slippage_model_id": "slippage-model-linear",
+  "positions_snapshot_id": "positions-snap-0001",
+  "risk_config_hash": "sha256:risk-config-a",
+  "correlation_tags": ["fed", "rates", "macro"]
+}
