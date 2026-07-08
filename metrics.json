@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-07-08T16:07:16.420458+00:00",
-  "project": "hedgekit",
+  "timestamp": "2026-07-08T17:31:14.366038+00:00",
+  "project": "windbreak",
   "thresholds": {
     "coverage": 90,
     "branch_coverage": 85,
@@ -43,11 +43,11 @@
       "status": "passing"
     },
     "ci_status": {
-      "total_jobs": 0,
-      "passing_jobs": 0,
-      "percentage": 0.0,
-      "status": "unknown",
-      "run_url": "https://github.com/Geoffe-Ga/hedgekit/actions/runs/28957326125"
+      "total_jobs": 1,
+      "passing_jobs": 1,
+      "percentage": 100.0,
+      "status": "passing",
+      "run_url": "https://github.com/Geoffe-Ga/windbreak/actions/runs/28962670318"
     }
   }
 }

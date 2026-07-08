@@ -57,9 +57,9 @@ Rationale:
   variable), never from a config file, and the handle never exposes the key via
   `repr`, `vars()`, pickle, logs, exception messages, or ledger payloads. A future
   EPIC_01 keyring replaces the env-var loader without changing this decision.
-- **Boundary:** Only `hedgekit.riskkernel` may import the signing-key handle
-  (`hedgekit.riskkernel.signing`); `tokens.py` is its sole importer. The shared,
-  Gateway-consumable `hedgekit.tokens` verification module recomputes the HMAC
+- **Boundary:** Only `windbreak.riskkernel` may import the signing-key handle
+  (`windbreak.riskkernel.signing`); `tokens.py` is its sole importer. The shared,
+  Gateway-consumable `windbreak.tokens` verification module recomputes the HMAC
   from an injected key and never imports the handle, preserving the §5.3 import
   boundary enforced by the AST scanner in `tests/riskkernel/test_process_isolation.py`
   and the `.importlinter` contract.

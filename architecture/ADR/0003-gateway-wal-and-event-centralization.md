@@ -16,7 +16,7 @@ be written.
 
 **1. Where does the pre-submission durable record live?** The system already has
 one durable append-only log — the hash-chained SQLite ledger
-(`hedgekit/ledger/store.py`) — that records every order-lifecycle *transition*
+(`windbreak/ledger/store.py`) — that records every order-lifecycle *transition*
 (`OrderTransitionLedgered`). But a transition record deliberately carries only
 the four state-machine fields (`client_order_id`, `from_state`, `event`,
 `to_state`); it does **not** carry the full economics of the intent. Crash
@@ -29,8 +29,8 @@ order-id did it become?"
 **2. How do the Gateway's ledger events reach `EVENT_TYPES`?** #38/#39 defined
 the four gateway events (`OrderTransitionLedgered`, `SubmissionRefused`,
 `ReduceOnlyRefused`, `ReduceOnlyViolation`) inside
-`hedgekit/order_gateway/ledger_writer.py`, which imports `Event` from
-`hedgekit/ledger/events.py`. Every *other* ledgered event in the codebase (the
+`windbreak/order_gateway/ledger_writer.py`, which imports `Event` from
+`windbreak/ledger/events.py`. Every *other* ledgered event in the codebase (the
 M0 events, the Risk Kernel kill/promotion/demotion events) is defined directly in
 `events.py` and registered in its `EVENT_TYPES` literal, so a persisted envelope
 can be reconstructed as `EVENT_TYPES[event_type](component=..., **data)`. The
@@ -42,7 +42,7 @@ circular import that breaks whenever `ledger_writer` is imported first.
 ## Decision
 
 **1. The write-ahead log is a separate append-only JSONL file, not the ledger.**
-`hedgekit/order_gateway/wal.py` provides `WriteAheadLog`, one
+`windbreak/order_gateway/wal.py` provides `WriteAheadLog`, one
 `canonical_json` line per record, `flush` + `os.fsync` per append (and a
 parent-directory `fsync` on first create), with two record kinds:
 
@@ -58,12 +58,12 @@ The signed approval token and any key material are **never** written to the WAL
 only and re-derives its `client_order_id`, raising on any mismatch so a tampered
 journal can never silently mis-attribute an order.
 
-**2. Gateway event definitions are centralized in `hedgekit/ledger/events.py`.**
+**2. Gateway event definitions are centralized in `windbreak/ledger/events.py`.**
 The four gateway event classes move verbatim into `events.py` and are added to
 the `EVENT_TYPES` literal alongside the three new recovery events
 (`ReconciliationHalted`, `ReconciliationHealed`, `RecoveryCompleted`).
 `ledger_writer.py` re-exports the four moved classes
-(`from hedgekit.ledger.events import OrderTransitionLedgered as ...`) so every
+(`from windbreak.ledger.events import OrderTransitionLedgered as ...`) so every
 existing import site (`gateway.py`, the package `__init__`, the #38/#39 tests) is
 unchanged. `ledger_writer.py`'s now-dead local `_derive_typed_event` /
 `_SCHEMA_VERSION` are deleted.
