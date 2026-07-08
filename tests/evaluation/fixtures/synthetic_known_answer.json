@@ -1,0 +1,110 @@
+{
+  "description": "EPIC_07 known-answer synthetic dataset shared across issues #49-#55 (the evaluation-harness epic). All probabilities and prices are integer-scaled (probability_ppm in parts-per-million, baseline_executable_price_pips in units of 1e-4 payout-dollars) -- no float literal appears anywhere in this file, per SPEC S6.1's integer-only money/probability path. `expected.brier_mean_ppm` is hand-computed independently of any implementation: for each of the 10 forecasts below, let p = probability_ppm / 1_000_000 and o = 1 if the resolution is 'yes' else 0; the per-forecast Brier term is (p - o)^2. Because every probability here is a multiple of 0.1 and every outcome is 0 or 1, each term is an exact multiple of 0.01: MKT-01 0.01, MKT-02 0.01, MKT-03 0.09, MKT-04 0.09, MKT-05 0.25, MKT-06 0.25, MKT-07 0.04, MKT-08 0.04, MKT-09 0.00, MKT-10 0.00 -- sum 0.78, mean over 10 forecasts 0.078, scaled to ppm (x1_000_000) = 78000.",
+  "forecasts": [
+    {
+      "forecast_id": "eval-fc-01",
+      "market_ticker": "MKT-01",
+      "probability_ppm": 900000,
+      "eligible_for_live": true,
+      "abstention_reason": null,
+      "traded": true,
+      "baseline_executable_price_pips": 8800
+    },
+    {
+      "forecast_id": "eval-fc-02",
+      "market_ticker": "MKT-02",
+      "probability_ppm": 100000,
+      "eligible_for_live": false,
+      "abstention_reason": "low_liquidity",
+      "traded": false,
+      "baseline_executable_price_pips": 1500
+    },
+    {
+      "forecast_id": "eval-fc-03",
+      "market_ticker": "MKT-03",
+      "probability_ppm": 700000,
+      "eligible_for_live": true,
+      "abstention_reason": null,
+      "traded": true,
+      "baseline_executable_price_pips": 7200
+    },
+    {
+      "forecast_id": "eval-fc-04",
+      "market_ticker": "MKT-04",
+      "probability_ppm": 300000,
+      "eligible_for_live": true,
+      "abstention_reason": "risk_kernel_veto",
+      "traded": false,
+      "baseline_executable_price_pips": 3200
+    },
+    {
+      "forecast_id": "eval-fc-05",
+      "market_ticker": "MKT-05",
+      "probability_ppm": 500000,
+      "eligible_for_live": true,
+      "abstention_reason": null,
+      "traded": true,
+      "baseline_executable_price_pips": 5500
+    },
+    {
+      "forecast_id": "eval-fc-06",
+      "market_ticker": "MKT-06",
+      "probability_ppm": 500000,
+      "eligible_for_live": false,
+      "abstention_reason": "stale_price",
+      "traded": false,
+      "baseline_executable_price_pips": 4800
+    },
+    {
+      "forecast_id": "eval-fc-07",
+      "market_ticker": "MKT-07",
+      "probability_ppm": 800000,
+      "eligible_for_live": true,
+      "abstention_reason": null,
+      "traded": true,
+      "baseline_executable_price_pips": 7900
+    },
+    {
+      "forecast_id": "eval-fc-08",
+      "market_ticker": "MKT-08",
+      "probability_ppm": 200000,
+      "eligible_for_live": true,
+      "abstention_reason": "below_edge_threshold",
+      "traded": false,
+      "baseline_executable_price_pips": 2200
+    },
+    {
+      "forecast_id": "eval-fc-09",
+      "market_ticker": "MKT-09",
+      "probability_ppm": 1000000,
+      "eligible_for_live": true,
+      "abstention_reason": null,
+      "traded": true,
+      "baseline_executable_price_pips": 9900
+    },
+    {
+      "forecast_id": "eval-fc-10",
+      "market_ticker": "MKT-10",
+      "probability_ppm": 0,
+      "eligible_for_live": false,
+      "abstention_reason": "market_closed",
+      "traded": false,
+      "baseline_executable_price_pips": 100
+    }
+  ],
+  "resolutions": [
+    { "market_ticker": "MKT-01", "outcome": "yes" },
+    { "market_ticker": "MKT-02", "outcome": "no" },
+    { "market_ticker": "MKT-03", "outcome": "yes" },
+    { "market_ticker": "MKT-04", "outcome": "no" },
+    { "market_ticker": "MKT-05", "outcome": "yes" },
+    { "market_ticker": "MKT-06", "outcome": "no" },
+    { "market_ticker": "MKT-07", "outcome": "yes" },
+    { "market_ticker": "MKT-08", "outcome": "no" },
+    { "market_ticker": "MKT-09", "outcome": "yes" },
+    { "market_ticker": "MKT-10", "outcome": "no" }
+  ],
+  "expected": {
+    "brier_mean_ppm": 78000
+  }
+}
