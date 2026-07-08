@@ -100,6 +100,31 @@ constructed with `kill_integration=None` (`windbreak/scheduler/loop.py`), so no
 kill-file watcher is polled. To stop the loop today, stop the process itself
 (`Ctrl-C`/SIGINT or SIGTERM).
 
+### Acknowledging a held order (LIVE_MICRO / LIVE)
+
+In the live modes, an order whose worst-case cost exceeds
+`risk.require_human_ack_above_micros` is **held** — not routed — until an
+operator explicitly acknowledges it (SPEC S10.8). Each held order opens a
+pending acknowledgement with a single-use, unguessable 32-hex `approval_id` and
+a ttl; if nobody acknowledges it before the ttl, the approval lapses and its
+capital reservation is released. Every request, grant, and lapse is ledgered.
+
+Two operator paths grant an acknowledgement, both drop-box based (they work with
+the dashboard HTTP surface down, mirroring `kill`/`rearm`):
+
+```bash
+windbreak ack --approval-id <32-hex-approval-id> --state-dir <dir>
+```
+
+writes `<dir>/acks/<approval_id>`, which the kernel's ack-file watcher grants on
+its next beat and then removes. The `--approval-id` must be exactly 32 lowercase
+hex characters (the shape the kernel mints); any other token is rejected as a
+usage error before a file is written. Alternatively, `POST /ack` on the
+dashboard (below) grants the same acknowledgement over the authenticated
+loopback surface. As with the kill switch, the live loop that polls the ack
+drop-box is not wired yet — this verb writes the durable grant signal a future
+live loop consumes.
+
 ### Observing via the dashboard
 
 `windbreak.dashboard.app` serves a read-only, loopback-only HTTP surface:
@@ -119,6 +144,16 @@ Routes:
 | `/positions` | The latest open-positions snapshot. |
 | `/equity` | The equity curve vs. the configured capital floor. |
 | `/decisions` | The interleaved selector decisions, including skip/veto reasons. |
+| `GET /acks` | The pending human acknowledgements awaiting an operator (SPEC S10.8). |
+| `POST /ack` | Grant a pending acknowledgement — JSON body `{"approval_id": "<32-hex>"}`. |
+
+`POST /ack` is the dashboard's only write surface: it shares the same bearer
+gate as every read route (an unauthenticated post gets a `401` and never
+reaches the granter), 404s when `create_server` was built with no `ack_granter`
+seam wired, and rejects a malformed, oversized, or non-32-hex body with a `400`
+before invoking the granter. It is enabled only when both `ack_granter` and
+`pending_acks_source` are passed to `create_server`; the default build exposes
+neither route.
 
 There is no `windbreak run` CLI wiring for the dashboard process yet --
 `create_server` is a library entry point an operator boots directly. To serve
