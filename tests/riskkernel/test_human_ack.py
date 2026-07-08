@@ -312,6 +312,43 @@ def test_acknowledged_intent_ids_returns_a_frozenset_of_granted_intents() -> Non
     assert result == frozenset({"intent-granted"})
 
 
+# --- pending_acks (issue #57) ---------------------------------------------------------
+
+
+def test_pending_acks_returns_exactly_the_still_pending_requests() -> None:
+    """`pending_acks(now)` returns exactly the requests that are neither
+    granted nor lapsed -- not the granted one, not the lapsed one -- as a
+    tuple of `PendingHumanAck` (issue #57).
+
+    `HumanAckQueue` does not yet expose `pending_acks`, so this call fails
+    with `AttributeError: 'HumanAckQueue' object has no attribute
+    'pending_acks'` -- the expected Gate 1 RED state for issue #57's ack
+    orchestration (`windbreak/riskkernel/ack_flow.py`'s `AckFileWatcher` and
+    a future dashboard `/acks` view both need this accessor).
+    """
+    writer = InMemoryKernelLedgerWriter()
+    releaser = _SpyReleaser()
+    queue = HumanAckQueue(writer=writer, releaser=releaser, ttl_seconds=_TTL_SECONDS)
+    # `lapsed`/`granted` are requested at `now=0` (expiring at `_TTL_SECONDS`);
+    # `still_pending` is requested later, at `now=1_000` (expiring at
+    # `_TTL_SECONDS + 1_000`), so lapsing everything due by `_TTL_SECONDS`
+    # leaves it -- and only it -- still pending.
+    queue.request_ack(intent_id="intent-lapsed", worst_case_cost=MoneyMicros(1), now=0)
+    granted = queue.request_ack(
+        intent_id="intent-granted", worst_case_cost=MoneyMicros(1), now=0
+    )
+    still_pending = queue.request_ack(
+        intent_id="intent-still-pending", worst_case_cost=MoneyMicros(1), now=1_000
+    )
+    queue.grant(approval_id=granted.approval_id, now=1)
+    queue.expire_due(now=_TTL_SECONDS)
+
+    result = queue.pending_acks(now=_TTL_SECONDS)
+
+    assert isinstance(result, tuple)
+    assert result == (still_pending,)
+
+
 # --- Real ReservationLedger integration -----------------------------------------------
 
 

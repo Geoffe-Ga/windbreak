@@ -35,6 +35,7 @@ from windbreak.connector.kalshi.adapter import (
 )
 from windbreak.connector.kalshi.client import KalshiClient
 from windbreak.connector.kalshi.normalize import normalize_exchange_status
+from windbreak.net.allowlist import OutboundAllowlist
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -478,7 +479,11 @@ def _connector_over(
     end-to-end in `test_client_resilience.py`.
     """
     client = KalshiClient(
-        base_url="https://fake.test", timeout=5, session=session, resilience=None
+        base_url="https://fake.test",
+        timeout=5,
+        session=session,
+        resilience=None,
+        allowlist=OutboundAllowlist(frozenset({"fake.test"})),
     )
     return KalshiConnector(client, ledger, clock=clock)
 

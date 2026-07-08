@@ -62,6 +62,12 @@ _LIVE_TRADING_MODES: frozenset[Mode] = frozenset({Mode.LIVE_MICRO, Mode.LIVE})
 #: is attempted while balance semantics are not fully known.
 _SEMANTICS_UNKNOWN_REASON = "balance semantics not fully known in live mode"
 
+#: The veto reason ``human_ack_satisfied`` raises for an unacknowledged
+#: over-threshold live order. Public so the ack-flow coordinator
+#: (:mod:`windbreak.riskkernel.ack_flow`) can key its HELD-vs-vetoed decision off
+#: this exact string without duplicating the literal.
+HUMAN_ACK_REQUIRED_REASON = "human acknowledgement required"
+
 
 class _UnprovableCostError(Exception):
     """Raised when an order's worst-case cost cannot be proven (fail-closed).
@@ -364,7 +370,17 @@ class _ModePermissionCeiling:
             cost = _order_cost(intent, context)
         except _UnprovableCostError:
             return _veto(_UNPROVABLE_REASON)
-        if (context.account.total_exposure + cost) > context.limits.micro_cap:
+        # The ceiling must count capital already reserved against other in-flight
+        # approvals (``pending_kernel_reservations``, stamped from ledger truth by
+        # ``ApprovalPipeline._effective_context`` inside the ledger lock), not just
+        # settled exposure: two intents each under the cap alone can otherwise
+        # jointly breach it. All-integer ``MoneyMicros`` math (SPEC S6.1).
+        projected_exposure = (
+            context.account.total_exposure
+            + context.account.pending_kernel_reservations
+            + cost
+        )
+        if projected_exposure > context.limits.micro_cap:
             return _veto("live-micro exposure ceiling exceeded")
         return _approve()
 
@@ -763,7 +779,7 @@ class _HumanAckSatisfied:
         except _UnprovableCostError:
             return _veto(_UNPROVABLE_REASON)
         if cost > threshold and intent.intent_id not in context.acknowledged_intent_ids:
-            return _veto("human acknowledgement required")
+            return _veto(HUMAN_ACK_REQUIRED_REASON)
         return _approve()
 
 

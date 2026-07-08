@@ -107,6 +107,7 @@ from windbreak.connector.validation import (
     SchemaValidator,
     kalshi_default_schema_registry,
 )
+from windbreak.net.allowlist import OutboundAllowlist
 from windbreak.numeric import ContractCentis, MoneyMicros, PricePips
 
 if TYPE_CHECKING:
@@ -128,6 +129,10 @@ _REPO_ROOT: Final = Path(__file__).resolve().parents[2]
 _LINT_SCRIPT_PATH: Final = _REPO_ROOT / "scripts" / "lint_no_floats.py"
 
 _FAKE_BASE_URL: Final = "https://fake-kalshi.test"
+
+#: Allowlist admitting the fake host, now that ``KalshiClient`` enforces its
+#: base URL host at construction (issue #57).
+_FAKE_ALLOWLIST: Final = OutboundAllowlist(frozenset({"fake-kalshi.test"}))
 
 #: The injected connector clock every cell below uses; distinct from the
 #: fixed `Date` header `FakeKalshiSession` serves so a test can tell them apart.
@@ -358,14 +363,21 @@ def _rate_limited_client(
         wall_clock=_clock,
     )
     return KalshiClient(
-        base_url=_FAKE_BASE_URL, timeout=5, session=session, resilience=resilience
+        base_url=_FAKE_BASE_URL,
+        allowlist=_FAKE_ALLOWLIST,
+        timeout=5,
+        session=session,
+        resilience=resilience,
     )
 
 
 def _build_fixture_connector() -> KalshiConnector:
     """Build a `KalshiConnector` over the recorded fixtures via `FakeKalshiSession`."""
     client = KalshiClient(
-        base_url=_FAKE_BASE_URL, timeout=5, session=FakeKalshiSession()
+        base_url=_FAKE_BASE_URL,
+        allowlist=_FAKE_ALLOWLIST,
+        timeout=5,
+        session=FakeKalshiSession(),
     )
     return KalshiConnector(client, InMemoryEventLedgerWriter(), clock=_clock)
 
@@ -431,7 +443,11 @@ def _kalshi_list_markets_error() -> None:
         }
     )
     client = KalshiClient(
-        base_url=_FAKE_BASE_URL, timeout=5, session=session, resilience=None
+        base_url=_FAKE_BASE_URL,
+        allowlist=_FAKE_ALLOWLIST,
+        timeout=5,
+        session=session,
+        resilience=None,
     )
     connector = KalshiConnector(client, InMemoryEventLedgerWriter(), clock=_clock)
 
@@ -478,7 +494,11 @@ def _kalshi_list_markets_malformed() -> None:
         }
     )
     client = KalshiClient(
-        base_url=_FAKE_BASE_URL, timeout=5, session=session, resilience=None
+        base_url=_FAKE_BASE_URL,
+        allowlist=_FAKE_ALLOWLIST,
+        timeout=5,
+        session=session,
+        resilience=None,
     )
     ledger = InMemoryEventLedgerWriter()
     connector = KalshiConnector(client, ledger, clock=_clock)
@@ -507,7 +527,11 @@ def _kalshi_list_markets_schema_drift() -> None:
         kalshi_default_schema_registry(), ledger, wall_clock=_clock
     )
     client = KalshiClient(
-        base_url=_FAKE_BASE_URL, timeout=5, session=session, validator=validator
+        base_url=_FAKE_BASE_URL,
+        allowlist=_FAKE_ALLOWLIST,
+        timeout=5,
+        session=session,
+        validator=validator,
     )
     connector = KalshiConnector(client, InMemoryEventLedgerWriter(), clock=_clock)
 
@@ -575,7 +599,11 @@ def _kalshi_get_market_malformed() -> None:
         }
     )
     client = KalshiClient(
-        base_url=_FAKE_BASE_URL, timeout=5, session=session, resilience=None
+        base_url=_FAKE_BASE_URL,
+        allowlist=_FAKE_ALLOWLIST,
+        timeout=5,
+        session=session,
+        resilience=None,
     )
     ledger = InMemoryEventLedgerWriter()
     connector = KalshiConnector(client, ledger, clock=_clock)
@@ -603,7 +631,11 @@ def _kalshi_get_market_schema_drift() -> None:
         kalshi_default_schema_registry(), ledger, wall_clock=_clock
     )
     client = KalshiClient(
-        base_url=_FAKE_BASE_URL, timeout=5, session=session, validator=validator
+        base_url=_FAKE_BASE_URL,
+        allowlist=_FAKE_ALLOWLIST,
+        timeout=5,
+        session=session,
+        validator=validator,
     )
     connector = KalshiConnector(client, InMemoryEventLedgerWriter(), clock=_clock)
 
@@ -672,6 +704,7 @@ def _kalshi_get_order_book_malformed() -> None:
     )
     client = KalshiClient(
         base_url=_FAKE_BASE_URL,
+        allowlist=_FAKE_ALLOWLIST,
         timeout=5,
         session=session,
         resilience_policy=_resilience_policy(
@@ -704,7 +737,11 @@ def _kalshi_get_order_book_schema_drift() -> None:
         kalshi_default_schema_registry(), ledger, wall_clock=_clock
     )
     client = KalshiClient(
-        base_url=_FAKE_BASE_URL, timeout=5, session=session, validator=validator
+        base_url=_FAKE_BASE_URL,
+        allowlist=_FAKE_ALLOWLIST,
+        timeout=5,
+        session=session,
+        validator=validator,
     )
     connector = KalshiConnector(client, InMemoryEventLedgerWriter(), clock=_clock)
 
@@ -734,7 +771,11 @@ def _kalshi_get_exchange_status_error() -> None:
         {"/exchange/status": [_Resp(400, {"error": "bad request"})]}
     )
     client = KalshiClient(
-        base_url=_FAKE_BASE_URL, timeout=5, session=session, resilience=None
+        base_url=_FAKE_BASE_URL,
+        allowlist=_FAKE_ALLOWLIST,
+        timeout=5,
+        session=session,
+        resilience=None,
     )
     connector = KalshiConnector(client, InMemoryEventLedgerWriter(), clock=_clock)
 
@@ -769,6 +810,7 @@ def _kalshi_get_exchange_status_malformed() -> None:
     )
     client = KalshiClient(
         base_url=_FAKE_BASE_URL,
+        allowlist=_FAKE_ALLOWLIST,
         timeout=5,
         session=session,
         resilience_policy=_resilience_policy(
@@ -794,7 +836,11 @@ def _kalshi_get_exchange_status_schema_drift() -> None:
         kalshi_default_schema_registry(), ledger, wall_clock=_clock
     )
     client = KalshiClient(
-        base_url=_FAKE_BASE_URL, timeout=5, session=session, validator=validator
+        base_url=_FAKE_BASE_URL,
+        allowlist=_FAKE_ALLOWLIST,
+        timeout=5,
+        session=session,
+        validator=validator,
     )
     connector = KalshiConnector(client, InMemoryEventLedgerWriter(), clock=_clock)
 
@@ -818,7 +864,11 @@ def _kalshi_get_exchange_time_error() -> None:
         {"/exchange/status": [_Resp(400, {"error": "bad request"})]}
     )
     client = KalshiClient(
-        base_url=_FAKE_BASE_URL, timeout=5, session=session, resilience=None
+        base_url=_FAKE_BASE_URL,
+        allowlist=_FAKE_ALLOWLIST,
+        timeout=5,
+        session=session,
+        resilience=None,
     )
     connector = KalshiConnector(client, InMemoryEventLedgerWriter(), clock=_clock)
 
@@ -854,6 +904,7 @@ def _kalshi_get_exchange_time_malformed() -> None:
     )
     client = KalshiClient(
         base_url=_FAKE_BASE_URL,
+        allowlist=_FAKE_ALLOWLIST,
         timeout=5,
         session=session,
         resilience_policy=_resilience_policy(
@@ -879,7 +930,11 @@ def _kalshi_get_exchange_time_schema_drift() -> None:
         kalshi_default_schema_registry(), ledger, wall_clock=_clock
     )
     client = KalshiClient(
-        base_url=_FAKE_BASE_URL, timeout=5, session=session, validator=validator
+        base_url=_FAKE_BASE_URL,
+        allowlist=_FAKE_ALLOWLIST,
+        timeout=5,
+        session=session,
+        validator=validator,
     )
     connector = KalshiConnector(client, InMemoryEventLedgerWriter(), clock=_clock)
 
@@ -990,7 +1045,11 @@ def _kalshi_get_fee_model_malformed() -> None:
         {"/series/KXBAD": [_Resp(200, _read_kalshi_fixture("series_KXBAD.json"))]}
     )
     client = KalshiClient(
-        base_url=_FAKE_BASE_URL, timeout=5, session=session, resilience=None
+        base_url=_FAKE_BASE_URL,
+        allowlist=_FAKE_ALLOWLIST,
+        timeout=5,
+        session=session,
+        resilience=None,
     )
     connector = KalshiConnector(client, InMemoryEventLedgerWriter(), clock=_clock)
 
@@ -1007,7 +1066,11 @@ def _kalshi_get_fee_model_schema_drift() -> None:
         kalshi_default_schema_registry(), ledger, wall_clock=_clock
     )
     client = KalshiClient(
-        base_url=_FAKE_BASE_URL, timeout=5, session=session, validator=validator
+        base_url=_FAKE_BASE_URL,
+        allowlist=_FAKE_ALLOWLIST,
+        timeout=5,
+        session=session,
+        validator=validator,
     )
     connector = KalshiConnector(client, InMemoryEventLedgerWriter(), clock=_clock)
 
@@ -1406,7 +1469,9 @@ def test_kalshi_order_book_cosmetic_schema_drift_is_tolerated_not_halted() -> No
             "/orderbook": [_Resp(200, drift_payload)],
         }
     )
-    client = KalshiClient(base_url=_FAKE_BASE_URL, timeout=5, session=session)
+    client = KalshiClient(
+        base_url=_FAKE_BASE_URL, allowlist=_FAKE_ALLOWLIST, timeout=5, session=session
+    )
     connector = KalshiConnector(client, InMemoryEventLedgerWriter(), clock=_clock)
 
     book = connector.get_order_book("KXFED-24DEC")

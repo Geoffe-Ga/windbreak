@@ -38,9 +38,14 @@ from windbreak.alerts.sinks import (
     _https_post,
     _smtp_send,
 )
+from windbreak.net.allowlist import OutboundAllowlist
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+
+#: Allowlist admitting the ntfy host every ``TestNtfySink`` construction uses,
+#: now that ``NtfySink`` requires an explicit outbound allowlist (issue #57).
+_NTFY_ALLOWLIST = OutboundAllowlist(frozenset({"ntfy.example.com"}))
 
 
 class _FakeHTTPSResponse:
@@ -128,7 +133,7 @@ class TestNtfySink:
             return 200
 
         config = NtfySinkConfig(base_url="https://ntfy.example.com", topic="alerts")
-        sink = NtfySink(config, transport=spy_transport)
+        sink = NtfySink(config, transport=spy_transport, allowlist=_NTFY_ALLOWLIST)
 
         sink.send(AlertType.HALT_KILL, AlertSeverity.CRITICAL, "kill switch engaged")
 
@@ -146,7 +151,7 @@ class TestNtfySink:
             return 500
 
         config = NtfySinkConfig(base_url="https://ntfy.example.com", topic="alerts")
-        sink = NtfySink(config, transport=failing_transport)
+        sink = NtfySink(config, transport=failing_transport, allowlist=_NTFY_ALLOWLIST)
 
         with pytest.raises(SinkSendError):
             sink.send(AlertType.VETO, AlertSeverity.WARNING, "vetoed")
@@ -158,10 +163,72 @@ class TestNtfySink:
             raise OSError("connection refused")
 
         config = NtfySinkConfig(base_url="https://ntfy.example.com", topic="alerts")
-        sink = NtfySink(config, transport=raising_transport)
+        sink = NtfySink(config, transport=raising_transport, allowlist=_NTFY_ALLOWLIST)
 
         with pytest.raises(SinkSendError):
             sink.send(AlertType.VETO, AlertSeverity.WARNING, "vetoed")
+
+
+class TestNtfySinkAllowlist:
+    """Failing-first tests for `NtfySink`'s required outbound allowlist gate
+    (issue #57, RED).
+
+    `NtfySink.__init__` does not yet accept (much less *require*) an
+    `allowlist` keyword, so every construction call below that passes one
+    fails with `TypeError: __init__() got an unexpected keyword argument
+    'allowlist'` -- the expected Gate 1 RED state for issue #57.
+
+    NOTE (flagged for implementation to confirm): making `allowlist`
+    *required* (no default) means every pre-existing `NtfySink(config, ...)`
+    call in `TestNtfySink` above will need updating once this lands -- a
+    wide blast radius on this file's existing (currently-green) tests, out
+    of scope for this test-authorship pass.
+    """
+
+    def test_construction_against_an_off_list_host_raises_and_never_transports(
+        self,
+    ) -> None:
+        """An `NtfySink` built against a `base_url` host absent from the
+        supplied `allowlist` raises at construction, and the transport spy
+        is never invoked.
+        """
+        from windbreak.net.allowlist import EgressDeniedError, OutboundAllowlist
+
+        calls: list[tuple[str, bytes, Mapping[str, str]]] = []
+
+        def spy_transport(url: str, body: bytes, headers: Mapping[str, str]) -> int:
+            calls.append((url, body, dict(headers)))
+            return 200
+
+        allowlist = OutboundAllowlist(frozenset({"some-other-host.example.com"}))
+        config = NtfySinkConfig(base_url="https://ntfy.example.com", topic="alerts")
+
+        with pytest.raises(EgressDeniedError):
+            NtfySink(config, transport=spy_transport, allowlist=allowlist)
+
+        assert calls == []
+
+    def test_construction_against_an_allowlisted_host_still_constructs_and_sends(
+        self,
+    ) -> None:
+        """An `NtfySink` whose `base_url` host *is* on the allowlist
+        constructs cleanly and sends exactly as before.
+        """
+        from windbreak.net.allowlist import OutboundAllowlist
+
+        calls: list[tuple[str, bytes, Mapping[str, str]]] = []
+
+        def spy_transport(url: str, body: bytes, headers: Mapping[str, str]) -> int:
+            calls.append((url, body, dict(headers)))
+            return 200
+
+        allowlist = OutboundAllowlist(frozenset({"ntfy.example.com"}))
+        config = NtfySinkConfig(base_url="https://ntfy.example.com", topic="alerts")
+        sink = NtfySink(config, transport=spy_transport, allowlist=allowlist)
+
+        sink.send(AlertType.HALT_KILL, AlertSeverity.CRITICAL, "kill switch engaged")
+
+        assert len(calls) == 1
 
 
 class TestWebhookSink:
@@ -411,6 +478,7 @@ class TestLogOnlySink:
         lambda: NtfySink(
             NtfySinkConfig(base_url="https://n.example.com", topic="t"),
             transport=lambda *_args: 200,
+            allowlist=OutboundAllowlist(frozenset({"n.example.com"})),
         ),
         lambda: WebhookSink(
             WebhookSinkConfig(url="https://w.example.com"),

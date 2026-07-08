@@ -27,6 +27,7 @@ from windbreak.alerts.registry import AlertSeverity
 
 if TYPE_CHECKING:
     from windbreak.alerts.registry import AlertType
+    from windbreak.net.allowlist import OutboundAllowlist
 
 #: Seconds to wait for an alert transport (HTTPS or SMTP) to respond.
 _TRANSPORT_TIMEOUT_SECONDS: Final = 10.0
@@ -222,15 +223,29 @@ class NtfySink:
     name = "ntfy"
 
     def __init__(
-        self, config: NtfySinkConfig, *, transport: HttpTransport = _https_post
+        self,
+        config: NtfySinkConfig,
+        *,
+        transport: HttpTransport = _https_post,
+        allowlist: OutboundAllowlist,
     ) -> None:
-        """Initialize the sink.
+        """Initialize the sink, validating the configured host up front.
 
         Args:
             config: The ntfy server and topic settings.
             transport: The HTTP transport to use. Defaults to
                 :func:`_https_post`.
+            allowlist: The required outbound-network allowlist the configured
+                ``base_url`` host (and its ``https`` scheme) must satisfy. A
+                sink's host is supplied here rather than derived from config,
+                since the SPEC S16 ``AlertSink`` schema carries no ``base_url``.
+
+        Raises:
+            EgressDeniedError: If ``config.base_url``'s host is off the
+                allowlist or its scheme is not http(s) -- rejected at
+                construction, before any network call.
         """
+        allowlist.require(config.base_url)
         self._config = config
         self._transport = transport
 
