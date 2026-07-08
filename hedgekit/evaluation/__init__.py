@@ -15,9 +15,12 @@ power analysis at ``N=300`` (:mod:`.power`) rendered into the report. All of it
 is exact scaled-integer / :class:`fractions.Fraction` arithmetic with a seeded,
 byte-identical PRNG (SPEC §3.5) -- no float anywhere on a value path.
 
-Two metric slots remain deliberate stubs returning :data:`NOT_IMPLEMENTED`,
-pending their own issues: the selection-track ``traded_vs_skipped_brier_delta``
-and the execution-track ``fill_vs_model_slippage`` (#52).
+The selection track is measured in #53: forecasts are partitioned into
+selection-bias :class:`Cohort`s with per-cohort Brier scores, the headline
+traded-vs-skipped Brier delta, and counterfactual abstention-wisdom scoring, all
+rendered into the report. One metric slot remains a deliberate stub returning
+:data:`NOT_IMPLEMENTED`, pending its own issue: the execution-track
+``fill_vs_model_slippage``.
 
 Symbols are re-exported explicitly via ``__all__`` so ``mypy --strict``'s
 no-implicit-reexport rule is satisfied.
@@ -25,6 +28,13 @@ no-implicit-reexport rule is satisfied.
 
 from __future__ import annotations
 
+from hedgekit.evaluation.abstention import (
+    AbstentionScore,
+    AbstentionSummary,
+    AbstentionVerdict,
+    score_abstentions,
+    summarize_abstentions,
+)
 from hedgekit.evaluation.baselines import (
     UNIFORM_BASELINE_PPM,
     BaselineForecast,
@@ -42,6 +52,18 @@ from hedgekit.evaluation.bootstrap import (
     brier_skill_ci,
     run_clustered_bootstrap,
     validate_confidence_ppm,
+)
+from hedgekit.evaluation.cohorts import (
+    ABOVE_THRESHOLD_MIN_EDGE_PPM,
+    CATEGORY_EXCLUSION_REASONS,
+    LIQUIDITY_EXCLUSION_REASONS,
+    UNDEFINED,
+    Cohort,
+    CohortBrier,
+    assign_cohorts,
+    cohort_brier_table,
+    mean_brier_over,
+    traded_vs_skipped_brier_delta,
 )
 from hedgekit.evaluation.metrics import (
     ECE_BIN_COUNT,
@@ -88,6 +110,7 @@ from hedgekit.evaluation.registry import (
 from hedgekit.evaluation.report import (
     NO_EDGE_BANNER,
     POWER_ANALYSIS_SEED,
+    SKIPPED_OUTPERFORMED_BANNER,
     EvaluationReport,
     MetricResult,
     TrackReport,
@@ -113,13 +136,22 @@ from hedgekit.evaluation.temporal import (
     enforce_temporal_integrity,
     resolution_sequences_from_events,
 )
+from hedgekit.evaluation.windows import (
+    MixedObservationWindowError,
+    WindowedForecasts,
+    combine,
+    resolve_window,
+)
 
 __all__ = [
+    "ABOVE_THRESHOLD_MIN_EDGE_PPM",
     "BOOTSTRAP_REPLICATES",
+    "CATEGORY_EXCLUSION_REASONS",
     "ECE_BIN_COUNT",
     "EDGE_BUCKET_EDGES_PPM",
     "EVALUATION_RECORD_REJECTED",
     "HEADLINE_SKILL_METRIC",
+    "LIQUIDITY_EXCLUSION_REASONS",
     "NOT_IMPLEMENTED",
     "NO_EDGE_BANNER",
     "POWER_ANALYSIS_SEED",
@@ -127,14 +159,21 @@ __all__ = [
     "POWER_TARGET_PPM",
     "PRICE_BUCKET_COUNT",
     "PRICE_BUCKET_EDGES_PIPS",
+    "SKIPPED_OUTPERFORMED_BANNER",
+    "UNDEFINED",
     "UNIFORM_BASELINE_PPM",
     "Z_80_PPM",
     "Z_975_PPM",
+    "AbstentionScore",
+    "AbstentionSummary",
+    "AbstentionVerdict",
     "BaselineForecast",
     "BaselineInputs",
     "BaselineSet",
     "BootstrapSample",
     "ClusteredCiResult",
+    "Cohort",
+    "CohortBrier",
     "EdgeBucket",
     "EvaluationInputs",
     "EvaluationReport",
@@ -144,6 +183,7 @@ __all__ = [
     "MetricResult",
     "MetricSpec",
     "MetricValue",
+    "MixedObservationWindowError",
     "NotImplementedSentinel",
     "ObservationWindow",
     "PowerAnalysis",
@@ -162,11 +202,15 @@ __all__ = [
     "TemporalGateResult",
     "Track",
     "TrackReport",
+    "WindowedForecasts",
+    "assign_cohorts",
     "baseline_inputs_from_fixture",
     "brier_skill",
     "brier_skill_ci",
     "calibration_intercept",
     "calibration_slope",
+    "cohort_brier_table",
+    "combine",
     "compute_baselines",
     "deployment_sequence_from_fixture",
     "edge_bucket_report",
@@ -174,6 +218,7 @@ __all__ = [
     "expected_calibration_error",
     "gate_evaluation_inputs",
     "mean_brier",
+    "mean_brier_over",
     "mean_log_score",
     "power_analysis",
     "price_bucket_report",
@@ -181,10 +226,14 @@ __all__ = [
     "reliability_diagram",
     "resolution_sequences_from_events",
     "resolutions_from_fixture",
+    "resolve_window",
     "resolved_forecast_terms",
     "run_clustered_bootstrap",
     "run_evaluation",
+    "score_abstentions",
     "settlement_events_from_fixture",
     "sharpness",
+    "summarize_abstentions",
+    "traded_vs_skipped_brier_delta",
     "validate_confidence_ppm",
 ]
