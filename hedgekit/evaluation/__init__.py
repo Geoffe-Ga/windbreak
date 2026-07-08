@@ -17,6 +17,15 @@ no-implicit-reexport rule is satisfied.
 
 from __future__ import annotations
 
+from hedgekit.evaluation.baselines import (
+    UNIFORM_BASELINE_PPM,
+    BaselineForecast,
+    BaselineInputs,
+    BaselineSet,
+    QuoteSnapshot,
+    baseline_inputs_from_fixture,
+    compute_baselines,
+)
 from hedgekit.evaluation.registry import (
     HEADLINE_SKILL_METRIC,
     NOT_IMPLEMENTED,
@@ -36,24 +45,46 @@ from hedgekit.evaluation.report import (
     TrackReport,
     run_evaluation,
 )
-from hedgekit.evaluation.resolution import ResolutionOutcome, resolutions_from_fixture
+from hedgekit.evaluation.resolution import (
+    MarketResolution,
+    ResolutionOutcome,
+    ResolutionStatus,
+    ResolutionTracker,
+    SettlementEvent,
+    SettlementEventType,
+    resolutions_from_fixture,
+    settlement_events_from_fixture,
+)
 
 __all__ = [
     "HEADLINE_SKILL_METRIC",
     "NOT_IMPLEMENTED",
     "NO_EDGE_BANNER",
+    "UNIFORM_BASELINE_PPM",
+    "BaselineForecast",
+    "BaselineInputs",
+    "BaselineSet",
     "EvaluationInputs",
     "EvaluationReport",
     "FixtureForecast",
+    "MarketResolution",
     "MetricResult",
     "MetricSpec",
     "MetricValue",
     "NotImplementedSentinel",
     "ObservationWindow",
+    "QuoteSnapshot",
     "ResolutionOutcome",
+    "ResolutionStatus",
+    "ResolutionTracker",
+    "SettlementEvent",
+    "SettlementEventType",
     "Track",
     "TrackReport",
+    "baseline_inputs_from_fixture",
+    "compute_baselines",
     "registered_metrics",
     "resolutions_from_fixture",
     "run_evaluation",
+    "settlement_events_from_fixture",
 ]
