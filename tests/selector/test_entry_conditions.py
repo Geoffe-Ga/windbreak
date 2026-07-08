@@ -255,7 +255,7 @@ def _baseline_inputs(
         risk_config=(
             risk_config if risk_config is not None else _baseline_risk_config()
         ),
-        correlation_tags=("entry-test",),
+        correlation_tags=(),
     )
 
 

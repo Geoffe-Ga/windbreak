@@ -90,5 +90,8 @@
   "risk_config": {
     "config_hash": "sha256:risk-config-a"
   },
-  "correlation_tags": ["fed", "rates", "macro"]
+  "correlation_tags": [
+    {"bucket_id": "fed-policy", "source": "llm", "tagged_at": "2024-12-10T12:00:00.000000Z"}
+  ],
+  "bucket_peers": []
 }

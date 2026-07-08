@@ -141,7 +141,7 @@ def _wide_spread_all_pass_inputs() -> SelectorInputs:
         slippage_model=slippage_model,
         positions=positions,
         risk_config=risk_config,
-        correlation_tags=("exits-test",),
+        correlation_tags=(),
     )
 
 

@@ -23,11 +23,19 @@ zero.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 from typing import TYPE_CHECKING
 
 from hedgekit.ledger.events import canonical_json
 from hedgekit.numeric import ContractCentis, MoneyMicros, ProbabilityPpm
+from hedgekit.selector.correlation import (
+    BucketExposureEntry,
+    CorrelationTag,
+    TagSource,
+    aggregate_bucket_exposure,
+    effective_buckets,
+)
 from hedgekit.selector.edge import (
     EdgeFigures,
     InsufficientDepth,
@@ -85,7 +93,9 @@ _SIZED_SUFFIX = "sized"
 _PPM_PER_PIP = 100
 
 __all__ = [
+    "BucketExposureEntry",
     "CloseTrigger",
+    "CorrelationTag",
     "ExecutionStyleDecision",
     "FeeModelInput",
     "NormalizedOrderIntent",
@@ -95,10 +105,13 @@ __all__ = [
     "SelectorInputs",
     "SelectorOrderIntent",
     "SlippageModelInput",
+    "TagSource",
+    "aggregate_bucket_exposure",
     "build_close_intent",
     "clip_to_caps",
     "decide_execution_style",
     "dispersion_scale",
+    "effective_buckets",
     "kelly_size",
     "select",
     "serialize_decision",
@@ -304,7 +317,11 @@ def _size_and_emit(
     probe-priced edge, clips it through the notional/participation caps -- the
     notional caps measured at the fill's worst-case per-contract price
     (:func:`_cap_reference_price_ppm`) so they hold at whatever price the
-    participation-limited fill actually pays -- and, when the size survives,
+    participation-limited fill actually pays. The per-bucket cap's exposure is
+    the real correlation-bucket exposure aggregated from the target's effective
+    buckets and ``inputs.bucket_peers`` (SPEC S9.9), overriding the placeholder
+    ``positions.bucket_exposure`` and naming the binding bucket in the pinned
+    reason. When the size survives,
     re-prices the fill at that final size before emitting one intent. A size
     clipped to zero, an unfillable re-walk (defensive), or a net edge that no
     longer clears the floor at the final size each decline with a pinned reason
@@ -331,12 +348,22 @@ def _size_and_emit(
         dispersion_scale_ppm=g_ppm,
         above_floor_capital_micros=inputs.positions.above_floor_capital_micros,
     )
+    target_buckets = effective_buckets(inputs.correlation_tags)
+    bucket_used, binding_bucket = aggregate_bucket_exposure(
+        target_buckets, inputs.bucket_peers
+    )
+    bucket_cap_name = (
+        f"per_bucket:{binding_bucket}" if binding_bucket is not None else "per_bucket"
+    )
     clip = clip_to_caps(
         raw,
         executable_price_ppm=_cap_reference_price_ppm(inputs.order_book),
         order_book=inputs.order_book,
         risk_config=risk,
-        positions=inputs.positions,
+        positions=dataclasses.replace(
+            inputs.positions, bucket_exposure=MoneyMicros(bucket_used)
+        ),
+        bucket_cap_name=bucket_cap_name,
     )
     sizing_reason = _sizing_reason(raw, g_ppm, clip)
     if clip.size.value == 0:

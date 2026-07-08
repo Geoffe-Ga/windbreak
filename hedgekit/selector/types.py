@@ -59,6 +59,7 @@ if TYPE_CHECKING:
     from hedgekit.connector.models import OrderBookSnapshot
     from hedgekit.forecast.records import ForecastRecord
     from hedgekit.numeric import MoneyMicros
+    from hedgekit.selector.correlation import BucketExposureEntry, CorrelationTag
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,7 +141,13 @@ class PositionReadModelInput:
             in micros; the total-deployed cap's headroom is measured against it.
         market_exposure: Current exposure to the single market, in micros.
         event_exposure: Current exposure to the parent event, in micros.
-        bucket_exposure: Current exposure to the correlation bucket, in micros.
+        bucket_exposure: The correlation-bucket exposure the per-bucket cap
+            clips against, in micros. Since issue #47 this carried value is a
+            placeholder: :func:`~hedgekit.selector.select` computes the real
+            bucket exposure from ``correlation_tags`` + ``bucket_peers`` (SPEC
+            S9.9) and overrides this field before clipping, superseding whatever
+            was passed here (the documented-supersession precedent this package
+            already applies elsewhere).
         total_exposure: Current total portfolio exposure, in micros; the
             total-deployed cap's used capital.
         notional_today: Notional traded so far today, in micros; the
@@ -257,8 +264,15 @@ class SelectorInputs:
         positions: The current-positions capital/exposure figures the sizing
             stage reads (SPEC S9.5/S9.6).
         risk_config: The risk configuration (and its hash) to honor.
-        correlation_tags: Correlation/event tags grouping related markets, as
-            an immutable tuple.
+        correlation_tags: The target market's own correlation-bucket tags (SPEC
+            S9.9), as an immutable tuple. Resolved via
+            :func:`~hedgekit.selector.correlation.effective_buckets` (a human
+            tag supersedes every LLM tag) into the buckets the per-bucket cap
+            aggregates ``bucket_peers`` against.
+        bucket_peers: The peer markets' bucket-exposure entries the per-bucket
+            cap sums over (SPEC S9.9); empty when no peer exposure is known, in
+            which case the aggregated bucket exposure is zero. Trailing and
+            defaulted so every pre-#47 construction is unaffected.
     """
 
     forecast: ForecastRecord
@@ -268,7 +282,8 @@ class SelectorInputs:
     slippage_model: SlippageModelInput
     positions: PositionReadModelInput
     risk_config: RiskConfigInput
-    correlation_tags: tuple[str, ...]
+    correlation_tags: tuple[CorrelationTag, ...]
+    bucket_peers: tuple[BucketExposureEntry, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
