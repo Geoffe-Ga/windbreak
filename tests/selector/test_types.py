@@ -1,8 +1,10 @@
-"""Tests for hedgekit.selector's core types (issues #43/#44).
+"""Tests for hedgekit.selector's core types (issues #43/#44/#45).
 
 Pins the frozen/slots invariants of `SelectorInputs`, `SelectorDecision`, the
-three issue-#44 concrete seam carriers (`FeeModelInput`, `SlippageModelInput`,
-`RiskConfigInput`) and the still-opaque `PositionReadModelRef`, the
+issue-#44 concrete seam carriers (`FeeModelInput`, `SlippageModelInput`,
+`RiskConfigInput`) and the issue-#45 `PositionReadModelInput` (which replaces
+the issue-#43 opaque `PositionReadModelRef` placeholder now that
+concentration/sizing arithmetic reads its nine fields), the
 `NormalizedOrderIntent` type alias identity with
 `hedgekit.riskkernel.checks.OrderIntent`, and that `fixture_loader.load_inputs`
 round-trips both committed bundles into real, post-init-validated
@@ -21,11 +23,12 @@ from hedgekit.config.schema import RiskConfig
 from hedgekit.connector.fees import FeeModel
 from hedgekit.connector.models import OrderBookSnapshot
 from hedgekit.forecast.records import ForecastRecord
+from hedgekit.numeric import MoneyMicros
 from hedgekit.riskkernel.checks import OrderIntent
 from hedgekit.selector import NormalizedOrderIntent, SelectorDecision
 from hedgekit.selector.types import (
     FeeModelInput,
-    PositionReadModelRef,
+    PositionReadModelInput,
     RiskConfigInput,
     SlippageModelInput,
 )
@@ -61,6 +64,21 @@ def _slippage_model_input() -> SlippageModelInput:
 def _risk_config_input() -> RiskConfigInput:
     """Build a `RiskConfigInput` over unmodified `RiskConfig` defaults."""
     return RiskConfigInput(config=RiskConfig(), config_hash="sha256:risk-config-a")
+
+
+def _position_read_model_input() -> PositionReadModelInput:
+    """Build a `PositionReadModelInput` with nine distinct, hand-legible values."""
+    return PositionReadModelInput(
+        snapshot_id="positions-snap-0001",
+        equity_micros=MoneyMicros(500_000_000_000),
+        above_floor_capital_micros=MoneyMicros(100_000_000),
+        total_deploy_cap_micros=MoneyMicros(400_000_000_000),
+        market_exposure=MoneyMicros(1_000_000),
+        event_exposure=MoneyMicros(2_000_000),
+        bucket_exposure=MoneyMicros(3_000_000),
+        total_exposure=MoneyMicros(4_000_000),
+        notional_today=MoneyMicros(5_000_000),
+    )
 
 
 #: A stub decision's fields, factored out so every `SelectorDecision`-only
@@ -176,7 +194,7 @@ def test_selector_decision_intents_and_reasons_are_tuples() -> None:
         (_fee_model_input(), "as_of", _OTHER_AS_OF),
         (_slippage_model_input(), "per_contract_buffer_ppm", 9_999),
         (_risk_config_input(), "config_hash", "sha256:other"),
-        (PositionReadModelRef("positions-snap-0001"), "snapshot_id", "other-id"),
+        (_position_read_model_input(), "equity_micros", MoneyMicros(999)),
     ],
 )
 def test_seam_carrier_is_frozen(
@@ -193,7 +211,7 @@ def test_seam_carrier_is_frozen(
         _fee_model_input(),
         _slippage_model_input(),
         _risk_config_input(),
-        PositionReadModelRef("positions-snap-0001"),
+        _position_read_model_input(),
     ],
 )
 def test_seam_carrier_is_slotted(instance: object) -> None:
@@ -227,8 +245,19 @@ def test_risk_config_input_carries_a_real_risk_config_and_hash() -> None:
     assert risk_config.config_hash == "sha256:risk-config-a"
 
 
-def test_position_read_model_ref_preserves_its_snapshot_id() -> None:
-    """`PositionReadModelRef` stores and returns its snapshot id verbatim."""
-    ref = PositionReadModelRef("positions-snap-0001")
+def test_position_read_model_input_preserves_every_field_verbatim() -> None:
+    """`PositionReadModelInput` stores its snapshot id and all eight
+    money-valued capital/exposure fields verbatim, each still wrapped in
+    `MoneyMicros` (never unwrapped to a bare int).
+    """
+    positions = _position_read_model_input()
 
-    assert ref.snapshot_id == "positions-snap-0001"
+    assert positions.snapshot_id == "positions-snap-0001"
+    assert positions.equity_micros == MoneyMicros(500_000_000_000)
+    assert positions.above_floor_capital_micros == MoneyMicros(100_000_000)
+    assert positions.total_deploy_cap_micros == MoneyMicros(400_000_000_000)
+    assert positions.market_exposure == MoneyMicros(1_000_000)
+    assert positions.event_exposure == MoneyMicros(2_000_000)
+    assert positions.bucket_exposure == MoneyMicros(3_000_000)
+    assert positions.total_exposure == MoneyMicros(4_000_000)
+    assert positions.notional_today == MoneyMicros(5_000_000)

@@ -41,7 +41,7 @@ from hedgekit.selector.edge import EdgeFigures, compute_executable_edge
 from hedgekit.selector.entry import evaluate_entry_conditions
 from hedgekit.selector.types import (
     FeeModelInput,
-    PositionReadModelRef,
+    PositionReadModelInput,
     RiskConfigInput,
     SlippageModelInput,
 )
@@ -177,6 +177,34 @@ def _baseline_slippage_model(**overrides: object) -> SlippageModelInput:
     return SlippageModelInput(**defaults)
 
 
+def _baseline_positions(**overrides: object) -> PositionReadModelInput:
+    """Build the baseline `PositionReadModelInput`: generous enough (huge
+    equity/deploy-cap, zero exposures/notional) that none of the five
+    notional caps or the participation cap ever bind in this module's
+    scenarios -- only Kelly sizing (issue #45) or the fixed floor-to-100
+    quantization determine the emitted size.
+
+    Args:
+        **overrides: Field values overriding the generous defaults below.
+
+    Returns:
+        The constructed `PositionReadModelInput`.
+    """
+    defaults: dict[str, object] = {
+        "snapshot_id": "positions-entry-0001",
+        "equity_micros": MoneyMicros(1_000_000_000_000),
+        "above_floor_capital_micros": MoneyMicros(1_000_000_000),
+        "total_deploy_cap_micros": MoneyMicros(1_000_000_000_000),
+        "market_exposure": MoneyMicros(0),
+        "event_exposure": MoneyMicros(0),
+        "bucket_exposure": MoneyMicros(0),
+        "total_exposure": MoneyMicros(0),
+        "notional_today": MoneyMicros(0),
+    }
+    defaults.update(overrides)
+    return PositionReadModelInput(**defaults)
+
+
 def _baseline_risk_config(**overrides: object) -> RiskConfigInput:
     """Build the baseline `RiskConfigInput` over unmodified `RiskConfig` defaults.
 
@@ -197,6 +225,7 @@ def _baseline_inputs(
     order_book: OrderBookSnapshot | None = None,
     fee_model: FeeModelInput | None = None,
     slippage_model: SlippageModelInput | None = None,
+    positions: PositionReadModelInput | None = None,
     risk_config: RiskConfigInput | None = None,
 ) -> SelectorInputs:
     """Assemble the baseline `SelectorInputs`, all twelve conditions passing.
@@ -207,6 +236,8 @@ def _baseline_inputs(
         fee_model: Overriding `FeeModelInput`, or `None` for the baseline.
         slippage_model: Overriding `SlippageModelInput`, or `None` for the
             baseline.
+        positions: Overriding `PositionReadModelInput`, or `None` for the
+            generous baseline (issue #45; no cap ever binds by default).
         risk_config: Overriding `RiskConfigInput`, or `None` for the baseline.
 
     Returns:
@@ -220,7 +251,7 @@ def _baseline_inputs(
         slippage_model=(
             slippage_model if slippage_model is not None else _baseline_slippage_model()
         ),
-        positions=PositionReadModelRef("positions-entry-0001"),
+        positions=positions if positions is not None else _baseline_positions(),
         risk_config=(
             risk_config if risk_config is not None else _baseline_risk_config()
         ),
@@ -600,15 +631,57 @@ def test_forecast_live_eligible_fails_when_not_eligible_for_live() -> None:
 # --- select()-level: hand-expected deterministic intent fields --------------
 
 
-def test_select_emits_one_intent_with_hand_expected_deterministic_fields() -> None:
-    """On the all-pass baseline, `select` emits exactly one intent whose
-    price/size/max_notional/idempotency_key match hand-derived values, and two
-    in-process `select` calls over the same inputs serialize byte-identically.
+def test_select_emits_one_sized_intent_with_hand_expected_deterministic_fields() -> (
+    None
+):
+    """On an all-pass scenario shaped for hand-verifiable Kelly sizing
+    (issue #45), `select` emits exactly one intent whose
+    price/size/max_notional/idempotency_key match hand-derived values, and
+    two in-process `select` calls over the same inputs serialize
+    byte-identically.
 
-    price = marginal_price_pips = 5000 (the only level walked)
-    size = the fixed probe, 100 centis
-    max_notional = executable_cost_micros(500_000) + fee_micros(10_000)
-                  = 510_000
+    This scenario overrides three baseline fields to keep the sizing
+    arithmetic clean (matching the chief architect's own worked Kelly
+    example): `probability_ppm=500_000` (baseline default 600_000), a single
+    deep 4_500-pip ask level (baseline default 5_000-pip/1_000-centi), and
+    zero-rate fee/slippage (baseline defaults taker=10_000/buffer=2_000).
+    `vote_dispersion_ppm` stays the baseline default (0) and
+    `research_cost_micros` stays the baseline default (0).
+
+    Probe-size (100-centi) entry-check figures:
+        cost = 4_500*100 = 450_000 micros (exact); executable_price_ppm =
+            450_000 (exact, zero fee/slippage/research)
+        gross_edge_ppm = 500_000-450_000 = 50_000 = net_edge_ppm (probe)
+        net_edge_min: 50_000 >= 30_000 -> passes
+        annualized = floor(50_000*1_000_000*8760 / (450_000*48))
+                   = floor(438_000_000_000_000 / 21_600_000) = 20_277_777
+            >= 240_000 -> annualized_hurdle passes
+        ci [100_000,200_000] does not straddle 450_000; price_within_bands:
+            4_500 pips in [500,9_500] -- all twelve conditions pass.
+
+    Kelly sizing (g=dispersion_scale(0, 200_000)=1_000_000 at zero
+    dispersion; kelly_fraction_ppm=100_000 default; capital=1_000_000_000
+    from `_baseline_positions`'s default `above_floor_capital_micros`):
+        stake_micros = divide(1_000_000_000*50_000*100_000*1_000_000,
+                               550_000*10**12, floor)
+                     = divide(5*10**24, 5.5*10**17, floor) = 9_090_909
+        size_centis  = divide(9_090_909*100, 450_000, floor)
+                     = divide(909_090_900, 450_000, floor) = 2_020
+            (450_000*2_020=909_000_000; remainder=90_900 < 450_000)
+        No notional/participation cap binds (equity/deploy-cap huge, zero
+        exposures, single deep ask level) -> `binding_cap=None`; the routine
+        floor-to-100 quantization takes 2_020 -> 2_000 (final size).
+
+    Re-walking the same flat 4_500-pip level at the final size=2_000:
+        cost = 4_500*2_000 = 9_000_000 micros (exact); executable_price_ppm
+            = 450_000 (exact); fee=0 (zero-rate model)
+        net_edge_at_final_size = 500_000-450_000 = 50_000 >= 30_000 -> the
+            final-size guard passes.
+        price = marginal_price_pips = 4_500 (the only level walked)
+        size = 2_000 centis
+        max_notional = executable_cost_micros(9_000_000) + fee_micros(0)
+                     = 9_000_000
+        intent_id suffix is `:sized` (not `:probe`), reflecting real sizing.
     idempotency_key = sha256(canonical_json({forecast_id, market_ticker,
         outcome, action, price.value, size.value})).hexdigest() -- the same
         `hashlib.sha256(canonical_json(...))` primitive
@@ -616,33 +689,55 @@ def test_select_emits_one_intent_with_hand_expected_deterministic_fields() -> No
         this repo, applied here to exactly the six named fields (never
         derived by calling `select` itself).
     """
-    inputs = _baseline_inputs()
+    inputs = _baseline_inputs(
+        forecast=_baseline_forecast(probability_ppm=500_000),
+        order_book=_baseline_order_book(
+            yes_asks=(
+                OrderBookLevel(
+                    price=PricePips(4_500), quantity=ContractCentis(1_000_000)
+                ),
+            )
+        ),
+        fee_model=_baseline_fee_model(
+            model=FeeModel(
+                schedule_id="entry-test-fee-zero",
+                maker_fee_ppm=0,
+                taker_fee_ppm=0,
+                settlement_fee_ppm=0,
+            )
+        ),
+        slippage_model=_baseline_slippage_model(per_contract_buffer_ppm=0),
+    )
 
     decision = select(inputs)
 
     assert len(decision.intents) == 1
     intent = decision.intents[0]
-    assert intent.intent_id == "fc-entry-0001:yes:buy:probe"
+    assert intent.intent_id == "fc-entry-0001:yes:buy:sized"
     assert intent.market_ticker == "ENTRY-TICKER"
     assert intent.outcome == "yes"
     assert intent.action == "buy"
-    assert intent.price == PricePips(5_000)
-    assert intent.size == ContractCentis(100)
-    assert intent.max_notional == MoneyMicros(510_000)
-    assert intent.implied_probability == ProbabilityPpm(600_000)
+    assert intent.price == PricePips(4_500)
+    assert intent.size == ContractCentis(2_000)
+    assert intent.max_notional == MoneyMicros(9_000_000)
+    assert intent.implied_probability == ProbabilityPpm(500_000)
 
     expected_key_fields: dict[str, object] = {
         "forecast_id": "fc-entry-0001",
         "market_ticker": "ENTRY-TICKER",
         "outcome": "yes",
         "action": "buy",
-        "price": 5_000,
-        "size": 100,
+        "price": 4_500,
+        "size": 2_000,
     }
     expected_key = hashlib.sha256(
         canonical_json(expected_key_fields).encode("utf-8")
     ).hexdigest()
     assert intent.idempotency_key == expected_key
+
+    assert decision.reasons[12] == (
+        "sizing: raw_centis=2020 g_ppm=1000000 binding_cap=none final_centis=2000"
+    )
 
     assert serialize_decision(select(inputs)) == serialize_decision(decision)
 

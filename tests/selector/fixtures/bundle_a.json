@@ -59,8 +59,8 @@
       {"price": 4300, "quantity": 1000}
     ],
     "yes_asks": [
-      {"price": 4600, "quantity": 500},
-      {"price": 4700, "quantity": 1000}
+      {"price": 4600, "quantity": 50000},
+      {"price": 4700, "quantity": 100000}
     ],
     "fetched_at": "2024-12-10T12:00:05.000000Z"
   },
@@ -76,7 +76,17 @@
     "model_id": "slippage-model-linear",
     "per_contract_buffer_ppm": 5000
   },
-  "positions_snapshot_id": "positions-snap-0001",
+  "positions": {
+    "snapshot_id": "positions-snap-0001",
+    "equity_micros": 1000000000000,
+    "above_floor_capital_micros": 100000000,
+    "total_deploy_cap_micros": 1000000000000,
+    "market_exposure": 0,
+    "event_exposure": 0,
+    "bucket_exposure": 0,
+    "total_exposure": 0,
+    "notional_today": 0
+  },
   "risk_config": {
     "config_hash": "sha256:risk-config-a"
   },
