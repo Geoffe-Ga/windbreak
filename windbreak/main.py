@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import logging
 import math
+import os
 import signal
 import threading
 from dataclasses import dataclass, field
@@ -55,6 +56,10 @@ _DEFAULT_HEARTBEAT_INTERVAL = 5.0
 
 #: Default alert body dispatched by the ``alert-test`` subcommand.
 _DEFAULT_ALERT_MESSAGE = "test alert"
+
+#: The environment variable a leaked trade key would surface in; the preflight
+#: leak check (SPEC S5.2) fails closed if it is visible to this process.
+_TRADE_KEY_ENV_VAR = "WINDBREAK_TRADE_KEY"
 
 #: Maps each alert's CLI token back to its :class:`AlertType` member.
 _TOKEN_TO_ALERT_TYPE = {cli_token(alert_type): alert_type for alert_type in AlertType}
@@ -248,6 +253,38 @@ def _add_rearm_arguments(rearm_parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_preflight_arguments(preflight_parser: argparse.ArgumentParser) -> None:
+    """Register the ``preflight`` subcommand's options on its subparser.
+
+    Args:
+        preflight_parser: The ``preflight`` subparser to populate with options.
+    """
+    preflight_parser.add_argument(
+        "--fixture-dir",
+        type=Path,
+        required=True,
+        help="Directory of exchange JSON fixtures to run the checks against.",
+    )
+    preflight_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the report as a JSON document instead of a table.",
+    )
+    preflight_parser.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="Path to a SPEC §16 YAML config (default: built-in §16 defaults).",
+    )
+    preflight_parser.add_argument(
+        "--secrets-file",
+        type=Path,
+        action="append",
+        default=None,
+        help="A secrets file whose permissions to check (repeatable).",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the ``windbreak`` command-line argument parser.
 
@@ -284,6 +321,12 @@ def build_parser() -> argparse.ArgumentParser:
         subparsers.add_parser(
             "rearm",
             help="Re-arm after a kill (write the typed phrase to a REARM file).",
+        )
+    )
+    _add_preflight_arguments(
+        subparsers.add_parser(
+            "preflight",
+            help="Run the production-readiness preflight checklist.",
         )
     )
     alert_parser = subparsers.add_parser("alert-test")
@@ -394,6 +437,65 @@ def _load_configured(
     if args.config is not None:
         return load_config(args.config, recorder=recorder)
     return load_default_config(recorder=recorder)
+
+
+def _run_preflight(args: argparse.Namespace) -> int:
+    """Run the production-readiness checklist and print its report (SPEC S3.3).
+
+    Builds the injected seams -- a fixture-backed read-only connector, an honest
+    no-self-test scope prober (the real self-test client is issue #57), a
+    trade-key environment-leak prober over :data:`os.environ`, a log-only alert
+    dispatcher, and the configured secrets paths -- runs the seven checks, and
+    prints the report as JSON or a table to stdout. The connector and preflight
+    imports are local so the RESEARCH heartbeat path never imports them.
+
+    Args:
+        args: Parsed ``preflight`` arguments carrying ``fixture_dir``, ``json``,
+            ``config``, and ``secrets_file``.
+
+    Returns:
+        The report's fail-closed exit code (0 on all-pass, 1 on any failure), or
+        1 on a fatal ``--config`` error.
+    """
+    from windbreak.connector import FakeExchange
+    from windbreak.preflight import (
+        EnvTradeKeyLeakProber,
+        KeyScopeProbe,
+        render_table,
+        report_to_json,
+        run_preflight,
+    )
+
+    class _NullScopeProber:
+        """A scope prober reporting no self-test support (real one: issue #57)."""
+
+        def probe(self) -> KeyScopeProbe:
+            """Return an all-unsupported probe so scope checks honestly SKIP."""
+            return KeyScopeProbe(
+                self_test_supported=False,
+                scope_verified=False,
+                withdrawal_capable=False,
+            )
+
+    recorder = InMemoryConfigEventRecorder()
+    try:
+        config = _load_configured(args, recorder)
+    except ConfigError as exc:
+        _LOGGER.critical("FATAL: %s", exc)
+        return 1
+    connector = FakeExchange.from_fixture_dir(args.fixture_dir)
+    dispatcher = AlertDispatcher(sinks=[], ledger_writer=LoggingLedgerWriter())
+    report = run_preflight(
+        connector=connector,
+        scope_prober=_NullScopeProber(),
+        leak_prober=EnvTradeKeyLeakProber(environ=os.environ, var=_TRADE_KEY_ENV_VAR),
+        eligible_markets=connector.list_markets(),
+        alert_dispatcher=dispatcher,
+        secrets_paths=tuple(args.secrets_file or ()),
+        config=config,
+    )
+    print(report_to_json(report) if args.json else render_table(report))
+    return report.exit_code
 
 
 def _run_alert_test(args: argparse.Namespace) -> int:
@@ -639,6 +741,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_rearm(args)
     if args.command == "alert-test":
         return _run_alert_test(args)
+    if args.command == "preflight":
+        return _run_preflight(args)
     return _run_heartbeat(args)
 
 
