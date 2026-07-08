@@ -88,5 +88,8 @@
   "risk_config": {
     "config_hash": "sha256:risk-config-b"
   },
-  "correlation_tags": ["cpi", "inflation"]
+  "correlation_tags": [
+    {"bucket_id": "inflation", "source": "llm", "tagged_at": "2024-12-15T09:30:00.000000Z"}
+  ],
+  "bucket_peers": []
 }

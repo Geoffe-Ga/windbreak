@@ -545,7 +545,7 @@ def _sizing_inputs(*, above_floor_capital_micros: int) -> SelectorInputs:
         risk_config=RiskConfigInput(
             config=RiskConfig(), config_hash="sha256:risk-sizing"
         ),
-        correlation_tags=("sizing-test",),
+        correlation_tags=(),
     )
 
 

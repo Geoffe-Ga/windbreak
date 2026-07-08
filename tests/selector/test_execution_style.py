@@ -252,7 +252,7 @@ def _inputs(
         ),
         positions=positions if positions is not None else _positions(),
         risk_config=risk_config if risk_config is not None else _risk_config(),
-        correlation_tags=("execstyle-test",),
+        correlation_tags=(),
     )
 
 

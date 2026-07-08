@@ -53,6 +53,11 @@ from hedgekit.numeric import (
     divide,
 )
 from hedgekit.selector import select
+from hedgekit.selector.correlation import (
+    BUCKET_FED_POLICY,
+    BucketExposureEntry,
+    CorrelationTag,
+)
 from hedgekit.selector.edge import EdgeFigures, compute_executable_edge
 from hedgekit.selector.sizing import dispersion_scale, kelly_size
 from hedgekit.selector.types import (
@@ -378,6 +383,19 @@ def _selector_inputs(draw: st.DrawFn) -> SelectorInputs:
         total_exposure=MoneyMicros(total_exposure),
         notional_today=MoneyMicros(notional_today),
     )
+    # A single `fed-policy` peer carrying exactly `bucket_exposure` reproduces
+    # that exposure through `select`'s SPEC S9.9 aggregation, so the value the
+    # per-bucket cap actually clips against equals `positions.bucket_exposure`
+    # (which `select` overrides with the identical aggregated figure) -- keeping
+    # `_notional_cap_sizes`'s independent per-bucket cross-check exact.
+    bucket_tag = CorrelationTag(
+        bucket_id=BUCKET_FED_POLICY, source="llm", tagged_at=_INSTANT
+    )
+    bucket_peer = BucketExposureEntry(
+        market_ticker="SIZING-PROP-PEER",
+        exposure_micros=MoneyMicros(bucket_exposure),
+        tags=(bucket_tag,),
+    )
     return SelectorInputs(
         forecast=forecast,
         calibration_map_version="calib-sizing-prop-v1",
@@ -386,7 +404,8 @@ def _selector_inputs(draw: st.DrawFn) -> SelectorInputs:
         slippage_model=slippage_model,
         positions=positions,
         risk_config=risk_config,
-        correlation_tags=("sizing-property-test",),
+        correlation_tags=(bucket_tag,),
+        bucket_peers=(bucket_peer,),
     )
 
 

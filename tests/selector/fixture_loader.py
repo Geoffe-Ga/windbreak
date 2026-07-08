@@ -41,6 +41,7 @@ from hedgekit.connector.models import OrderBookLevel, OrderBookSnapshot
 from hedgekit.forecast.records import Citation, ForecastRecord, ModelVote
 from hedgekit.numeric import ContractCentis, MoneyMicros, PricePips
 from hedgekit.selector import SelectorInputs
+from hedgekit.selector.correlation import BucketExposureEntry, CorrelationTag
 from hedgekit.selector.types import (
     FeeModelInput,
     PositionReadModelInput,
@@ -265,6 +266,42 @@ def _risk_config_input_from_dict(data: Mapping[str, object]) -> RiskConfigInput:
     )
 
 
+def _correlation_tag_from_dict(data: Mapping[str, object]) -> CorrelationTag:
+    """Build a :class:`CorrelationTag` from one raw ``correlation_tags`` entry.
+
+    Args:
+        data: One raw ``correlation_tags`` list entry, carrying the ``bucket_id``,
+            ``source``, and ISO-8601 ``tagged_at`` provenance timestamp.
+
+    Returns:
+        The constructed, post-init-validated :class:`CorrelationTag`.
+    """
+    return CorrelationTag(
+        bucket_id=data["bucket_id"],
+        source=data["source"],
+        tagged_at=_parse_dt(data["tagged_at"]),
+    )
+
+
+def _bucket_peer_from_dict(data: Mapping[str, object]) -> BucketExposureEntry:
+    """Build a :class:`BucketExposureEntry` from one raw ``bucket_peers`` entry.
+
+    Args:
+        data: One raw ``bucket_peers`` list entry, carrying the peer's
+            ``market_ticker``, its ``exposure_micros``, and its own
+            ``correlation_tags``.
+
+    Returns:
+        The constructed :class:`BucketExposureEntry`, with ``exposure_micros``
+        wrapped in :class:`~hedgekit.numeric.MoneyMicros`.
+    """
+    return BucketExposureEntry(
+        market_ticker=data["market_ticker"],
+        exposure_micros=MoneyMicros(data["exposure_micros"]),
+        tags=tuple(_correlation_tag_from_dict(tag) for tag in data["correlation_tags"]),
+    )
+
+
 def load_inputs(path: str | Path) -> SelectorInputs:
     """Parse one recorded bundle JSON file into a `SelectorInputs`.
 
@@ -287,5 +324,10 @@ def load_inputs(path: str | Path) -> SelectorInputs:
         slippage_model=_slippage_input_from_dict(raw["slippage_model"]),
         positions=_positions_input_from_dict(raw["positions"]),
         risk_config=_risk_config_input_from_dict(raw["risk_config"]),
-        correlation_tags=tuple(raw["correlation_tags"]),
+        correlation_tags=tuple(
+            _correlation_tag_from_dict(tag) for tag in raw["correlation_tags"]
+        ),
+        bucket_peers=tuple(
+            _bucket_peer_from_dict(peer) for peer in raw.get("bucket_peers", ())
+        ),
     )

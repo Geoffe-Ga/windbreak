@@ -182,11 +182,13 @@ class CapClipResult:
 
     Attributes:
         size: The final, whole-contract-quantized size, in contract-centis
-            (zero when the exchange minimum zeroed a sub-lot survivor).
+            (zero when a cap or the exchange minimum drove it below one lot).
         binding_cap: The pinned-order-first name of the cap whose limit equalled
-            the clipped minimum, ``"exchange_min_order"`` when the quantization
-            zeroed a sub-lot survivor, or ``None`` when the raw size survived
-            every cap unclipped (only the routine whole-lot flooring applied).
+            the clipped minimum (kept even when that cap drove the size to zero,
+            so a saturated per-bucket cap stays named), ``"exchange_min_order"``
+            when no cap bound but the whole-lot quantization zeroed a naturally
+            sub-lot raw size, or ``None`` when the raw size survived every cap
+            unclipped (only the routine whole-lot flooring applied).
     """
 
     size: ContractCentis
@@ -229,7 +231,11 @@ def _headroom_cap_centis(
 
 
 def _notional_cap_limits(
-    positions: PositionReadModelInput, risk: RiskConfig, executable_price_ppm: int
+    positions: PositionReadModelInput,
+    risk: RiskConfig,
+    executable_price_ppm: int,
+    *,
+    bucket_cap_name: str,
 ) -> list[tuple[str, int]]:
     """Return the five SPEC S9.6 notional-cap ``(name, limit)`` pairs, in order.
 
@@ -237,6 +243,10 @@ def _notional_cap_limits(
         positions: The account capital/exposure figures the caps read.
         risk: The risk configuration supplying the cap percentages and limits.
         executable_price_ppm: The executable fill price, in ppm-of-$1.
+        bucket_cap_name: The name the per-bucket cap is reported under. Defaults
+            to the bare ``"per_bucket"`` at the public boundary; ``select()``
+            passes ``"per_bucket:<bucket-id>"`` so the pinned sizing reason names
+            the specific correlation bucket that bound (SPEC S9.9).
 
     Returns:
         The five caps in the pinned order ``per_market``, ``per_event``,
@@ -262,7 +272,7 @@ def _notional_cap_limits(
     return [
         ("per_market", market),
         ("per_event", event),
-        ("per_bucket", bucket),
+        (bucket_cap_name, bucket),
         ("total_deployed", total),
         ("daily_notional", daily),
     ]
@@ -382,6 +392,7 @@ def clip_to_caps(
     order_book: OrderBookSnapshot,
     risk_config: RiskConfig,
     positions: PositionReadModelInput,
+    bucket_cap_name: str = "per_bucket",
 ) -> CapClipResult:
     """Clip a raw stake through the SPEC S9.6 caps and quantization.
 
@@ -391,9 +402,15 @@ def clip_to_caps(
     The binding cap is named from the *continuous* cap limits so the name
     reflects which economic constraint dominated, while the emitted size is the
     whole-contract participation fixed point of the notional-clipped size, so it
-    honors participation at its own quantized marginal level (SPEC S9.6). A size
-    below the exchange minimum after flooring is zeroed and flagged
-    ``exchange_min_order``.
+    honors participation at its own quantized marginal level (SPEC S9.6).
+
+    When the final, lot-floored size drops below one whole contract, the result
+    is zeroed. Its reported cap distinguishes two causes (SPEC S9.9 divergence):
+    if a real cap already bound the *continuous* size (``binding_cap`` is not
+    ``None``) that cap's own name survives -- a saturated per-bucket cap that
+    drove the size to zero stays named ``per_bucket:<bucket-id>``, not masked as
+    a generic exchange-minimum floor. Only when no cap bound and the raw size was
+    itself merely sub-lot is it flagged ``exchange_min_order``.
 
     Args:
         raw_size: The raw fractional-Kelly size to clip, in contract-centis.
@@ -402,6 +419,10 @@ def clip_to_caps(
             resting-depth walk.
         risk_config: The risk configuration supplying the cap thresholds.
         positions: The account capital/exposure figures the notional caps read.
+        bucket_cap_name: The name the per-bucket cap is reported under; defaults
+            to the bare ``"per_bucket"`` so every pre-#47 call site and golden is
+            unchanged. ``select()`` passes ``"per_bucket:<bucket-id>"`` (SPEC
+            S9.9).
 
     Returns:
         A :class:`CapClipResult` carrying the final size and the binding cap's
@@ -411,7 +432,9 @@ def clip_to_caps(
     yes_asks = order_book.yes_asks
     part_ppm = risk_config.max_participation_ppm
 
-    notional_limits = _notional_cap_limits(positions, risk_config, executable_price_ppm)
+    notional_limits = _notional_cap_limits(
+        positions, risk_config, executable_price_ppm, bucket_cap_name=bucket_cap_name
+    )
     after_notional = min(raw_centis, *(limit for _, limit in notional_limits))
 
     continuous_participation = _participation_fixed_point(
@@ -425,5 +448,6 @@ def clip_to_caps(
         after_notional, yes_asks, part_ppm, lot=True
     )
     if final_centis < _EXCHANGE_MIN_ORDER_CENTIS:
-        return CapClipResult(size=ContractCentis(0), binding_cap=_EXCHANGE_MIN_CAP_NAME)
+        zeroed_cap = binding_cap if binding_cap is not None else _EXCHANGE_MIN_CAP_NAME
+        return CapClipResult(size=ContractCentis(0), binding_cap=zeroed_cap)
     return CapClipResult(size=ContractCentis(final_centis), binding_cap=binding_cap)
