@@ -172,8 +172,8 @@ def test_cli_trade_key_in_environment_fails_and_never_echoes_its_value(
     `credentials.trade_key_not_leaked`, and -- critically -- the key's secret
     *value* never appears in the printed report (SPEC S5.2).
     """
-    secret_value = "sk-live-DO-NOT-LEAK-abcdef0123456789"
-    monkeypatch.setenv(_TRADE_KEY_VAR, secret_value)
+    planted_value = "fake-trade-cred-not-real"
+    monkeypatch.setenv(_TRADE_KEY_VAR, planted_value)
 
     exit_code = main(["preflight", "--fixture-dir", str(all_eligible_fixture_dir)])
 
@@ -186,4 +186,4 @@ def test_cli_trade_key_in_environment_fails_and_never_echoes_its_value(
     ]
     assert len(fail_lines) == 1
     assert "FAIL" in fail_lines[0]
-    assert secret_value not in captured.out
+    assert planted_value not in captured.out
