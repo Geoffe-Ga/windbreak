@@ -73,11 +73,13 @@ def _assert_no_float_leaves(value: object, *, path: str = "$") -> None:
 def test_three_track_report_renders_no_edge_bluntly() -> None:
     """The synthetic known-answer fixture renders a blunt NO EDGE banner.
 
-    The seed registry's one live stub, `brier_skill_vs_executable_price`,
-    resolves to the constant `int` `0` at this tracer-code stage regardless
-    of input -- and `0 <= 0`, so the forecast-track section must print the
-    literal `NO_EDGE_BANNER` text, not a hedge like "inconclusive" or
-    "insufficient data".
+    `brier_skill_vs_executable_price` is now a real computation (issue #51):
+    over the synthetic fixture it resolves to the exact `int` `-49_375`
+    (see `test_metrics.py`'s
+    `test_brier_skill_matches_hand_computation_on_synthetic_fixture`
+    for the full hand-derived arithmetic) -- and `-49_375 <= 0`, so the
+    forecast-track section must still print the literal `NO_EDGE_BANNER`
+    text, not a hedge like "inconclusive" or "insufficient data".
     """
     from hedgekit.evaluation import NO_EDGE_BANNER, run_evaluation
 
@@ -259,10 +261,17 @@ def test_evaluation_report_post_init_rejects_missing_or_duplicate_tracks() -> No
 # ---------------------------------------------------------------------------
 
 
-def test_registered_metrics_has_the_four_seed_specs_with_correct_shape() -> None:
-    """Each of the four seed `MetricSpec`s carries a real `Track`, a real
+def test_registered_metrics_has_the_nine_seed_specs_with_correct_shape() -> None:
+    """Each of the nine seed `MetricSpec`s carries a real `Track`, a real
     `ObservationWindow`, and a callable `compute`; the headline metric's
     window is `LATEST_BEFORE_CLOSE`.
+
+    Issue #51 registers five additional real forecast-track metrics
+    (`log_score`, `expected_calibration_error`, `calibration_slope`,
+    `calibration_intercept`, `sharpness`) alongside the original four seed
+    slots, growing the registry from four specs to nine; only
+    `traded_vs_skipped_brier_delta` and `fill_vs_model_slippage` remain
+    unimplemented (issues #52/out of #51's scope).
     """
     from hedgekit.evaluation import (
         HEADLINE_SKILL_METRIC,
@@ -278,6 +287,11 @@ def test_registered_metrics_has_the_four_seed_specs_with_correct_shape() -> None
         "brier_skill_vs_executable_price",
         "traded_vs_skipped_brier_delta",
         "fill_vs_model_slippage",
+        "log_score",
+        "expected_calibration_error",
+        "calibration_slope",
+        "calibration_intercept",
+        "sharpness",
     }
     assert set(metrics.keys()) == expected_names
 
@@ -293,20 +307,23 @@ def test_registered_metrics_has_the_four_seed_specs_with_correct_shape() -> None
 
 
 @pytest.mark.parametrize(
-    ("metric_name", "expected_value"),
-    [
-        ("brier", "NOT_IMPLEMENTED"),
-        ("brier_skill_vs_executable_price", 0),
-        ("traded_vs_skipped_brier_delta", "NOT_IMPLEMENTED"),
-        ("fill_vs_model_slippage", "NOT_IMPLEMENTED"),
-    ],
+    "metric_name",
+    ["traded_vs_skipped_brier_delta", "fill_vs_model_slippage"],
 )
 def test_seed_metric_compute_stubs_return_the_documented_value(
-    metric_name: str, expected_value: int | str
+    metric_name: str,
 ) -> None:
-    """Each seed metric's `compute` returns exactly its documented stub
-    value (the sentinel, or the one live `int` 0 stub) when called with a
-    minimal, empty `EvaluationInputs`.
+    """Each still-unimplemented seed metric's `compute` returns the
+    documented `NOT_IMPLEMENTED` sentinel when called with a minimal, empty
+    `EvaluationInputs`.
+
+    `brier` and `brier_skill_vs_executable_price` are dropped from this
+    parametrization as of issue #51: both are now real computations with
+    exact hand-computed values asserted in `test_metrics.py`'s
+    `test_mean_brier_matches_hand_computation_on_synthetic_fixture`
+    and `test_brier_skill_matches_hand_computation_on_synthetic_fixture`
+    respectively -- a "documented stub value" assertion no longer applies to
+    either.
     """
     from hedgekit.evaluation import (
         NOT_IMPLEMENTED,
@@ -319,11 +336,7 @@ def test_seed_metric_compute_stubs_return_the_documented_value(
 
     result = spec.compute(inputs)
 
-    if expected_value == "NOT_IMPLEMENTED":
-        assert result is NOT_IMPLEMENTED
-    else:
-        assert result == expected_value
-        assert isinstance(result, int)
+    assert result is NOT_IMPLEMENTED
 
 
 def test_registered_metrics_returns_a_mapping_with_no_duplicate_names() -> None:

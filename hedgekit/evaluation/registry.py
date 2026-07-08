@@ -1,23 +1,25 @@
-"""Metric registry and typed inputs for the evaluation harness (#49, RED).
+"""Metric registry and typed inputs for the evaluation harness (#49, #51).
 
-This module is the *tracer-code* skeleton of SPEC-EPIC_07's three-track
-evaluation harness. It fixes the vocabulary the later measurement issues fill
-in -- the :class:`Track` and :class:`ObservationWindow` taxonomies, the typed
+This module owns SPEC-EPIC_07's three-track evaluation vocabulary -- the
+:class:`Track` and :class:`ObservationWindow` taxonomies, the typed
 :class:`FixtureForecast` / :class:`EvaluationInputs` carriers, the
-:class:`MetricSpec` shape, and the seed :func:`registered_metrics` catalogue --
-while every metric's real arithmetic is still a stub.
+:class:`MetricSpec` shape, and the :func:`registered_metrics` catalogue -- and
+wires each spec's ``compute`` to its real arithmetic.
 
-Unimplemented metrics do not silently vanish: their ``compute`` returns the
+As of issue #51 the seven forecast-track metrics (``brier``,
+``brier_skill_vs_executable_price``, ``log_score``,
+``expected_calibration_error``, ``calibration_slope``,
+``calibration_intercept``, ``sharpness``) delegate to
+:mod:`hedgekit.evaluation.metrics`. The registry->metrics import is a one-way
+runtime edge with no cycle: ``metrics`` references this module's types only under
+``TYPE_CHECKING``.
+
+The two remaining metrics (``traded_vs_skipped_brier_delta``,
+``fill_vs_model_slippage``) are still stubs whose ``compute`` returns the
 :data:`NOT_IMPLEMENTED` sentinel (a distinct :class:`NotImplementedSentinel`
-value, never ``None`` and never a stray ``int``), so the renderer can print the
-literal ``NOT_IMPLEMENTED`` rather than omit the row. The one live stub,
-``brier_skill_vs_executable_price``, returns the constant ``int`` ``0`` -- a
-deliberate "no demonstrated edge" placeholder wired ahead of the real Brier
-skill computation.
-
-Successor issues fill the stubs in: the forecast-track Brier metrics (#50), the
-selection-track traded-vs-skipped delta (#51), and the execution-track
-fill-vs-model slippage (#52).
+value, never ``None`` and never a stray ``int``) so the renderer prints the
+literal ``NOT_IMPLEMENTED`` rather than omitting the row; the selection- and
+execution-track work lands in issue #52 and beyond.
 """
 
 from __future__ import annotations
@@ -25,6 +27,8 @@ from __future__ import annotations
 import enum
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+import hedgekit.evaluation.metrics as metrics
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -105,6 +109,9 @@ class FixtureForecast:
         traded: Whether a live trade was actually taken on this forecast.
         baseline_executable_price_pips: Reference executable price, in pips,
             the skill metric measures the forecast against.
+        correlation_group_id: Identifier of the correlation cluster this
+            forecast belongs to, or ``None`` when the market is its own
+            singleton cluster (the clustered-bootstrap resampling unit, #51).
     """
 
     forecast_id: str
@@ -114,6 +121,7 @@ class FixtureForecast:
     abstention_reason: str | None
     traded: bool
     baseline_executable_price_pips: int
+    correlation_group_id: str | None = None
 
     def __post_init__(self) -> None:
         """Validate the numeric invariants of the forecast row.
@@ -153,43 +161,106 @@ class EvaluationInputs:
     resolutions: Mapping[str, ResolutionOutcome]
 
 
+#: The observation window every forecast-track metric is scored over (S13.4);
+#: the compute adapters thread it explicitly into their metric call.
+_FORECAST_WINDOW = ObservationWindow.LATEST_BEFORE_CLOSE
+
+
 def _compute_brier(inputs: EvaluationInputs) -> MetricValue:
-    """Forecast-track Brier score stub (real arithmetic lands in issue #50).
+    """Compute the forecast-track mean Brier score, in ppm.
 
     Args:
-        inputs: The evaluation inputs (ignored at this tracer-code stage).
+        inputs: The evaluation inputs to score.
 
     Returns:
-        The :data:`NOT_IMPLEMENTED` sentinel until issue #50 wires the score.
+        The mean Brier score delegated to :func:`hedgekit.evaluation.metrics`.
     """
-    del inputs  # Tracer stub: the Brier mean is computed in issue #50.
-    return NOT_IMPLEMENTED
+    return metrics.mean_brier(inputs, window=_FORECAST_WINDOW)
 
 
 def _compute_brier_skill_vs_executable_price(inputs: EvaluationInputs) -> MetricValue:
-    """Headline forecast-skill stub returning a constant "no edge" ``0``.
+    """Compute the headline Brier skill versus the executable-price baseline.
 
     Args:
-        inputs: The evaluation inputs (ignored at this tracer-code stage).
+        inputs: The evaluation inputs to score.
 
     Returns:
-        The constant ``int`` ``0`` -- a deliberate no-demonstrated-edge
-        placeholder until issue #50 wires the real skill-vs-baseline score.
+        The Brier skill in ppm delegated to :func:`hedgekit.evaluation.metrics`.
     """
-    del inputs  # Tracer stub: constant no-edge 0 until issue #50 wires it.
-    return 0
+    return metrics.brier_skill(inputs, window=_FORECAST_WINDOW)
+
+
+def _compute_log_score(inputs: EvaluationInputs) -> MetricValue:
+    """Compute the forecast-track mean logarithmic score, in micro-nats.
+
+    Args:
+        inputs: The evaluation inputs to score.
+
+    Returns:
+        The mean log score delegated to :func:`hedgekit.evaluation.metrics`.
+    """
+    return metrics.mean_log_score(inputs, window=_FORECAST_WINDOW)
+
+
+def _compute_expected_calibration_error(inputs: EvaluationInputs) -> MetricValue:
+    """Compute the forecast-track expected calibration error, in ppm.
+
+    Args:
+        inputs: The evaluation inputs to score.
+
+    Returns:
+        The ECE delegated to :func:`hedgekit.evaluation.metrics`.
+    """
+    return metrics.expected_calibration_error(inputs, window=_FORECAST_WINDOW)
+
+
+def _compute_calibration_slope(inputs: EvaluationInputs) -> MetricValue:
+    """Compute the forecast-track calibration slope, in ppm.
+
+    Args:
+        inputs: The evaluation inputs to score.
+
+    Returns:
+        The calibration slope delegated to :func:`hedgekit.evaluation.metrics`.
+    """
+    return metrics.calibration_slope(inputs, window=_FORECAST_WINDOW)
+
+
+def _compute_calibration_intercept(inputs: EvaluationInputs) -> MetricValue:
+    """Compute the forecast-track calibration intercept, in ppm.
+
+    Args:
+        inputs: The evaluation inputs to score.
+
+    Returns:
+        The calibration intercept delegated to
+        :func:`hedgekit.evaluation.metrics`.
+    """
+    return metrics.calibration_intercept(inputs, window=_FORECAST_WINDOW)
+
+
+def _compute_sharpness(inputs: EvaluationInputs) -> MetricValue:
+    """Compute the forecast-track sharpness (forecast variance), in ppm.
+
+    Args:
+        inputs: The evaluation inputs to score.
+
+    Returns:
+        The sharpness delegated to :func:`hedgekit.evaluation.metrics`.
+    """
+    return metrics.sharpness(inputs, window=_FORECAST_WINDOW)
 
 
 def _compute_traded_vs_skipped_brier_delta(inputs: EvaluationInputs) -> MetricValue:
-    """Selection-track traded-vs-skipped Brier delta stub (issue #51).
+    """Selection-track traded-vs-skipped Brier delta stub (issue #52).
 
     Args:
         inputs: The evaluation inputs (ignored at this tracer-code stage).
 
     Returns:
-        The :data:`NOT_IMPLEMENTED` sentinel until issue #51 wires the delta.
+        The :data:`NOT_IMPLEMENTED` sentinel until issue #52 wires the delta.
     """
-    del inputs  # Tracer stub: the selection-track delta lands in issue #51.
+    del inputs  # Tracer stub: the selection-track delta lands in issue #52.
     return NOT_IMPLEMENTED
 
 
@@ -230,11 +301,16 @@ HEADLINE_SKILL_METRIC: Final[str] = "brier_skill_vs_executable_price"
 
 
 def _seed_metric_specs() -> list[MetricSpec]:
-    """Build the fixed list of seed :class:`MetricSpec`s for this skeleton.
+    """Build the fixed list of seed :class:`MetricSpec`s for the harness.
+
+    Issue #51 turns ``brier`` and ``brier_skill_vs_executable_price`` into real
+    computations and adds five more forecast-track metrics (``log_score``,
+    ``expected_calibration_error``, ``calibration_slope``,
+    ``calibration_intercept``, ``sharpness``); ``traded_vs_skipped_brier_delta``
+    and ``fill_vs_model_slippage`` remain stubs (issues #52 and beyond).
 
     Returns:
-        The four seed metric specifications, one per successor issue's target,
-        spanning all three :class:`Track`s.
+        The nine metric specifications, spanning all three :class:`Track`s.
     """
     return [
         MetricSpec(
@@ -248,6 +324,36 @@ def _seed_metric_specs() -> list[MetricSpec]:
             track=Track.FORECAST,
             window=ObservationWindow.LATEST_BEFORE_CLOSE,
             compute=_compute_brier_skill_vs_executable_price,
+        ),
+        MetricSpec(
+            name="log_score",
+            track=Track.FORECAST,
+            window=ObservationWindow.LATEST_BEFORE_CLOSE,
+            compute=_compute_log_score,
+        ),
+        MetricSpec(
+            name="expected_calibration_error",
+            track=Track.FORECAST,
+            window=ObservationWindow.LATEST_BEFORE_CLOSE,
+            compute=_compute_expected_calibration_error,
+        ),
+        MetricSpec(
+            name="calibration_slope",
+            track=Track.FORECAST,
+            window=ObservationWindow.LATEST_BEFORE_CLOSE,
+            compute=_compute_calibration_slope,
+        ),
+        MetricSpec(
+            name="calibration_intercept",
+            track=Track.FORECAST,
+            window=ObservationWindow.LATEST_BEFORE_CLOSE,
+            compute=_compute_calibration_intercept,
+        ),
+        MetricSpec(
+            name="sharpness",
+            track=Track.FORECAST,
+            window=ObservationWindow.LATEST_BEFORE_CLOSE,
+            compute=_compute_sharpness,
         ),
         MetricSpec(
             name="traded_vs_skipped_brier_delta",
