@@ -21,19 +21,31 @@ of proof, from weakest to strongest:
    order (e.g. an un-sorted dict/set) that a same-process comparison could
    never expose.
 
+Golden newline convention (hook-stability): ``serialize_decision`` returns
+canonical JSON with **no** trailing newline, but this repo's own
+``end-of-file-fixer`` pre-commit hook requires every committed text file to
+end in exactly one ``"\n"``. To keep a freshly regenerated golden stable
+under that hook (rather than exempting the fixtures, which would weaken the
+hook), each ``fixtures/*.golden`` file stores the serialized bytes **plus a
+single trailing ``"\n"``**. The comparison below re-appends that newline to
+the live serialized output before diffing, and
+`test_committed_golden_is_hook_stable` pins the invariant so a regenerated
+golden is always exactly ``serialize_decision(...) + "\n"``.
+
 Golden-file regeneration: the two `fixtures/*.golden` files committed
 alongside this module hold the correct issue-#43 **stub** output -- an empty
 `intents` list and the single `"stub: ..."` reason. They will need
 regeneration only once a later issue (#44+) makes `select` emit non-empty
 intents and thereby changes the serialized bytes. Regenerate each from an
-actual `select`/`serialize_decision` run -- never hand-fabricate the bytes:
+actual `select`/`serialize_decision` run -- never hand-fabricate the bytes,
+and always append the single trailing newline the convention requires:
 
     python -c "
     from tests.selector.fixture_loader import load_inputs
     from hedgekit.selector import select, serialize_decision
-    open('tests/selector/fixtures/bundle_a.golden', 'w').write(
-        serialize_decision(select(load_inputs('tests/selector/fixtures/bundle_a.json')))
-    )
+    path = 'tests/selector/fixtures/bundle_a'
+    bytes_ = serialize_decision(select(load_inputs(path + '.json')))
+    open(path + '.golden', 'w').write(bytes_ + '\n')
     "
 
 (substitute ``bundle_b`` for the second file).
@@ -110,18 +122,37 @@ def test_stub_returns_zero_intents_with_reason(
 
 @pytest.mark.parametrize("bundle_name", _BUNDLE_NAMES)
 def test_serialized_output_matches_committed_golden(bundle_name: str) -> None:
-    """`serialize_decision(select(bundle))` equals the committed `.golden` file.
+    """`serialize_decision(select(bundle)) + "\\n"` equals the committed golden.
 
-    See this module's docstring for the exact regeneration command; the
-    committed golden files are deliberately wrong placeholders until the
-    implementer regenerates them against the real serializer.
+    See this module's docstring for the newline convention and the exact
+    regeneration command: the golden stores the serialized bytes plus one
+    trailing newline (so it is stable under `end-of-file-fixer`), so the live
+    serialized output is compared with that newline re-appended.
     """
     inputs = load_inputs(_FIXTURES_DIR / f"{bundle_name}.json")
     golden_path = _FIXTURES_DIR / f"{bundle_name}.golden"
 
     actual = serialize_decision(select(inputs))
 
-    assert actual == golden_path.read_text(encoding="utf-8")
+    assert actual + "\n" == golden_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("bundle_name", _BUNDLE_NAMES)
+def test_committed_golden_is_hook_stable(bundle_name: str) -> None:
+    """Each committed golden ends in exactly one newline and no more.
+
+    Pins the newline convention documented in this module's docstring: a
+    golden is exactly ``serialize_decision(...) + "\\n"``. This guarantees a
+    freshly regenerated golden survives this repo's `end-of-file-fixer`
+    pre-commit hook unchanged -- ending in exactly one trailing ``"\\n"`` --
+    so the fixtures never need a hook exemption and CI's "Pre-commit (all
+    files)" step can never be tripped by a golden's missing/extra newline.
+    """
+    golden_text = (_FIXTURES_DIR / f"{bundle_name}.golden").read_text(encoding="utf-8")
+
+    assert golden_text.endswith("\n")
+    assert not golden_text.endswith("\n\n")
+    assert golden_text.removesuffix("\n") == golden_text.rstrip("\n")
 
 
 @pytest.mark.parametrize("bundle_name", _BUNDLE_NAMES)
