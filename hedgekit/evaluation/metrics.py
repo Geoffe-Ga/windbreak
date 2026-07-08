@@ -38,8 +38,8 @@ if TYPE_CHECKING:
     from hedgekit.evaluation.registry import (
         EvaluationInputs,
         FixtureForecast,
-        ObservationWindow,
     )
+    from hedgekit.evaluation.windows import ObservationWindow
 
 #: One whole probability expressed in ppm (1.0 == 1_000_000 ppm). Also the
 #: ppm-scaling factor used to lift a mean/ratio back into ppm space.
@@ -147,12 +147,20 @@ def _scored_pairs(
 
     Forecasts whose ``market_ticker`` has no entry in ``inputs.resolutions`` are
     dropped (S13.6): they never enter a headline metric. The ``window`` argument
-    is part of every metric's signature; window-based slice selection itself
-    lands in issue #53, so it is accepted and threaded through unused here.
+    is part of every metric's signature as a declared label only; this function
+    scores whatever forecasts it is handed and never selects a slice itself.
+    Per-market slice selection for multi-forecast-per-market inputs is the
+    caller's responsibility: the registry forecast-track adapters (via
+    ``_windowed``) and the cohort functions (via ``_windowed_cohort_forecasts``)
+    apply :func:`hedgekit.evaluation.windows.resolve_window` before scoring, so
+    the forecasts they hand in are already the window's chosen records.
 
     Args:
         inputs: The evaluation inputs to score.
-        window: The observation window (reserved for issue #53).
+        window: The declared observation-window label, carried through unused by
+            this window-agnostic scorer. Per-market slice selection, when
+            applicable, is the caller's responsibility, applied via
+            :func:`hedgekit.evaluation.windows.resolve_window` before scoring.
 
     Returns:
         One :class:`_ScoredPair` per resolved forecast, in fixture order.
@@ -161,7 +169,7 @@ def _scored_pairs(
         ValueError: If no forecast resolves -- a metric must never be computed
             over an empty resolved set.
     """
-    del window  # Window-based slice selection lands in issue #53.
+    del window  # Label only; the caller already applied windows.resolve_window (#53).
     pairs: list[_ScoredPair] = []
     for forecast in inputs.forecasts:
         outcome = inputs.resolutions.get(forecast.market_ticker)
@@ -224,7 +232,10 @@ def resolved_forecast_terms(
 
     Args:
         inputs: The evaluation inputs to score.
-        window: The observation window (reserved for issue #53).
+        window: The declared observation-window label, carried through unused by
+            this window-agnostic scorer. Per-market slice selection, when
+            applicable, is the caller's responsibility, applied via
+            :func:`hedgekit.evaluation.windows.resolve_window` before scoring.
 
     Returns:
         One :class:`ForecastTerms` per resolved forecast, in fixture order.
@@ -280,7 +291,10 @@ def mean_brier(inputs: EvaluationInputs, *, window: ObservationWindow) -> int:
 
     Args:
         inputs: The evaluation inputs to score.
-        window: The observation window (reserved for issue #53).
+        window: The declared observation-window label, carried through unused by
+            this window-agnostic scorer. Per-market slice selection, when
+            applicable, is the caller's responsibility, applied via
+            :func:`hedgekit.evaluation.windows.resolve_window` before scoring.
 
     Returns:
         The mean Brier score, in ppm (``0`` best, ``PPM_SCALE`` worst).
@@ -300,7 +314,10 @@ def brier_skill(inputs: EvaluationInputs, *, window: ObservationWindow) -> int:
 
     Args:
         inputs: The evaluation inputs to score.
-        window: The observation window (reserved for issue #53).
+        window: The declared observation-window label, carried through unused by
+            this window-agnostic scorer. Per-market slice selection, when
+            applicable, is the caller's responsibility, applied via
+            :func:`hedgekit.evaluation.windows.resolve_window` before scoring.
 
     Returns:
         The Brier skill, in ppm (``PPM_SCALE`` == perfect; may be negative).
@@ -427,7 +444,10 @@ def mean_log_score(inputs: EvaluationInputs, *, window: ObservationWindow) -> in
 
     Args:
         inputs: The evaluation inputs to score.
-        window: The observation window (reserved for issue #53).
+        window: The declared observation-window label, carried through unused by
+            this window-agnostic scorer. Per-market slice selection, when
+            applicable, is the caller's responsibility, applied via
+            :func:`hedgekit.evaluation.windows.resolve_window` before scoring.
 
     Returns:
         The mean log score, in micro-nats (>= 0; lower is better).
@@ -465,7 +485,10 @@ def expected_calibration_error(
 
     Args:
         inputs: The evaluation inputs to score.
-        window: The observation window (reserved for issue #53).
+        window: The declared observation-window label, carried through unused by
+            this window-agnostic scorer. Per-market slice selection, when
+            applicable, is the caller's responsibility, applied via
+            :func:`hedgekit.evaluation.windows.resolve_window` before scoring.
 
     Returns:
         The expected calibration error, in ppm.
@@ -564,7 +587,10 @@ def calibration_slope(inputs: EvaluationInputs, *, window: ObservationWindow) ->
 
     Args:
         inputs: The evaluation inputs to score.
-        window: The observation window (reserved for issue #53).
+        window: The declared observation-window label, carried through unused by
+            this window-agnostic scorer. Per-market slice selection, when
+            applicable, is the caller's responsibility, applied via
+            :func:`hedgekit.evaluation.windows.resolve_window` before scoring.
 
     Returns:
         The calibration slope, in ppm (``PPM_SCALE`` == 1.0).
@@ -593,7 +619,10 @@ def calibration_intercept(
 
     Args:
         inputs: The evaluation inputs to score.
-        window: The observation window (reserved for issue #53).
+        window: The declared observation-window label, carried through unused by
+            this window-agnostic scorer. Per-market slice selection, when
+            applicable, is the caller's responsibility, applied via
+            :func:`hedgekit.evaluation.windows.resolve_window` before scoring.
 
     Returns:
         The calibration intercept, in ppm.
@@ -624,7 +653,10 @@ def sharpness(inputs: EvaluationInputs, *, window: ObservationWindow) -> int:
 
     Args:
         inputs: The evaluation inputs to score.
-        window: The observation window (reserved for issue #53).
+        window: The declared observation-window label, carried through unused by
+            this window-agnostic scorer. Per-market slice selection, when
+            applicable, is the caller's responsibility, applied via
+            :func:`hedgekit.evaluation.windows.resolve_window` before scoring.
 
     Returns:
         The sharpness, in ppm.
@@ -732,7 +764,10 @@ def reliability_diagram(
 
     Args:
         inputs: The evaluation inputs to score.
-        window: The observation window (reserved for issue #53).
+        window: The declared observation-window label, carried through unused by
+            this window-agnostic scorer. Per-market slice selection, when
+            applicable, is the caller's responsibility, applied via
+            :func:`hedgekit.evaluation.windows.resolve_window` before scoring.
 
     Returns:
         Ten contiguous :class:`ReliabilityBin`s spanning ``[0, PPM_SCALE)``.
@@ -844,7 +879,10 @@ def price_bucket_report(
 
     Args:
         inputs: The evaluation inputs to score.
-        window: The observation window (reserved for issue #53).
+        window: The declared observation-window label, carried through unused by
+            this window-agnostic scorer. Per-market slice selection, when
+            applicable, is the caller's responsibility, applied via
+            :func:`hedgekit.evaluation.windows.resolve_window` before scoring.
 
     Returns:
         Ten contiguous :class:`PriceBucket`s spanning ``[0, 10_000)`` pips.
@@ -936,7 +974,10 @@ def edge_bucket_report(
 
     Args:
         inputs: The evaluation inputs to score.
-        window: The observation window (reserved for issue #53).
+        window: The declared observation-window label, carried through unused by
+            this window-agnostic scorer. Per-market slice selection, when
+            applicable, is the caller's responsibility, applied via
+            :func:`hedgekit.evaluation.windows.resolve_window` before scoring.
 
     Returns:
         Six :class:`EdgeBucket`s over the :data:`EDGE_BUCKET_EDGES_PPM` boundaries.

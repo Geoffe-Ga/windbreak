@@ -20,6 +20,12 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from hedgekit.evaluation.abstention import summarize_abstentions
+from hedgekit.evaluation.cohorts import (
+    Cohort,
+    UndefinedBrier,
+    cohort_brier_table,
+)
 from hedgekit.evaluation.power import power_analysis
 from hedgekit.evaluation.registry import (
     HEADLINE_SKILL_METRIC,
@@ -39,6 +45,10 @@ from hedgekit.evaluation.temporal import (
     deployment_sequence_from_fixture,
     resolution_sequences_from_events,
 )
+from hedgekit.evaluation.windows import (
+    HEADLINE_OBSERVATION_WINDOW,
+    ObservationWindow,
+)
 from hedgekit.numeric.types import ProbabilityPpm
 
 if TYPE_CHECKING:
@@ -46,13 +56,28 @@ if TYPE_CHECKING:
     from pathlib import Path
     from typing import Any, Final
 
+    from hedgekit.evaluation.abstention import AbstentionSummary
+    from hedgekit.evaluation.cohorts import CohortBrier, CohortBrierValue
     from hedgekit.evaluation.power import PowerAnalysis
-    from hedgekit.evaluation.registry import MetricValue, ObservationWindow
+    from hedgekit.evaluation.registry import MetricValue
     from hedgekit.evaluation.temporal import RejectionEvent
 
 #: The blunt banner printed under the forecast track when the headline skill
 #: metric shows no positive demonstrated edge.
 NO_EDGE_BANNER: Final[str] = "NO EDGE DEMONSTRATED"
+
+#: The blunt banner printed in the selection section when the traded-vs-skipped
+#: Brier delta is negative -- the forecasts the strategy skipped scored better
+#: than the ones it traded.
+SKIPPED_OUTPERFORMED_BANNER: Final[str] = (
+    "SKIPPED FORECASTS OUTPERFORMED TRADED FORECASTS"
+)
+
+#: The observation window the selection-bias cohort/abstention detail is
+#: computed and labelled under (SPEC-EPIC_07 #53); the single headline window
+#: shared with the forecast-track metrics, sourced from its canonical home in
+#: :mod:`hedgekit.evaluation.windows` so the two call sites cannot drift apart.
+_SELECTION_WINDOW = HEADLINE_OBSERVATION_WINDOW
 
 #: The fixed seed the report's power analysis runs under, so a report over a
 #: given fixture is byte-identical across repeated runs (SPEC S3.5).
@@ -111,11 +136,18 @@ class EvaluationReport:
             report was constructed without one (e.g. in renderer unit tests).
         rejections: The temporal-integrity rejection ledger (#52), in fixture
             order; empty when every forecast was admitted.
+        cohorts: The per-cohort Brier table (#53), one row per
+            :class:`~hedgekit.evaluation.cohorts.Cohort`; empty when the report
+            was constructed without selection-bias detail.
+        abstentions: The abstention-wisdom summary (#53), or ``None`` when the
+            report carries no abstention detail.
     """
 
     tracks: tuple[TrackReport, ...]
     power: PowerAnalysis | None = None
     rejections: tuple[RejectionEvent, ...] = ()
+    cohorts: tuple[CohortBrier, ...] = ()
+    abstentions: AbstentionSummary | None = None
 
     def __post_init__(self) -> None:
         """Validate that the report carries each track exactly once.
@@ -139,12 +171,18 @@ class EvaluationReport:
             The rendered report: a section per track in fixed order, each with
             one line per metric (``name [window] = <int | NOT_IMPLEMENTED>``)
             and, under the forecast track, :data:`NO_EDGE_BANNER` when the
-            headline skill metric shows no positive edge; a trailing
-            ``== power ==`` section is appended when a power analysis is present,
-            and a trailing ``== rejections ==`` section when the temporal gate
-            ledgered at least one rejection.
+            headline skill metric shows no positive edge; a selection-bias detail
+            section (one line per cohort, :data:`SKIPPED_OUTPERFORMED_BANNER` when
+            the skipped cohort scored better, and an abstentions line) when the
+            report carries cohort/abstention data; a trailing ``== power ==``
+            section when a power analysis is present, and a trailing
+            ``== rejections ==`` section when the temporal gate ledgered at least
+            one rejection.
         """
         sections = [_render_track(track) for track in self.tracks]
+        selection = _render_selection_detail(self)
+        if selection is not None:
+            sections.append(selection)
         if self.power is not None:
             sections.append(self.power.render_text())
         if self.rejections:
@@ -159,10 +197,12 @@ def _format_value(value: MetricValue) -> str:
         value: The computed metric value.
 
     Returns:
-        The literal ``NOT_IMPLEMENTED`` for the sentinel, else the integer's
-        decimal string.
+        The literal ``NOT_IMPLEMENTED`` for the not-yet-built stub sentinel, the
+        literal ``UNDEFINED`` for a metric that is built but genuinely undefined
+        for these inputs (e.g. an empty cohort), else the integer's decimal
+        string.
     """
-    if isinstance(value, NotImplementedSentinel):
+    if isinstance(value, (NotImplementedSentinel, UndefinedBrier)):
         return value.name
     return str(value)
 
@@ -254,6 +294,109 @@ def _render_rejections(rejections: tuple[RejectionEvent, ...]) -> str:
     """
     lines = [_REJECTIONS_HEADER]
     lines.extend(_render_rejection(event) for event in rejections)
+    return "\n".join(lines)
+
+
+def _format_cohort_brier(value: CohortBrierValue) -> str:
+    """Render a cohort Brier value as text.
+
+    Args:
+        value: The cohort's mean Brier, or the ``UNDEFINED`` sentinel.
+
+    Returns:
+        The literal ``UNDEFINED`` for the sentinel, else the integer's decimal
+        string.
+    """
+    if isinstance(value, UndefinedBrier):
+        return value.name
+    return str(value)
+
+
+def _render_cohort(row: CohortBrier) -> str:
+    """Render one cohort row as a ``cohort <name> [<window>] n=<k> brier=<v>`` line.
+
+    Args:
+        row: The cohort Brier row to render.
+
+    Returns:
+        The rendered line.
+    """
+    return (
+        f"cohort {row.cohort.value} [{row.window.value}] "
+        f"n={row.count} brier={_format_cohort_brier(row.brier_ppm)}"
+    )
+
+
+def _skipped_outperformed(cohorts: tuple[CohortBrier, ...]) -> bool:
+    """Report whether the skipped cohort scored a strictly better Brier.
+
+    Args:
+        cohorts: The per-cohort Brier table.
+
+    Returns:
+        ``True`` iff both the ``TRADED`` and ``SKIPPED`` cohorts carry a real
+        ``int`` Brier and ``SKIPPED - TRADED`` is negative (skipped scored
+        lower, i.e. better).
+    """
+    brier_by_cohort = {row.cohort: row.brier_ppm for row in cohorts}
+    traded = brier_by_cohort.get(Cohort.TRADED)
+    skipped = brier_by_cohort.get(Cohort.SKIPPED)
+    if isinstance(traded, int) and isinstance(skipped, int):
+        return skipped - traded < 0
+    return False
+
+
+def _render_abstentions(summary: AbstentionSummary, *, window_value: str) -> str:
+    """Render the abstention-summary line for the selection section.
+
+    Args:
+        summary: The abstention-wisdom summary to render.
+        window_value: The observation-window label to tag the line with.
+
+    Returns:
+        The rendered ``abstentions [<window>] wise=.. unwise=.. forgone..`` line.
+    """
+    return (
+        f"abstentions [{window_value}] wise={summary.wise_count} "
+        f"unwise={summary.unwise_count} forgone_pnl_pips={summary.forgone_pnl_pips}"
+    )
+
+
+def _selection_window_value(report: EvaluationReport) -> str:
+    """Return the observation-window label the selection section renders under.
+
+    Args:
+        report: The report being rendered.
+
+    Returns:
+        The window value of the report's cohort rows when present, else the
+        default :data:`_SELECTION_WINDOW` label.
+    """
+    if report.cohorts:
+        return report.cohorts[0].window.value
+    return _SELECTION_WINDOW.value
+
+
+def _render_selection_detail(report: EvaluationReport) -> str | None:
+    """Render the selection-bias detail: cohort rows, banner, abstentions.
+
+    Args:
+        report: The report being rendered.
+
+    Returns:
+        The rendered selection-detail section, or ``None`` when the report
+        carries neither cohorts nor an abstention summary.
+    """
+    summary = report.abstentions
+    if not report.cohorts and summary is None:
+        return None
+    lines = [_render_cohort(row) for row in report.cohorts]
+    if _skipped_outperformed(report.cohorts):
+        lines.append(SKIPPED_OUTPERFORMED_BANNER)
+    if summary is not None:
+        lines.append(
+            _render_abstentions(summary, window_value=_selection_window_value(report))
+        )
     return "\n".join(lines)
 
 
@@ -420,6 +563,12 @@ def run_evaluation(*, fixture_path: Path) -> EvaluationReport:
     inputs = _build_inputs(payload)
     admitted, rejections = gate_evaluation_inputs(inputs)
     power = power_analysis(admitted, seed=POWER_ANALYSIS_SEED)
+    cohorts = cohort_brier_table(admitted, window=_SELECTION_WINDOW)
+    abstentions = summarize_abstentions(admitted)
     return EvaluationReport(
-        tracks=_build_tracks(admitted), power=power, rejections=rejections
+        tracks=_build_tracks(admitted),
+        power=power,
+        rejections=rejections,
+        cohorts=cohorts,
+        abstentions=abstentions,
     )

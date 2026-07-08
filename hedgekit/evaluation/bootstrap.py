@@ -30,7 +30,7 @@ from fractions import Fraction
 from typing import TYPE_CHECKING
 
 import hedgekit.evaluation.metrics as metrics
-from hedgekit.evaluation.registry import ObservationWindow
+from hedgekit.evaluation.windows import ObservationWindow
 from hedgekit.numeric.rounding import RoundingDirection, divide
 
 if TYPE_CHECKING:

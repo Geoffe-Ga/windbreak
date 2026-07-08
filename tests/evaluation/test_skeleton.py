@@ -269,9 +269,11 @@ def test_registered_metrics_has_the_nine_seed_specs_with_correct_shape() -> None
     Issue #51 registers five additional real forecast-track metrics
     (`log_score`, `expected_calibration_error`, `calibration_slope`,
     `calibration_intercept`, `sharpness`) alongside the original four seed
-    slots, growing the registry from four specs to nine; only
-    `traded_vs_skipped_brier_delta` and `fill_vs_model_slippage` remain
-    unimplemented (issues #52/out of #51's scope).
+    slots, growing the registry from four specs to nine. Issue #53 turns
+    `traded_vs_skipped_brier_delta` into a real computation too (delegating
+    to `hedgekit.evaluation.cohorts`) and moves its window from
+    `TRADE_TRIGGERING` to `LATEST_BEFORE_CLOSE`; only
+    `fill_vs_model_slippage` remains unimplemented.
     """
     from hedgekit.evaluation import (
         HEADLINE_SKILL_METRIC,
@@ -305,25 +307,23 @@ def test_registered_metrics_has_the_nine_seed_specs_with_correct_shape() -> None
     assert headline_spec.window == ObservationWindow.LATEST_BEFORE_CLOSE
     assert headline_spec.track == Track.FORECAST
 
+    selection_spec = metrics["traded_vs_skipped_brier_delta"]
+    assert selection_spec.window == ObservationWindow.LATEST_BEFORE_CLOSE
+    assert selection_spec.track == Track.SELECTION
 
-@pytest.mark.parametrize(
-    "metric_name",
-    ["traded_vs_skipped_brier_delta", "fill_vs_model_slippage"],
-)
-def test_seed_metric_compute_stubs_return_the_documented_value(
-    metric_name: str,
-) -> None:
-    """Each still-unimplemented seed metric's `compute` returns the
-    documented `NOT_IMPLEMENTED` sentinel when called with a minimal, empty
-    `EvaluationInputs`.
 
-    `brier` and `brier_skill_vs_executable_price` are dropped from this
-    parametrization as of issue #51: both are now real computations with
-    exact hand-computed values asserted in `test_metrics.py`'s
-    `test_mean_brier_matches_hand_computation_on_synthetic_fixture`
-    and `test_brier_skill_matches_hand_computation_on_synthetic_fixture`
-    respectively -- a "documented stub value" assertion no longer applies to
-    either.
+def test_seed_metric_compute_stub_returns_the_documented_value() -> None:
+    """`fill_vs_model_slippage`, the one seed metric still unimplemented,
+    returns the documented `NOT_IMPLEMENTED` sentinel when called with a
+    minimal, empty `EvaluationInputs`.
+
+    `brier` and `brier_skill_vs_executable_price` were dropped from this
+    check as of issue #51 (both are real computations, see
+    `test_metrics.py`), and `traded_vs_skipped_brier_delta` is dropped as of
+    issue #53: it now delegates to `hedgekit.evaluation.cohorts` and is a
+    real `int` computation too, so a "documented stub value" assertion no
+    longer applies to it either -- see `test_cohorts.py` for its exact
+    hand-computed values.
     """
     from hedgekit.evaluation import (
         NOT_IMPLEMENTED,
@@ -332,7 +332,7 @@ def test_seed_metric_compute_stubs_return_the_documented_value(
     )
 
     inputs = EvaluationInputs(forecasts=(), resolutions={})
-    spec = registered_metrics()[metric_name]
+    spec = registered_metrics()["fill_vs_model_slippage"]
 
     result = spec.compute(inputs)
 
