@@ -25,16 +25,19 @@ execution-track work lands in issue #52 and beyond.
 from __future__ import annotations
 
 import enum
+import functools
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import hedgekit.evaluation.metrics as metrics
+from hedgekit.evaluation.temporal import enforce_temporal_integrity
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
     from typing import Final
 
     from hedgekit.evaluation.resolution import ResolutionOutcome
+    from hedgekit.evaluation.temporal import RejectionEvent, TemporalContext
     from hedgekit.numeric.types import ProbabilityPpm
 
 #: Inclusive lower bound of a valid ``probability_ppm`` (0.0 as parts-per-million).
@@ -112,6 +115,9 @@ class FixtureForecast:
         correlation_group_id: Identifier of the correlation cluster this
             forecast belongs to, or ``None`` when the market is its own
             singleton cluster (the clustered-bootstrap resampling unit, #51).
+        created_sequence: The forecast's creation sequence on the append-only
+            ledger, or ``None`` when it carried no recorded provenance (which
+            the temporal gate treats as fail-closed pre-deployment, #52).
     """
 
     forecast_id: str
@@ -122,14 +128,16 @@ class FixtureForecast:
     traded: bool
     baseline_executable_price_pips: int
     correlation_group_id: str | None = None
+    created_sequence: int | None = None
 
     def __post_init__(self) -> None:
         """Validate the numeric invariants of the forecast row.
 
         Raises:
-            TypeError: If ``baseline_executable_price_pips`` is a ``bool`` (an
-                ``int`` subclass that must not masquerade as a price) or is not
-                an ``int`` at all -- mirroring the ``_IntUnit`` guard in
+            TypeError: If ``baseline_executable_price_pips`` or a non-``None``
+                ``created_sequence`` is a ``bool`` (an ``int`` subclass that
+                must not masquerade as a number) or is not an ``int`` at all --
+                mirroring the ``_IntUnit`` guard in
                 :mod:`hedgekit.numeric.types`; the message names the field.
             ValueError: If ``probability_ppm`` falls outside the inclusive
                 ``[0, 1_000_000]`` ppm range; the message names the field.
@@ -139,6 +147,14 @@ class FixtureForecast:
             raise TypeError(
                 "baseline_executable_price_pips requires a non-bool int, "
                 f"got {type(price).__name__}"
+            )
+        created = self.created_sequence
+        if created is not None and (
+            isinstance(created, bool) or not isinstance(created, int)
+        ):
+            raise TypeError(
+                "created_sequence requires a non-bool int, "
+                f"got {type(created).__name__}"
             )
         ppm = self.probability_ppm.value
         if not _PROBABILITY_PPM_MIN <= ppm <= _PROBABILITY_PPM_MAX:
@@ -155,10 +171,46 @@ class EvaluationInputs:
     Attributes:
         forecasts: The forecast rows to score, in fixture order.
         resolutions: Ground-truth outcomes keyed by ``market_ticker``.
+        temporal: The temporal context the run's forecasts are gated against
+            (#52), or ``None`` for a run that carries no temporal coordinates
+            (e.g. a renderer or stub unit test over empty inputs).
     """
 
     forecasts: tuple[FixtureForecast, ...]
     resolutions: Mapping[str, ResolutionOutcome]
+    temporal: TemporalContext | None = None
+
+
+def gate_evaluation_inputs(
+    inputs: EvaluationInputs,
+) -> tuple[EvaluationInputs, tuple[RejectionEvent, ...]]:
+    """Gate inputs for temporal integrity, returning admitted inputs + ledger.
+
+    Runs :func:`~hedgekit.evaluation.temporal.enforce_temporal_integrity` and
+    reconstructs an :class:`EvaluationInputs` carrying only the admitted
+    forecasts while preserving the original ``resolutions`` and ``temporal``
+    context, so a metric never observes a rejected record. This module owns the
+    reconstruction seam because :mod:`hedgekit.evaluation.temporal` cannot
+    import :class:`EvaluationInputs` without forming a cycle.
+
+    Args:
+        inputs: The raw evaluation inputs to gate.
+
+    Returns:
+        A ``(admitted_inputs, rejections)`` pair: the inputs narrowed to the
+        admitted forecasts, and the rejection ledger in fixture order.
+
+    Raises:
+        ValueError: If ``inputs.temporal`` is ``None`` while forecasts are
+            present (propagated from the gate; there is no silent skip).
+    """
+    result = enforce_temporal_integrity(inputs)
+    admitted = EvaluationInputs(
+        forecasts=result.admitted_forecasts,
+        resolutions=inputs.resolutions,
+        temporal=inputs.temporal,
+    )
+    return admitted, result.rejections
 
 
 #: The observation window every forecast-track metric is scored over (S13.4);
@@ -293,6 +345,34 @@ class MetricSpec:
     track: Track
     window: ObservationWindow
     compute: Callable[[EvaluationInputs], MetricValue]
+
+    def __post_init__(self) -> None:
+        """Wrap ``compute`` so every call is temporally gated at the choke point.
+
+        The original ``compute`` is replaced with a wrapper that first routes
+        its inputs through :func:`gate_evaluation_inputs` and only ever calls
+        the original with the *admitted* inputs. This is the single, mandatory
+        choke point: there is no ungated call path and no opt-out, so no
+        ``MetricSpec`` -- registered or freshly constructed -- can observe a
+        rejected record. Re-gating already-admitted inputs is idempotent, so the
+        wrap is safe to apply even when the caller has pre-gated.
+        """
+        original = self.compute
+
+        @functools.wraps(original)
+        def gated_compute(inputs: EvaluationInputs) -> MetricValue:
+            """Gate inputs then delegate to the original ``compute``.
+
+            Args:
+                inputs: The raw evaluation inputs handed to the metric.
+
+            Returns:
+                The original metric's value over the temporally-admitted inputs.
+            """
+            admitted, _ = gate_evaluation_inputs(inputs)
+            return original(admitted)
+
+        object.__setattr__(self, "compute", gated_compute)
 
 
 #: The registry key of the headline forecast-skill metric the renderer gates the

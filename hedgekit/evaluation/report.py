@@ -27,9 +27,18 @@ from hedgekit.evaluation.registry import (
     FixtureForecast,
     NotImplementedSentinel,
     Track,
+    gate_evaluation_inputs,
     registered_metrics,
 )
-from hedgekit.evaluation.resolution import resolutions_from_fixture
+from hedgekit.evaluation.resolution import (
+    resolutions_from_fixture,
+    settlement_events_from_fixture,
+)
+from hedgekit.evaluation.temporal import (
+    TemporalContext,
+    deployment_sequence_from_fixture,
+    resolution_sequences_from_events,
+)
 from hedgekit.numeric.types import ProbabilityPpm
 
 if TYPE_CHECKING:
@@ -39,6 +48,7 @@ if TYPE_CHECKING:
 
     from hedgekit.evaluation.power import PowerAnalysis
     from hedgekit.evaluation.registry import MetricValue, ObservationWindow
+    from hedgekit.evaluation.temporal import RejectionEvent
 
 #: The blunt banner printed under the forecast track when the headline skill
 #: metric shows no positive demonstrated edge.
@@ -52,6 +62,11 @@ POWER_ANALYSIS_SEED = 20_240_607
 _FORECASTS_KEY = "forecasts"
 #: JSON top-level key holding the list of resolution entries.
 _RESOLUTIONS_KEY = "resolutions"
+#: JSON top-level key holding the ordered settlement-event stream (#52 gating).
+_SETTLEMENT_EVENTS_KEY = "settlement_events"
+#: Render header introducing the rejection-ledger section, emitted only when the
+#: report carries at least one temporal-integrity rejection (#52).
+_REJECTIONS_HEADER = "== rejections =="
 #: JSON field naming a forecast's probability, validated before construction.
 _PROBABILITY_FIELD = "probability_ppm"
 #: Threshold at or below which the headline skill metric shows no edge.
@@ -94,10 +109,13 @@ class EvaluationReport:
         tracks: The three track reports, one per :class:`Track`, in order.
         power: The clustered-bootstrap power analysis, or ``None`` when the
             report was constructed without one (e.g. in renderer unit tests).
+        rejections: The temporal-integrity rejection ledger (#52), in fixture
+            order; empty when every forecast was admitted.
     """
 
     tracks: tuple[TrackReport, ...]
     power: PowerAnalysis | None = None
+    rejections: tuple[RejectionEvent, ...] = ()
 
     def __post_init__(self) -> None:
         """Validate that the report carries each track exactly once.
@@ -122,11 +140,15 @@ class EvaluationReport:
             one line per metric (``name [window] = <int | NOT_IMPLEMENTED>``)
             and, under the forecast track, :data:`NO_EDGE_BANNER` when the
             headline skill metric shows no positive edge; a trailing
-            ``== power ==`` section is appended when a power analysis is present.
+            ``== power ==`` section is appended when a power analysis is present,
+            and a trailing ``== rejections ==`` section when the temporal gate
+            ledgered at least one rejection.
         """
         sections = [_render_track(track) for track in self.tracks]
         if self.power is not None:
             sections.append(self.power.render_text())
+        if self.rejections:
+            sections.append(_render_rejections(self.rejections))
         return "\n".join(sections)
 
 
@@ -205,6 +227,36 @@ def _render_track(track: TrackReport) -> str:
     return "\n".join(lines)
 
 
+def _render_rejection(event: RejectionEvent) -> str:
+    """Render one rejection as a single auditable ledger line.
+
+    Args:
+        event: The rejection event to render.
+
+    Returns:
+        A line carrying the immutable :data:`EVALUATION_RECORD_REJECTED` token
+        followed by the record's identity, market, and reason.
+    """
+    return (
+        f"{event.event_type} {event.forecast_id} "
+        f"{event.market_ticker} {event.reason.value}"
+    )
+
+
+def _render_rejections(rejections: tuple[RejectionEvent, ...]) -> str:
+    """Render the rejection-ledger section.
+
+    Args:
+        rejections: The non-empty rejection ledger, in fixture order.
+
+    Returns:
+        The rendered ``== rejections ==`` section, one line per rejection.
+    """
+    lines = [_REJECTIONS_HEADER]
+    lines.extend(_render_rejection(event) for event in rejections)
+    return "\n".join(lines)
+
+
 def _probability_from_raw(raw: object) -> ProbabilityPpm:
     """Construct a :class:`ProbabilityPpm` from a raw fixture value.
 
@@ -248,6 +300,7 @@ def _forecast_from_entry(entry: Mapping[str, Any]) -> FixtureForecast:
         traded=entry["traded"],
         baseline_executable_price_pips=entry["baseline_executable_price_pips"],
         correlation_group_id=entry.get("correlation_group_id"),
+        created_sequence=entry.get("created_sequence"),
     )
 
 
@@ -266,18 +319,58 @@ def _require_top_level_keys(payload: Mapping[str, Any]) -> None:
             raise ValueError(f"fixture is missing required key: {key!r}")
 
 
+def _temporal_context_from_payload(payload: Mapping[str, Any]) -> TemporalContext:
+    """Build the temporal-integrity context from a fixture payload (#52).
+
+    The deployment sequence comes from the fixture's ``mode_transitions`` block
+    and the per-market resolution sequences are folded from its
+    ``settlement_events`` stream, so the temporal gate has both coordinates it
+    needs to classify every forecast.
+
+    Args:
+        payload: The decoded fixture payload, already forecast/resolution
+            validated.
+
+    Returns:
+        The :class:`TemporalContext` for the run.
+
+    Raises:
+        ValueError: If the ``settlement_events`` block is absent (message names
+            it) or the ``mode_transitions`` block is absent or empty (message
+            names it), consistent with :func:`_require_top_level_keys`.
+        TypeError: If a ``sequence_number`` is a ``bool`` or not an ``int``.
+    """
+    if _SETTLEMENT_EVENTS_KEY not in payload:
+        raise ValueError(f"fixture is missing required key: {_SETTLEMENT_EVENTS_KEY!r}")
+    resolution_sequences = resolution_sequences_from_events(
+        settlement_events_from_fixture(payload)
+    )
+    deployment_sequence = deployment_sequence_from_fixture(payload)
+    return TemporalContext(
+        deployment_sequence=deployment_sequence,
+        resolution_sequences=resolution_sequences,
+    )
+
+
 def _build_inputs(payload: Mapping[str, Any]) -> EvaluationInputs:
     """Build typed :class:`EvaluationInputs` from a validated payload.
+
+    Forecast and resolution rows are constructed and validated first, so a
+    malformed forecast (out-of-range probability, ``bool``-as-int) surfaces its
+    own error before the temporal-block validation runs.
 
     Args:
         payload: The decoded fixture payload, already key-checked.
 
     Returns:
-        The typed inputs for the evaluation run.
+        The typed inputs for the evaluation run, carrying the temporal context.
     """
     forecasts = tuple(_forecast_from_entry(entry) for entry in payload[_FORECASTS_KEY])
     resolutions = resolutions_from_fixture(payload)
-    return EvaluationInputs(forecasts=forecasts, resolutions=resolutions)
+    temporal = _temporal_context_from_payload(payload)
+    return EvaluationInputs(
+        forecasts=forecasts, resolutions=resolutions, temporal=temporal
+    )
 
 
 def _build_tracks(inputs: EvaluationInputs) -> tuple[TrackReport, ...]:
@@ -317,12 +410,16 @@ def run_evaluation(*, fixture_path: Path) -> EvaluationReport:
         The assembled :class:`EvaluationReport`.
 
     Raises:
-        ValueError: If a required top-level key is missing, a ``probability_ppm``
-            is out of range, or a resolution is malformed.
+        ValueError: If a required top-level key is missing (including the #52
+            ``mode_transitions`` / ``settlement_events`` blocks), a
+            ``probability_ppm`` is out of range, or a resolution is malformed.
         TypeError: If a numeric field carries a ``bool`` masquerading as an int.
     """
     payload: Any = json.loads(fixture_path.read_text(encoding="utf-8"))
     _require_top_level_keys(payload)
     inputs = _build_inputs(payload)
-    power = power_analysis(inputs, seed=POWER_ANALYSIS_SEED)
-    return EvaluationReport(tracks=_build_tracks(inputs), power=power)
+    admitted, rejections = gate_evaluation_inputs(inputs)
+    power = power_analysis(admitted, seed=POWER_ANALYSIS_SEED)
+    return EvaluationReport(
+        tracks=_build_tracks(admitted), power=power, rejections=rejections
+    )

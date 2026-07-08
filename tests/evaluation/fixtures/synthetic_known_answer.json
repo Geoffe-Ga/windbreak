@@ -1,5 +1,5 @@
 {
-  "description": "EPIC_07 known-answer synthetic dataset shared across issues #49-#55 (the evaluation-harness epic). All probabilities and prices are integer-scaled (probability_ppm in parts-per-million, baseline_executable_price_pips in units of 1e-4 payout-dollars) -- no float literal appears anywhere in this file, per SPEC S6.1's integer-only money/probability path. `expected.brier_mean_ppm` is hand-computed independently of any implementation: for each of the 10 forecasts below, let p = probability_ppm / 1_000_000 and o = 1 if the resolution is 'yes' else 0; the per-forecast Brier term is (p - o)^2. Because every probability here is a multiple of 0.1 and every outcome is 0 or 1, each term is an exact multiple of 0.01: MKT-01 0.01, MKT-02 0.01, MKT-03 0.09, MKT-04 0.09, MKT-05 0.25, MKT-06 0.25, MKT-07 0.04, MKT-08 0.04, MKT-09 0.00, MKT-10 0.00 -- sum 0.78, mean over 10 forecasts 0.078, scaled to ppm (x1_000_000) = 78000. Issue #50 adds two additive blocks. (1) `quote_snapshots` + each forecast's `baseline_quote_snapshot_id`: every forecast's baseline reads its OWN snapshot (ask == its existing baseline_executable_price_pips, bid == max(ask-200, 0)); MKT-10's snapshot floors the bid at max(ask-200, 0) = max(100-200, 0) = 0. `qs-01-late` is a decoy snapshot for MKT-01 that no forecast references, proving a baseline never reads a later snapshot. Primary baseline (yes_ask_pips*100 ppm) per forecast in order: 880000, 150000, 720000, 320000, 550000, 480000, 790000, 220000, 990000, 10000. Midpoint baseline ((yes_bid_pips+yes_ask_pips)*50 ppm) per forecast in order: 870000, 140000, 710000, 310000, 540000, 470000, 780000, 210000, 980000, 5000. (2) `base_rates`: present for MKT-01..MKT-05 only (600000, 200000, 650000, 400000, 500000 ppm respectively), absent (None) for MKT-06..MKT-10. (3) `settlement_events`: a strictly-increasing global sequence over three disjoint tickers (KXEXAMPLE-26-T1..T3, deliberately outside the MKT-01..10 namespace so the static `resolutions` block never contradicts the event-derived tracker): seq1 settlement T1=yes, seq2 settlement_reversed T1, seq3 settlement T1=no, seq4 settlement T2=yes, seq5 settlement T3=no, seq6 settlement_reversed T3. Derived state: T1 RESOLVED/NO/reversal_count=1, T2 RESOLVED/YES/reversal_count=0, T3 REVERSED/None/reversal_count=1, any unseen ticker UNRESOLVED/None/reversal_count=0. `resolved_outcomes()` over the full stream therefore equals {T1: NO, T2: YES} -- T3 drops out once reversed.",
+  "description": "EPIC_07 known-answer synthetic dataset shared across issues #49-#55 (the evaluation-harness epic). All probabilities and prices are integer-scaled (probability_ppm in parts-per-million, baseline_executable_price_pips in units of 1e-4 payout-dollars) -- no float literal appears anywhere in this file, per SPEC S6.1's integer-only money/probability path. `expected.brier_mean_ppm` is hand-computed independently of any implementation: for each of the 10 forecasts below, let p = probability_ppm / 1_000_000 and o = 1 if the resolution is 'yes' else 0; the per-forecast Brier term is (p - o)^2. Because every probability here is a multiple of 0.1 and every outcome is 0 or 1, each term is an exact multiple of 0.01: MKT-01 0.01, MKT-02 0.01, MKT-03 0.09, MKT-04 0.09, MKT-05 0.25, MKT-06 0.25, MKT-07 0.04, MKT-08 0.04, MKT-09 0.00, MKT-10 0.00 -- sum 0.78, mean over 10 forecasts 0.078, scaled to ppm (x1_000_000) = 78000. Issue #50 adds two additive blocks. (1) `quote_snapshots` + each forecast's `baseline_quote_snapshot_id`: every forecast's baseline reads its OWN snapshot (ask == its existing baseline_executable_price_pips, bid == max(ask-200, 0)); MKT-10's snapshot floors the bid at max(ask-200, 0) = max(100-200, 0) = 0. `qs-01-late` is a decoy snapshot for MKT-01 that no forecast references, proving a baseline never reads a later snapshot. Primary baseline (yes_ask_pips*100 ppm) per forecast in order: 880000, 150000, 720000, 320000, 550000, 480000, 790000, 220000, 990000, 10000. Midpoint baseline ((yes_bid_pips+yes_ask_pips)*50 ppm) per forecast in order: 870000, 140000, 710000, 310000, 540000, 470000, 780000, 210000, 980000, 5000. (2) `base_rates`: present for MKT-01..MKT-05 only (600000, 200000, 650000, 400000, 500000 ppm respectively), absent (None) for MKT-06..MKT-10. (3) `settlement_events`: a strictly-increasing global sequence over three disjoint tickers (KXEXAMPLE-26-T1..T3, deliberately outside the MKT-01..10 namespace so the static `resolutions` block never contradicts the event-derived tracker): seq1 settlement T1=yes, seq2 settlement_reversed T1, seq3 settlement T1=no, seq4 settlement T2=yes, seq5 settlement T3=no, seq6 settlement_reversed T3. Derived state: T1 RESOLVED/NO/reversal_count=1, T2 RESOLVED/YES/reversal_count=0, T3 REVERSED/None/reversal_count=1, any unseen ticker UNRESOLVED/None/reversal_count=0. `resolved_outcomes()` over the full stream therefore equals {T1: NO, T2: YES} -- T3 drops out once reversed. Issue #52 adds two more additive pieces, purely for the temporal-integrity gate's regression coverage: each forecast eval-fc-01..10 now carries `created_sequence` 8..17 respectively (one past the prior forecast's, strictly increasing with fixture order), and a top-level `mode_transitions: [{sequence_number: 7, event_type: 'mode_transition', mode: 'paper'}]` fixes deployment at sequence 7. None of MKT-01..MKT-10 ever appears in `settlement_events` (that block only ever names KXEXAMPLE-26-T1..T3), so `resolution_sequences_from_events` never assigns any MKT-* ticker a resolution sequence -- BACKDATED is vacuous for all ten forecasts under this fixture's static-resolutions legacy path. Every created_sequence (8..17) exceeds the deployment sequence (7), so none is PRE_DEPLOYMENT. Every MKT-* ticker has a static `resolutions` entry, so none is UNRESOLVED. Net effect: `enforce_temporal_integrity` admits all ten forecasts and ledgers zero rejections; `run_evaluation`'s headline Brier over this fixture is unchanged at 78000 ppm.",
   "forecasts": [
     {
       "forecast_id": "eval-fc-01",
@@ -9,7 +9,8 @@
       "abstention_reason": null,
       "traded": true,
       "baseline_executable_price_pips": 8800,
-      "baseline_quote_snapshot_id": "qs-01"
+      "baseline_quote_snapshot_id": "qs-01",
+      "created_sequence": 8
     },
     {
       "forecast_id": "eval-fc-02",
@@ -19,7 +20,8 @@
       "abstention_reason": "low_liquidity",
       "traded": false,
       "baseline_executable_price_pips": 1500,
-      "baseline_quote_snapshot_id": "qs-02"
+      "baseline_quote_snapshot_id": "qs-02",
+      "created_sequence": 9
     },
     {
       "forecast_id": "eval-fc-03",
@@ -29,7 +31,8 @@
       "abstention_reason": null,
       "traded": true,
       "baseline_executable_price_pips": 7200,
-      "baseline_quote_snapshot_id": "qs-03"
+      "baseline_quote_snapshot_id": "qs-03",
+      "created_sequence": 10
     },
     {
       "forecast_id": "eval-fc-04",
@@ -39,7 +42,8 @@
       "abstention_reason": "risk_kernel_veto",
       "traded": false,
       "baseline_executable_price_pips": 3200,
-      "baseline_quote_snapshot_id": "qs-04"
+      "baseline_quote_snapshot_id": "qs-04",
+      "created_sequence": 11
     },
     {
       "forecast_id": "eval-fc-05",
@@ -49,7 +53,8 @@
       "abstention_reason": null,
       "traded": true,
       "baseline_executable_price_pips": 5500,
-      "baseline_quote_snapshot_id": "qs-05"
+      "baseline_quote_snapshot_id": "qs-05",
+      "created_sequence": 12
     },
     {
       "forecast_id": "eval-fc-06",
@@ -59,7 +64,8 @@
       "abstention_reason": "stale_price",
       "traded": false,
       "baseline_executable_price_pips": 4800,
-      "baseline_quote_snapshot_id": "qs-06"
+      "baseline_quote_snapshot_id": "qs-06",
+      "created_sequence": 13
     },
     {
       "forecast_id": "eval-fc-07",
@@ -69,7 +75,8 @@
       "abstention_reason": null,
       "traded": true,
       "baseline_executable_price_pips": 7900,
-      "baseline_quote_snapshot_id": "qs-07"
+      "baseline_quote_snapshot_id": "qs-07",
+      "created_sequence": 14
     },
     {
       "forecast_id": "eval-fc-08",
@@ -79,7 +86,8 @@
       "abstention_reason": "below_edge_threshold",
       "traded": false,
       "baseline_executable_price_pips": 2200,
-      "baseline_quote_snapshot_id": "qs-08"
+      "baseline_quote_snapshot_id": "qs-08",
+      "created_sequence": 15
     },
     {
       "forecast_id": "eval-fc-09",
@@ -89,7 +97,8 @@
       "abstention_reason": null,
       "traded": true,
       "baseline_executable_price_pips": 9900,
-      "baseline_quote_snapshot_id": "qs-09"
+      "baseline_quote_snapshot_id": "qs-09",
+      "created_sequence": 16
     },
     {
       "forecast_id": "eval-fc-10",
@@ -99,7 +108,8 @@
       "abstention_reason": "market_closed",
       "traded": false,
       "baseline_executable_price_pips": 100,
-      "baseline_quote_snapshot_id": "qs-10"
+      "baseline_quote_snapshot_id": "qs-10",
+      "created_sequence": 17
     }
   ],
   "resolutions": [
@@ -133,6 +143,13 @@
     { "market_ticker": "MKT-03", "base_rate_ppm": 650000 },
     { "market_ticker": "MKT-04", "base_rate_ppm": 400000 },
     { "market_ticker": "MKT-05", "base_rate_ppm": 500000 }
+  ],
+  "mode_transitions": [
+    {
+      "sequence_number": 7,
+      "event_type": "mode_transition",
+      "mode": "paper"
+    }
   ],
   "settlement_events": [
     {
