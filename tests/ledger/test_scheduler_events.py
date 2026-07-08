@@ -1,15 +1,15 @@
 """Tests for the six new PAPER-loop ledger event types (issue #48, RED).
 
-`hedgekit.ledger.events` does not yet define `MarketSnapshotRecorded`,
+`windbreak.ledger.events` does not yet define `MarketSnapshotRecorded`,
 `ScreenDecisionRecorded`, `ForecastCreated`, `SelectorDecisionRecorded`,
 `EquitySampled`, or `PositionsSnapshotRecorded`, so every import below fails
 collection with `ImportError: cannot import name 'MarketSnapshotRecorded'
-from 'hedgekit.ledger.events'` -- the expected Gate 1 RED state for issue #48.
+from 'windbreak.ledger.events'` -- the expected Gate 1 RED state for issue #48.
 
 Mirrors `tests/ledger/test_ledger_events.py`'s own registry-round-trip idiom
 exactly (`EVENT_TYPES[event_type](component=..., **envelope["data"])`
 reconstructs the original event), and additionally proves each type is
-re-exported from `hedgekit.ledger` (the package `__init__.py`), matching every
+re-exported from `windbreak.ledger` (the package `__init__.py`), matching every
 prior event type's own re-export contract.
 
 Every numeric field pinned here is a scaled int (pips/centis/micros/epoch
@@ -29,7 +29,7 @@ def test_market_snapshot_recorded_populates_event_type_and_payload() -> None:
     """`MarketSnapshotRecorded`'s ergonomic constructor derives the Event
     contract and assembles its payload from typed fields.
     """
-    from hedgekit.ledger.events import MarketSnapshotRecorded
+    from windbreak.ledger.events import MarketSnapshotRecorded
 
     event = MarketSnapshotRecorded(
         component="scheduler",
@@ -52,7 +52,7 @@ def test_market_snapshot_recorded_populates_event_type_and_payload() -> None:
 
 def test_market_snapshot_recorded_accepts_none_bid_or_ask() -> None:
     """A one-sided (or empty) book is representable: `None` for the missing side."""
-    from hedgekit.ledger.events import MarketSnapshotRecorded
+    from windbreak.ledger.events import MarketSnapshotRecorded
 
     event = MarketSnapshotRecorded(
         component="scheduler",
@@ -68,7 +68,7 @@ def test_market_snapshot_recorded_accepts_none_bid_or_ask() -> None:
 
 def test_screen_decision_recorded_populates_event_type_and_payload() -> None:
     """`ScreenDecisionRecorded`'s constructor derives the Event contract."""
-    from hedgekit.ledger.events import ScreenDecisionRecorded
+    from windbreak.ledger.events import ScreenDecisionRecorded
 
     event = ScreenDecisionRecorded(
         component="scheduler",
@@ -87,7 +87,7 @@ def test_screen_decision_recorded_populates_event_type_and_payload() -> None:
 
 def test_forecast_created_populates_event_type_and_payload() -> None:
     """`ForecastCreated`'s constructor derives the Event contract."""
-    from hedgekit.ledger.events import ForecastCreated
+    from windbreak.ledger.events import ForecastCreated
 
     event = ForecastCreated(
         component="scheduler",
@@ -110,7 +110,7 @@ def test_forecast_created_populates_event_type_and_payload() -> None:
 
 def test_selector_decision_recorded_populates_event_type_and_payload() -> None:
     """`SelectorDecisionRecorded`'s constructor derives the Event contract."""
-    from hedgekit.ledger.events import SelectorDecisionRecorded
+    from windbreak.ledger.events import SelectorDecisionRecorded
 
     event = SelectorDecisionRecorded(
         component="scheduler",
@@ -133,7 +133,7 @@ def test_equity_sampled_populates_event_type_and_payload() -> None:
     """`EquitySampled`'s constructor derives the Event contract; every field
     is a scaled int, never a float (SPEC S6.1).
     """
-    from hedgekit.ledger.events import EquitySampled
+    from windbreak.ledger.events import EquitySampled
 
     event = EquitySampled(
         component="scheduler",
@@ -163,7 +163,7 @@ def test_equity_sampled_rejects_a_float_equity(monkeypatch: pytest.MonkeyPatch) 
     an explicit isinstance check here, so a mutation dropping that
     expectation is caught.
     """
-    from hedgekit.ledger.events import EquitySampled
+    from windbreak.ledger.events import EquitySampled
 
     event = EquitySampled(
         component="scheduler", equity_micros=1_000_000, floor_micros=0, epoch_s=1
@@ -174,7 +174,7 @@ def test_equity_sampled_rejects_a_float_equity(monkeypatch: pytest.MonkeyPatch) 
 
 def test_positions_snapshot_recorded_populates_event_type_and_payload() -> None:
     """`PositionsSnapshotRecorded`'s constructor derives the Event contract."""
-    from hedgekit.ledger.events import PositionsSnapshotRecorded
+    from windbreak.ledger.events import PositionsSnapshotRecorded
 
     positions = [
         {"ticker": "MKT-DEEP", "quantity_centis": 200, "average_price_pips": 4600}
@@ -187,7 +187,7 @@ def test_positions_snapshot_recorded_populates_event_type_and_payload() -> None:
 
 def test_positions_snapshot_recorded_accepts_an_empty_positions_list() -> None:
     """A flat account (no open positions) is representable as an empty list."""
-    from hedgekit.ledger.events import PositionsSnapshotRecorded
+    from windbreak.ledger.events import PositionsSnapshotRecorded
 
     event = PositionsSnapshotRecorded(component="scheduler", positions=[])
 
@@ -199,7 +199,7 @@ def test_positions_snapshot_recorded_accepts_an_empty_positions_list() -> None:
 
 def test_event_types_registry_round_trips_market_snapshot_recorded() -> None:
     """A registry lookup plus persisted `data` reconstructs `MarketSnapshotRecorded`."""
-    from hedgekit.ledger.events import EVENT_TYPES, MarketSnapshotRecorded
+    from windbreak.ledger.events import EVENT_TYPES, MarketSnapshotRecorded
 
     original = MarketSnapshotRecorded(
         component="scheduler",
@@ -218,7 +218,7 @@ def test_event_types_registry_round_trips_market_snapshot_recorded() -> None:
 
 def test_event_types_registry_round_trips_screen_decision_recorded() -> None:
     """A registry lookup plus persisted `data` reconstructs `ScreenDecisionRecorded`."""
-    from hedgekit.ledger.events import EVENT_TYPES, ScreenDecisionRecorded
+    from windbreak.ledger.events import EVENT_TYPES, ScreenDecisionRecorded
 
     original = ScreenDecisionRecorded(
         component="scheduler", ticker="MKT-DEEP", eligible=False, blocked_by=["sports"]
@@ -233,7 +233,7 @@ def test_event_types_registry_round_trips_screen_decision_recorded() -> None:
 
 def test_event_types_registry_round_trips_forecast_created() -> None:
     """A registry lookup plus persisted `data` reconstructs `ForecastCreated`."""
-    from hedgekit.ledger.events import EVENT_TYPES, ForecastCreated
+    from windbreak.ledger.events import EVENT_TYPES, ForecastCreated
 
     original = ForecastCreated(
         component="scheduler",
@@ -253,7 +253,7 @@ def test_event_types_registry_round_trips_forecast_created() -> None:
 
 def test_event_types_registry_round_trips_selector_decision_recorded() -> None:
     """A registry lookup plus persisted `data` rebuilds `SelectorDecisionRecorded`."""
-    from hedgekit.ledger.events import EVENT_TYPES, SelectorDecisionRecorded
+    from windbreak.ledger.events import EVENT_TYPES, SelectorDecisionRecorded
 
     original = SelectorDecisionRecorded(
         component="scheduler",
@@ -272,7 +272,7 @@ def test_event_types_registry_round_trips_selector_decision_recorded() -> None:
 
 def test_event_types_registry_round_trips_equity_sampled() -> None:
     """A registry lookup plus persisted `data` reconstructs `EquitySampled`."""
-    from hedgekit.ledger.events import EVENT_TYPES, EquitySampled
+    from windbreak.ledger.events import EVENT_TYPES, EquitySampled
 
     original = EquitySampled(
         component="scheduler",
@@ -290,7 +290,7 @@ def test_event_types_registry_round_trips_equity_sampled() -> None:
 
 def test_event_types_registry_round_trips_positions_snapshot_recorded() -> None:
     """A registry lookup plus persisted `data` rebuilds `PositionsSnapshotRecorded`."""
-    from hedgekit.ledger.events import EVENT_TYPES, PositionsSnapshotRecorded
+    from windbreak.ledger.events import EVENT_TYPES, PositionsSnapshotRecorded
 
     original = PositionsSnapshotRecorded(
         component="scheduler",
@@ -306,16 +306,16 @@ def test_event_types_registry_round_trips_positions_snapshot_recorded() -> None:
     assert rebuilt == original
 
 
-# --- Re-exported from hedgekit.ledger (the package __init__), like every -----
+# --- Re-exported from windbreak.ledger (the package __init__), like every -----
 # --- other concrete event type ------------------------------------------------
 
 
-def test_all_six_new_event_types_are_reexported_from_hedgekit_ledger() -> None:
-    """Every new event type importable from `hedgekit.ledger` directly, not
-    only from `hedgekit.ledger.events` -- matching every existing event
-    type's own re-export contract (see `hedgekit/ledger/__init__.py`).
+def test_all_six_new_event_types_are_reexported_from_windbreak_ledger() -> None:
+    """Every new event type importable from `windbreak.ledger` directly, not
+    only from `windbreak.ledger.events` -- matching every existing event
+    type's own re-export contract (see `windbreak/ledger/__init__.py`).
     """
-    import hedgekit.ledger as ledger_package
+    import windbreak.ledger as ledger_package
 
     for name in (
         "MarketSnapshotRecorded",
@@ -326,5 +326,5 @@ def test_all_six_new_event_types_are_reexported_from_hedgekit_ledger() -> None:
         "PositionsSnapshotRecorded",
     ):
         assert hasattr(ledger_package, name), (
-            f"{name} not re-exported from hedgekit.ledger"
+            f"{name} not re-exported from windbreak.ledger"
         )

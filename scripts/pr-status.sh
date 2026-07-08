@@ -17,7 +17,7 @@ usage() {
     cat << EOF
 Usage: $(basename "$0") <subcommand> [OPTIONS]
 
-GitHub Actions workflow monitor for PRs (hedgekit).
+GitHub Actions workflow monitor for PRs (windbreak).
 
 SUBCOMMANDS:
     list [--branch NAME] [--limit N]    List recent CI workflow runs

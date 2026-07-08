@@ -1,8 +1,8 @@
-"""Failing-first tests for `hedgekit.order_gateway.state_machine` (issue #37, RED).
+"""Failing-first tests for `windbreak.order_gateway.state_machine` (issue #37, RED).
 
-`hedgekit/order_gateway/state_machine.py` does not exist yet, so importing it
+`windbreak/order_gateway/state_machine.py` does not exist yet, so importing it
 fails collection with `ModuleNotFoundError: No module named
-'hedgekit.order_gateway.state_machine'` -- the expected Gate 1 RED state for
+'windbreak.order_gateway.state_machine'` -- the expected Gate 1 RED state for
 issue #37.
 
 This module hand-authors an independent, from-the-issue-spec `(state, event)
@@ -22,7 +22,7 @@ import itertools
 
 import pytest
 
-from hedgekit.order_gateway.state_machine import (
+from windbreak.order_gateway.state_machine import (
     LEGAL_TRANSITIONS,
     IllegalTransitionError,
     OrderEvent,

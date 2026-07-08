@@ -1,6 +1,6 @@
 ## Role
 
-You are a senior Python engineer working in this repo's `hedgekit/forecast/` package, experienced with model-drift monitoring and operational cost controls.
+You are a senior Python engineer working in this repo's `windbreak/forecast/` package, experienced with model-drift monitoring and operational cost controls.
 
 ## Goal
 
@@ -12,9 +12,9 @@ A weekly canary set (~20 stable questions with reference answers/distributions) 
 - **Predecessor issue(s):** #23 and #25 (must be merged first — cost ledgering and pinned ensemble exist).
 - **SPEC section:** `plans/SPEC_v3.md` §8.6 (canary set, drift alerting), §4 T14 (silent drift) and T11 (cost blowout), §16 `forecast.canary` + `forecast.budget` config, §8.9 ("canary-drift alerting tested with synthetic drift"), §14 (canary status + cost meter are dashboard surfaces; mandatory canary-drift alert).
 - **Files involved:**
-  - `hedgekit/forecast/canary.py` — canary set runner, drift scoring vs. reference, ack state (new)
-  - `hedgekit/forecast/budget.py` — per-forecast/per-day/max-pages enforcement (new)
-  - `hedgekit/forecast/pipeline.py` — budget hooks; drift-unacked ⇒ records marked live-ineligible (modify)
+  - `windbreak/forecast/canary.py` — canary set runner, drift scoring vs. reference, ack state (new)
+  - `windbreak/forecast/budget.py` — per-forecast/per-day/max-pages enforcement (new)
+  - `windbreak/forecast/pipeline.py` — budget hooks; drift-unacked ⇒ records marked live-ineligible (modify)
   - `tests/forecast/test_canary.py`, `tests/forecast/test_budget.py` (new)
 - **Prior decisions:** drift tolerance and cadence come from config (`canary: {enabled: true, cadence_days: 7}`); the ack is a ledgered operator event (dashboard/CLI wiring is EPIC_01's alert-sink abstraction — emit through it, don't build UI here); budget exhaustion fails closed: no partial "cheap mode" forecasts.
 - **State of the world:** cost ledgering per forecast exists (issue 02); ensemble votes carry pinned versions + fingerprints (issue 04); no canary machinery, no budget ceilings enforced.
@@ -23,7 +23,7 @@ A weekly canary set (~20 stable questions with reference answers/distributions) 
 
 Deliverable is a single PR containing:
 
-- [ ] Production code in `hedgekit/forecast/{canary,budget}.py` + pipeline wiring
+- [ ] Production code in `windbreak/forecast/{canary,budget}.py` + pipeline wiring
 - [ ] Tests proving: synthetic drift beyond tolerance → alert emitted + subsequent records `eligible_for_live=False`; operator ack (ledgered event) restores eligibility for *new* forecasts only; within-tolerance canary run changes nothing; per-forecast budget breach aborts that forecast fail-closed with a ledger event; per-day budget breach halts further research until UTC rollover; `max_pages` enforced in the research stage
 - [ ] Cost report function: research cost per resolved forecast and per profitable trade emitted as ledgered metrics (consumed later by M6)
 - [ ] Docstring / doc updates

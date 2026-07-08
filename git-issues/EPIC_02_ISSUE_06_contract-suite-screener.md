@@ -1,6 +1,6 @@
 ## Role
 
-You are a senior Python engineer working in this repo's `hedgekit/connector/` and `hedgekit/screener/` subpackages, experienced in contract testing and config-driven filtering.
+You are a senior Python engineer working in this repo's `windbreak/connector/` and `windbreak/screener/` subpackages, experienced in contract testing and config-driven filtering.
 
 ## Goal
 
@@ -12,8 +12,8 @@ Every connector endpoint has recorded-fixture contract tests (happy path + the �
 - **Predecessor issue(s):** #20 (must be merged first — validation/fault machinery exists to test against)
 - **SPEC section:** `plans/SPEC_v3.md` §7.6 (acceptance criteria — "recorded-fixture contract tests for every endpoint including error/rate-limit/malformed/schema-drift cases; fixed-point preservation with no float conversion anywhere in the path"), §16 `screener:` block (`category_blocklist: [sports, crypto_price, celebrity, insider_prone]`, `min_volume_24h_micros`, `min_depth_contract_centis`, `horizon_days {min: 2, max: 120}`), §1.2 (sports blocked by default; unblocking requires explicit config plus a ledgered legal-risk acknowledgement), §18 M1 done criterion
 - **Files involved:**
-  - `hedgekit/screener/filters.py` — pure filter functions over `NormalizedMarket` + book stats
-  - `hedgekit/screener/screener.py` — compose filters from typed config; ledger every decision with pass/fail reasons per filter
+  - `windbreak/screener/filters.py` — pure filter functions over `NormalizedMarket` + book stats
+  - `windbreak/screener/screener.py` — compose filters from typed config; ledger every decision with pass/fail reasons per filter
   - `tests/connector/test_contract_matrix.py` — parametrized endpoint × scenario matrix
   - `tests/screener/test_filters.py` — per-filter unit + property tests
   - `tests/fixtures/exchange/kalshi/` — any fixtures still missing from the matrix
@@ -62,7 +62,7 @@ def test_screen_decision_ledgered_with_reasons(screener, ledger, thin_market):
 > reference URL, an alternative considered, and a review date. See the
 > `max-quality-no-shortcuts` skill.
 
-**Tracer-code invariant:** The system must remain demoable after this PR merges — `hedgekit run` now ledgers real screen decisions with reasons, on schedule, against fixtures or the demo environment. This completes the M1 done criterion. If your change breaks an unrelated surface, revert and re-plan.
+**Tracer-code invariant:** The system must remain demoable after this PR merges — `windbreak run` now ledgers real screen decisions with reasons, on schedule, against fixtures or the demo environment. This completes the M1 done criterion. If your change breaks an unrelated surface, revert and re-plan.
 
 ## Definition of Done (stay-green)
 

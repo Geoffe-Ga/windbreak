@@ -1,6 +1,6 @@
 ## Role
 
-You are a senior Python engineer building operator-facing safety governance, working in this repo's `hedgekit/riskkernel/` package and its CLI entrypoints.
+You are a senior Python engineer building operator-facing safety governance, working in this repo's `windbreak/riskkernel/` package and its CLI entrypoints.
 
 ## Goal
 
@@ -12,10 +12,10 @@ Floor changes obey raise-freely/lower-slowly exactly per SPEC §10.7 (48h cool-o
 - **Predecessor issue(s):** #33 (must be merged first)
 - **SPEC section:** `plans/SPEC_v3.md` §10.7 (floor governance), §10.8 (human-ack thresholds), §10.3 ("human-ack satisfied if required" check), threat T7 (operator tilt), config keys `capital.floor_micros`, `capital.floor_ratchet_ppm_of_new_profits`, `capital.profit_sweep_threshold_micros`, `risk.require_human_ack_above_micros` (§16)
 - **Files involved:**
-  - `hedgekit/riskkernel/governance.py` — new: floor-change state machine, ratchet, profit-sweep advisory
-  - `hedgekit/riskkernel/human_ack.py` — new: pending-ack queue with expiry
-  - `hedgekit/riskkernel/checks.py` — wire the human-ack check into the pipeline
-  - `hedgekit/cli.py` (or EPIC_01's CLI module) — `hedgekit floor raise`, `hedgekit floor request-lower`, `hedgekit floor confirm-lower --nonce`, `hedgekit ack <approval-id>`
+  - `windbreak/riskkernel/governance.py` — new: floor-change state machine, ratchet, profit-sweep advisory
+  - `windbreak/riskkernel/human_ack.py` — new: pending-ack queue with expiry
+  - `windbreak/riskkernel/checks.py` — wire the human-ack check into the pipeline
+  - `windbreak/cli.py` (or EPIC_01's CLI module) — `windbreak floor raise`, `windbreak floor request-lower`, `windbreak floor confirm-lower --nonce`, `windbreak ack <approval-id>`
   - `tests/riskkernel/test_governance.py`, `tests/riskkernel/test_human_ack.py`
 - **Prior decisions:** Raising `floor_micros` applies immediately, from CLI or dashboard. Lowering requires: CLI request → ledgered pending change → 48h cool-off → second CLI confirmation with challenge nonce → alert → demotion to PAPER until the next full reconciliation passes. The dashboard can never lower the floor (§14 forbids it; enforce Kernel-side, not just UI-side). Ratchet: `floor_ratchet_ppm_of_new_profits` (default 50%) auto-raises the floor on each new equity high-water mark — raising needs no governance delay. Profit-sweep: alert only; the system cannot and must not move funds (§10.7). Human-ack: live-mode orders with `worst_case_cost > require_human_ack_above_micros` hold pending operator ack with expiry; ack events ledgered (§10.8).
 - **State of the world:** Promotion/demotion engine exists (demotion-to-PAPER is callable); floor is a static config value consumed by floor math; no change-governance, no ack queue.
@@ -63,7 +63,7 @@ def test_dashboard_can_never_lower_floor():
 > reference URL, an alternative considered, and a review date. See the
 > `max-quality-no-shortcuts` skill.
 
-**Tracer-code invariant:** The system must remain demoable after this PR merges: `hedgekit floor raise` works immediately; a lower request visibly parks in cool-off; normal intent flow is unaffected below the ack threshold.
+**Tracer-code invariant:** The system must remain demoable after this PR merges: `windbreak floor raise` works immediately; a lower request visibly parks in cool-off; normal intent flow is unaffected below the ack threshold.
 
 ## Definition of Done (stay-green)
 

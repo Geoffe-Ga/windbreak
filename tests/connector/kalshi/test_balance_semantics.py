@@ -1,8 +1,8 @@
-"""Tests for hedgekit.connector.semantics (issue #18): the BalanceSemantics contract.
+"""Tests for windbreak.connector.semantics (issue #18): the BalanceSemantics contract.
 
-`hedgekit/connector/semantics.py` does not exist yet, so importing it fails
+`windbreak/connector/semantics.py` does not exist yet, so importing it fails
 collection with `ModuleNotFoundError: No module named
-'hedgekit.connector.semantics'` -- the expected Gate 1 RED state for issue #18.
+'windbreak.connector.semantics'` -- the expected Gate 1 RED state for issue #18.
 
 Pins: each of the eight SPEC-required semantics enums carries an explicit
 `UNKNOWN` member (never inferred, never silently defaulted); the exact member
@@ -21,8 +21,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from hedgekit.connector.fake import FakeExchange
-from hedgekit.connector.semantics import (
+from windbreak.connector.fake import FakeExchange
+from windbreak.connector.semantics import (
     BalanceSemantics,
     CancelCollateralRelease,
     FeeDebitTiming,
@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     import enum
     from pathlib import Path
 
-    from hedgekit.connector.kalshi.adapter import KalshiConnector
+    from windbreak.connector.kalshi.adapter import KalshiConnector
 
 #: Every SPEC-required semantics enum, for parametrized cross-enum checks.
 _ENUM_CLASSES = (

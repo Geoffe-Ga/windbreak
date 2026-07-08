@@ -4,7 +4,7 @@
 raises `FileNotFoundError` and every test below fails for that reason. Once
 the implementation specialist adds it, these tests pin two SPEC-relevant
 guarantees: the image drops root privilege via a non-root `USER` directive,
-and its `CMD` actually launches `hedgekit run` (not a shell, not left unset).
+and its `CMD` actually launches `windbreak run` (not a shell, not left unset).
 """
 
 from __future__ import annotations
@@ -68,13 +68,13 @@ def test_declares_a_non_root_user() -> None:
     assert last_user not in {"root", "0"}
 
 
-def test_cmd_invokes_hedgekit_run() -> None:
-    """The image's `CMD` launches `hedgekit run`, not a bare shell or nothing."""
+def test_cmd_invokes_windbreak_run() -> None:
+    """The image's `CMD` launches `windbreak run`, not a bare shell or nothing."""
     text = _read_dockerfile()
 
     cmd_lines = _instruction_lines(text, "CMD")
     assert cmd_lines, "Dockerfile has no CMD directive"
 
     last_cmd = cmd_lines[-1]
-    assert "hedgekit" in last_cmd
+    assert "windbreak" in last_cmd
     assert "run" in last_cmd

@@ -1,6 +1,6 @@
 """Tests for the four-process package skeleton (issue #10, SPEC S5.1-5.2).
 
-Each of hedgekit's four processes decomposes into two sub-packages, for
+Each of windbreak's four processes decomposes into two sub-packages, for
 eight import paths total. Every one of them must exist, import cleanly,
 and carry a non-empty module docstring. For the four packages whose
 credential posture is load-bearing per SPEC S5.2 (the credential
@@ -17,14 +17,14 @@ import pytest
 
 #: The eight sub-packages that make up the four-process skeleton.
 MODULE_PATHS = [
-    "hedgekit.pipeline",
-    "hedgekit.riskkernel",
-    "hedgekit.order_gateway",
-    "hedgekit.dashboard",
-    "hedgekit.ledger",
-    "hedgekit.config",
-    "hedgekit.numeric",
-    "hedgekit.alerts",
+    "windbreak.pipeline",
+    "windbreak.riskkernel",
+    "windbreak.order_gateway",
+    "windbreak.dashboard",
+    "windbreak.ledger",
+    "windbreak.config",
+    "windbreak.numeric",
+    "windbreak.alerts",
 ]
 
 
@@ -50,7 +50,7 @@ def test_riskkernel_docstring_declares_signing_authority() -> None:
 
     SPEC S5.2: "Risk Kernel | read-only | approval-token signing key".
     """
-    module = importlib.import_module("hedgekit.riskkernel")
+    module = importlib.import_module("windbreak.riskkernel")
     assert module.__doc__ is not None
 
     assert "signing" in module.__doc__.lower()
@@ -61,7 +61,7 @@ def test_order_gateway_docstring_declares_verification_authority() -> None:
 
     SPEC S5.2: "Order Gateway | trade-only | approval-token verification key".
     """
-    module = importlib.import_module("hedgekit.order_gateway")
+    module = importlib.import_module("windbreak.order_gateway")
     assert module.__doc__ is not None
 
     assert "verification" in module.__doc__.lower()
@@ -72,7 +72,7 @@ def test_pipeline_docstring_declares_no_trade_credentials() -> None:
 
     SPEC S5.1: "Process A: main pipeline -- no trade credentials".
     """
-    module = importlib.import_module("hedgekit.pipeline")
+    module = importlib.import_module("windbreak.pipeline")
     assert module.__doc__ is not None
 
     assert "no trade credentials" in module.__doc__.lower()
@@ -83,7 +83,7 @@ def test_dashboard_docstring_declares_no_exchange_credentials() -> None:
 
     SPEC S5.1: "Process D: Dashboard -- no exchange credentials".
     """
-    module = importlib.import_module("hedgekit.dashboard")
+    module = importlib.import_module("windbreak.dashboard")
     assert module.__doc__ is not None
 
     assert "no exchange" in module.__doc__.lower()

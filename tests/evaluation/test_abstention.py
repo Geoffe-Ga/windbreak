@@ -1,10 +1,10 @@
-"""Failing-first tests for `hedgekit.evaluation.abstention` (issue #53, RED).
+"""Failing-first tests for `windbreak.evaluation.abstention` (issue #53, RED).
 
-`hedgekit.evaluation.abstention` does not exist yet, so every test below
+`windbreak.evaluation.abstention` does not exist yet, so every test below
 imports its new symbols from that module as the FIRST statement inside the
 test body (matching this package's established RED convention in
 `test_temporal_integrity.py`) so each test collects independently and fails on
-its own `ModuleNotFoundError: No module named 'hedgekit.evaluation.abstention'`.
+its own `ModuleNotFoundError: No module named 'windbreak.evaluation.abstention'`.
 
 Pins SPEC-EPIC_07 issue #53's counterfactual abstention-wisdom scoring:
 
@@ -23,7 +23,7 @@ Pins SPEC-EPIC_07 issue #53's counterfactual abstention-wisdom scoring:
   `forgone_pnl_pips` is the sum of strictly POSITIVE counterfactual PnLs only.
 
 `PAYOUT_PIPS` (10_000) and `BASELINE_PPM_PER_PIP` (100) are re-derived below
-directly from `hedgekit.evaluation.metrics`, per this issue's own instruction
+directly from `windbreak.evaluation.metrics`, per this issue's own instruction
 not to assume their values.
 """
 
@@ -31,9 +31,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from hedgekit.evaluation import EvaluationInputs, FixtureForecast, ResolutionOutcome
-from hedgekit.evaluation.metrics import BASELINE_PPM_PER_PIP, PAYOUT_PIPS
-from hedgekit.numeric.types import ProbabilityPpm
+from windbreak.evaluation import EvaluationInputs, FixtureForecast, ResolutionOutcome
+from windbreak.evaluation.metrics import BASELINE_PPM_PER_PIP, PAYOUT_PIPS
+from windbreak.numeric.types import ProbabilityPpm
 
 #: The epic-wide known-answer fixture shared by issues #49-#55.
 SYNTHETIC_FIXTURE = (
@@ -42,7 +42,7 @@ SYNTHETIC_FIXTURE = (
 
 
 def test_metrics_module_payout_and_ppm_per_pip_constants_are_as_expected() -> None:
-    """Re-derive `hedgekit.evaluation.metrics`'s own constants rather than
+    """Re-derive `windbreak.evaluation.metrics`'s own constants rather than
     assume them: `PAYOUT_PIPS` is the full binary payout (10_000 == $1.00 at
     1e-4 pips) and `BASELINE_PPM_PER_PIP` converts a pip-scaled price into ppm
     probability (`baseline_ppm = baseline_pips * BASELINE_PPM_PER_PIP`). Every
@@ -97,7 +97,7 @@ def test_wise_long_yes_scores_negative_pnl_and_wise_verdict() -> None:
     """p=800_000 > baseline_ppm=300_000 (ask 3_000 pips) -> implied LONG_YES.
     Outcome NO -> PnL = (0) - 3_000 = -3_000 (<=0) -> WISE.
     """
-    from hedgekit.evaluation.abstention import AbstentionVerdict, score_abstentions
+    from windbreak.evaluation.abstention import AbstentionVerdict, score_abstentions
 
     forecast = _forecast(
         forecast_id="wise-long-yes",
@@ -120,7 +120,7 @@ def test_unwise_long_yes_scores_positive_pnl_and_unwise_verdict() -> None:
     """p=800_000 > baseline_ppm=300_000 (ask 3_000 pips) -> implied LONG_YES.
     Outcome YES -> PnL = (10_000) - 3_000 = 7_000 (>0) -> UNWISE.
     """
-    from hedgekit.evaluation.abstention import AbstentionVerdict, score_abstentions
+    from windbreak.evaluation.abstention import AbstentionVerdict, score_abstentions
 
     forecast = _forecast(
         forecast_id="unwise-long-yes",
@@ -143,7 +143,7 @@ def test_wise_long_no_scores_negative_pnl_and_wise_verdict() -> None:
     """p=100_000 < baseline_ppm=900_000 (ask 9_000 pips) -> implied LONG_NO.
     Outcome YES -> PnL = (0) - (10_000-9_000) = -1_000 (<=0) -> WISE.
     """
-    from hedgekit.evaluation.abstention import AbstentionVerdict, score_abstentions
+    from windbreak.evaluation.abstention import AbstentionVerdict, score_abstentions
 
     forecast = _forecast(
         forecast_id="wise-long-no",
@@ -166,7 +166,7 @@ def test_unwise_long_no_scores_positive_pnl_and_unwise_verdict() -> None:
     """p=100_000 < baseline_ppm=900_000 (ask 9_000 pips) -> implied LONG_NO.
     Outcome NO -> PnL = (10_000) - (10_000-9_000) = 9_000 (>0) -> UNWISE.
     """
-    from hedgekit.evaluation.abstention import AbstentionVerdict, score_abstentions
+    from windbreak.evaluation.abstention import AbstentionVerdict, score_abstentions
 
     forecast = _forecast(
         forecast_id="unwise-long-no",
@@ -189,7 +189,7 @@ def test_zero_edge_forecast_has_no_implied_trade_pnl_zero_wise() -> None:
     """p_ppm == baseline_ppm (300_000 == 3_000*100) -> no implied direction,
     counterfactual PnL is exactly 0, verdict WISE (0 <= 0).
     """
-    from hedgekit.evaluation.abstention import AbstentionVerdict, score_abstentions
+    from windbreak.evaluation.abstention import AbstentionVerdict, score_abstentions
 
     forecast = _forecast(
         forecast_id="zero-edge",
@@ -219,7 +219,7 @@ def test_traded_and_unresolved_records_are_excluded_from_scoring() -> None:
     in `score_abstentions`'s output, even alongside a legitimately scoreable
     abstained record.
     """
-    from hedgekit.evaluation.abstention import score_abstentions
+    from windbreak.evaluation.abstention import score_abstentions
 
     traded_record = _forecast(
         forecast_id="traded-should-be-excluded",
@@ -268,7 +268,7 @@ def test_traded_record_with_abstention_reason_field_still_set_is_excluded() -> N
     (pathologically) it also carries a non-`None` `abstention_reason` --
     `traded` alone is sufficient to exclude a record from abstention scoring.
     """
-    from hedgekit.evaluation.abstention import score_abstentions
+    from windbreak.evaluation.abstention import score_abstentions
 
     pathological = _forecast(
         forecast_id="traded-with-reason",
@@ -293,7 +293,7 @@ def test_untraded_record_with_no_abstention_reason_is_excluded() -> None:
     reason recorded) is excluded -- there is nothing to counterfactually
     score without a recorded reason.
     """
-    from hedgekit.evaluation.abstention import score_abstentions
+    from windbreak.evaluation.abstention import score_abstentions
 
     no_reason = _forecast(
         forecast_id="no-reason",
@@ -322,7 +322,7 @@ def test_abstention_score_carries_the_documented_fields() -> None:
     """`AbstentionScore` exposes `forecast_id`, `market_ticker`,
     `abstention_reason`, `counterfactual_pnl_pips`, and `verdict`.
     """
-    from hedgekit.evaluation.abstention import score_abstentions
+    from windbreak.evaluation.abstention import score_abstentions
 
     forecast = _forecast(
         forecast_id="fields-fc",
@@ -407,7 +407,7 @@ def test_summarize_abstentions_counts_and_forgone_pnl_match_hand_computation() -
     forgone_pnl_pips = sum of POSITIVE PnLs only = 7_000 + 9_000 = 16_000
     (the two negative PnLs and the zero PnL are NOT included).
     """
-    from hedgekit.evaluation.abstention import summarize_abstentions
+    from windbreak.evaluation.abstention import summarize_abstentions
 
     summary = summarize_abstentions(_SUMMARY_INPUTS)
 
@@ -422,7 +422,7 @@ def test_summarize_abstentions_accepts_precomputed_scores_too() -> None:
     `tuple[AbstentionScore, ...]` (not just raw `EvaluationInputs`), and
     produces an identical summary either way.
     """
-    from hedgekit.evaluation.abstention import score_abstentions, summarize_abstentions
+    from windbreak.evaluation.abstention import score_abstentions, summarize_abstentions
 
     scores = score_abstentions(_SUMMARY_INPUTS)
 
@@ -459,7 +459,7 @@ def test_summarize_abstentions_on_synthetic_fixture_matches_hand_computation() -
     """
     import json
 
-    from hedgekit.evaluation.abstention import summarize_abstentions
+    from windbreak.evaluation.abstention import summarize_abstentions
 
     payload = json.loads(SYNTHETIC_FIXTURE.read_text(encoding="utf-8"))
     forecasts = tuple(
@@ -496,7 +496,7 @@ def test_run_evaluation_renders_abstentions_line_with_synthetic_fixture_values()
     synthetic fixture (see the test above): `wise=1 unwise=4
     forgone_pnl_pips=7_000`.
     """
-    from hedgekit.evaluation import run_evaluation
+    from windbreak.evaluation import run_evaluation
 
     report = run_evaluation(fixture_path=SYNTHETIC_FIXTURE)
     text = report.render_text()

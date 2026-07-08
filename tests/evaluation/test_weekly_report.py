@@ -1,15 +1,15 @@
 """Failing-first tests for `render_weekly_report` / `generate_weekly_report`
 (issue #55, RED).
 
-Neither symbol exists yet on `hedgekit.evaluation.report`, so every test below
+Neither symbol exists yet on `windbreak.evaluation.report`, so every test below
 imports them as the FIRST statement inside the test body (matching this
 package's established RED convention; see `test_preregistration.py` /
 `test_cohorts.py`) so each test collects and fails independently on its own
 `ImportError: cannot import name 'render_weekly_report' from
-'hedgekit.evaluation.report'` (or `'generate_weekly_report'`).
+'windbreak.evaluation.report'` (or `'generate_weekly_report'`).
 
 Pins issue #55's weekly-report extension of the #48 stub
-(`hedgekit.reports.weekly`):
+(`windbreak.reports.weekly`):
 
 - `render_weekly_report(*, today, evaluation, costs) -> str` is pure markdown:
   it always preserves the stub's three original headings (`## Equity vs
@@ -21,7 +21,7 @@ Pins issue #55's weekly-report extension of the #48 stub
   else `No data yet.`).
 - `generate_weekly_report(output_dir, *, today, evaluation, costs) -> Path`
   delegates naming and ISO-week idempotence to
-  `hedgekit.reports.weekly.maybe_write_weekly`, passing the rendered body
+  `windbreak.reports.weekly.maybe_write_weekly`, passing the rendered body
   through; calling it twice within the same ISO week returns the same
   already-written file untouched.
 """
@@ -31,9 +31,9 @@ from __future__ import annotations
 from datetime import date
 from typing import TYPE_CHECKING
 
-from hedgekit.evaluation.registry import Track
-from hedgekit.evaluation.report import EvaluationReport, TrackReport
-from hedgekit.numeric.types import MoneyMicros
+from windbreak.evaluation.registry import Track
+from windbreak.evaluation.report import EvaluationReport, TrackReport
+from windbreak.numeric.types import MoneyMicros
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -64,7 +64,7 @@ def _sample_cost_meter() -> object:
         A `CostMeter` whose three money fields each render to a distinct,
         greppable `str()` value.
     """
-    from hedgekit.evaluation.costs import CostMeter
+    from windbreak.evaluation.costs import CostMeter
 
     return CostMeter(
         total_research_cost_micros=7_000_000,
@@ -90,7 +90,7 @@ def test_render_weekly_report_includes_stub_headings_and_both_new_sections() -> 
     data -- so exactly 3 `No data yet.` occurrences remain (none contributed
     by the new sections, since both fixtures carry real content).
     """
-    from hedgekit.evaluation.report import render_weekly_report
+    from windbreak.evaluation.report import render_weekly_report
 
     evaluation = _empty_evaluation_report()
     costs = _sample_cost_meter()
@@ -122,7 +122,7 @@ def test_render_weekly_report_shows_no_data_yet_for_both_none_arguments() -> Non
     """`evaluation=None, costs=None` fall back to `No data yet.` in both
     new sections, on top of the three the stub always carries -- five total.
     """
-    from hedgekit.evaluation.report import render_weekly_report
+    from windbreak.evaluation.report import render_weekly_report
 
     today = date(2024, 3, 4)
 
@@ -138,7 +138,7 @@ def test_render_weekly_report_evaluation_and_costs_fall_back_independently() -> 
     real content alongside the evaluation section's fallback (and vice
     versa) -- the two sections are independent, not all-or-nothing.
     """
-    from hedgekit.evaluation.report import render_weekly_report
+    from windbreak.evaluation.report import render_weekly_report
 
     today = date(2024, 3, 4)
     costs = _sample_cost_meter()
@@ -168,7 +168,7 @@ def test_generate_weekly_report_writes_dated_file_with_the_rendered_body(
     `render_weekly_report` would have produced for the same arguments (this
     direct invocation is exactly what a scheduler hook would call).
     """
-    from hedgekit.evaluation.report import (
+    from windbreak.evaluation.report import (
         generate_weekly_report,
         render_weekly_report,
     )
@@ -192,12 +192,12 @@ def test_generate_weekly_report_is_idempotent_within_the_same_iso_week(
     tmp_path: Path,
 ) -> None:
     """A second call within the same ISO calendar week returns the first
-    file untouched -- routed through `hedgekit.reports.weekly.maybe_write_weekly`
+    file untouched -- routed through `windbreak.reports.weekly.maybe_write_weekly`
     -- even though the second call's `today` and arguments differ.
 
     2024-03-04 is a Monday and 2024-03-05 a Tuesday of the same ISO week.
     """
-    from hedgekit.evaluation.report import generate_weekly_report
+    from windbreak.evaluation.report import generate_weekly_report
 
     first = generate_weekly_report(
         tmp_path, today=date(2024, 3, 4), evaluation=None, costs=None
@@ -219,7 +219,7 @@ def test_generate_weekly_report_writes_a_new_file_the_following_iso_week(
     tmp_path: Path,
 ) -> None:
     """A call in a later ISO week writes a second, distinctly-named file."""
-    from hedgekit.evaluation.report import generate_weekly_report
+    from windbreak.evaluation.report import generate_weekly_report
 
     first = generate_weekly_report(
         tmp_path, today=date(2024, 3, 4), evaluation=None, costs=None

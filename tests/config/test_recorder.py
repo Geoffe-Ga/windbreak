@@ -11,7 +11,7 @@ from __future__ import annotations
 import copy
 from typing import TYPE_CHECKING
 
-from hedgekit.config import (
+from windbreak.config import (
     InMemoryConfigEventRecorder,
     config_hash,
     load_config,

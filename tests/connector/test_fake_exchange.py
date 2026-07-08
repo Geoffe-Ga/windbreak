@@ -1,14 +1,14 @@
-"""Tests for hedgekit.connector.fake.FakeExchange (issue #16; semantics: #18).
+"""Tests for windbreak.connector.fake.FakeExchange (issue #16; semantics: #18).
 
 `FakeExchange` implements the full `MarketConnector` protocol from
 `tests/fixtures/exchange/*.json`, wrapping every arithmetic-bearing value
-(order-book prices/quantities, balances) in hedgekit's scaled-integer unit
-types at load time. `hedgekit/connector/` does not exist yet, so importing it
+(order-book prices/quantities, balances) in windbreak's scaled-integer unit
+types at load time. `windbreak/connector/` does not exist yet, so importing it
 fails collection with `ModuleNotFoundError: No module named
-'hedgekit.connector'` -- the expected Gate 1 RED state for issue #16. Once
-that lands, this module additionally imports `hedgekit.connector.semantics`
+'windbreak.connector'` -- the expected Gate 1 RED state for issue #16. Once
+that lands, this module additionally imports `windbreak.connector.semantics`
 (issue #18), which does not exist yet either -- so this file stays RED via
-`ModuleNotFoundError: No module named 'hedgekit.connector.semantics'` until
+`ModuleNotFoundError: No module named 'windbreak.connector.semantics'` until
 both issues are implemented.
 """
 
@@ -20,9 +20,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from hedgekit.connector.interface import UnknownMarketError
-from hedgekit.connector.models import NormalizedMarket
-from hedgekit.connector.semantics import (
+from windbreak.connector.interface import UnknownMarketError
+from windbreak.connector.models import NormalizedMarket
+from windbreak.connector.semantics import (
     CancelCollateralRelease,
     FeeDebitTiming,
     FeeRounding,
@@ -32,12 +32,12 @@ from hedgekit.connector.semantics import (
     PartialFillRepresentation,
     UnsettledProceeds,
 )
-from hedgekit.numeric import ContractCentis, MoneyMicros, PricePips
+from windbreak.numeric import ContractCentis, MoneyMicros, PricePips
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from hedgekit.connector.fake import FakeExchange
+    from windbreak.connector.fake import FakeExchange
 
 _ALL_FIXTURE_FILES = [
     "markets.json",

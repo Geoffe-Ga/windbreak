@@ -1,9 +1,9 @@
-"""Gate 1 RED, hand-computed examples for `hedgekit.selector.sizing` (issue #45).
+"""Gate 1 RED, hand-computed examples for `windbreak.selector.sizing` (issue #45).
 
-`hedgekit/selector/sizing.py` does not exist yet, so every test below fails
-collection with `ModuleNotFoundError: No module named 'hedgekit.selector.sizing'`
+`windbreak/selector/sizing.py` does not exist yet, so every test below fails
+collection with `ModuleNotFoundError: No module named 'windbreak.selector.sizing'`
 -- the expected Gate 1 RED state for issue #45's sizing seam. The tests
-importing `PositionReadModelInput` from `hedgekit.selector.types` fail the
+importing `PositionReadModelInput` from `windbreak.selector.types` fail the
 same way today (that symbol does not exist yet either): both are the correct
 RED reason -- missing symbols for not-yet-wired behavior, never a typo.
 
@@ -25,8 +25,8 @@ architect pinned:
 
 Money/price arithmetic on the sizing seam itself is on
 `scripts/lint_no_floats.py`'s denylist: no float, no bare `/`/`//` -- every
-division `hedgekit.selector.sizing` performs routes through
-`hedgekit.numeric.divide` with an explicit `RoundingDirection`; this test
+division `windbreak.selector.sizing` performs routes through
+`windbreak.numeric.divide` with an explicit `RoundingDirection`; this test
 module only reproduces that same fused-division arithmetic in comments, by
 hand, to pin the expected results.
 """
@@ -36,20 +36,20 @@ from __future__ import annotations
 import hashlib
 from datetime import UTC, datetime
 
-from hedgekit.config.schema import RiskConfig
-from hedgekit.connector.fees import FeeModel
-from hedgekit.connector.models import OrderBookLevel, OrderBookSnapshot
-from hedgekit.forecast.records import Citation, ForecastRecord
-from hedgekit.ledger.events import canonical_json
-from hedgekit.numeric import ContractCentis, MoneyMicros, PricePips
-from hedgekit.selector import SelectorInputs, select
-from hedgekit.selector.sizing import (
+from windbreak.config.schema import RiskConfig
+from windbreak.connector.fees import FeeModel
+from windbreak.connector.models import OrderBookLevel, OrderBookSnapshot
+from windbreak.forecast.records import Citation, ForecastRecord
+from windbreak.ledger.events import canonical_json
+from windbreak.numeric import ContractCentis, MoneyMicros, PricePips
+from windbreak.selector import SelectorInputs, select
+from windbreak.selector.sizing import (
     CapClipResult,
     clip_to_caps,
     dispersion_scale,
     kelly_size,
 )
-from hedgekit.selector.types import (
+from windbreak.selector.types import (
     FeeModelInput,
     PositionReadModelInput,
     RiskConfigInput,
@@ -618,7 +618,7 @@ def _idempotency_key_fields(
 ) -> dict[str, object]:
     """Build the six named fields `select`'s idempotency key hashes over.
 
-    Mirrors `hedgekit.selector._idempotency_key` verbatim so this module can
+    Mirrors `windbreak.selector._idempotency_key` verbatim so this module can
     hand-derive the expected key without calling `select` to produce it.
 
     Args:

@@ -1,16 +1,16 @@
 """Failing-first tests for the new dashboard views package (issue #48, RED).
 
-`hedgekit.dashboard.views` does not exist yet, so every import below fails
+`windbreak.dashboard.views` does not exist yet, so every import below fails
 collection with `ModuleNotFoundError: No module named
-'hedgekit.dashboard.views'` -- the expected Gate 1 RED state for issue #48.
+'windbreak.dashboard.views'` -- the expected Gate 1 RED state for issue #48.
 
 Each renderer is a pure function over the *read-model row shape*
-`hedgekit.ledger.rebuild` already produces for every projection
+`windbreak.ledger.rebuild` already produces for every projection
 (`{seq, created_at, event_type, data}`), so the dashboard reuses the same
-projections `hedgekit rebuild` writes rather than re-deriving its own view of
+projections `windbreak rebuild` writes rather than re-deriving its own view of
 the ledger. Every renderer must `html.escape` any ledger-derived string before
 interpolating it -- selector/veto reasons are forecast/LLM-adjacent and
-therefore an XSS surface (mirrors `hedgekit/dashboard/app.py`'s own existing
+therefore an XSS surface (mirrors `windbreak/dashboard/app.py`'s own existing
 `html.escape` treatment of `mode`/`last_heartbeat`).
 """
 
@@ -23,7 +23,7 @@ import pytest
 
 def test_dashboard_read_models_is_frozen() -> None:
     """`DashboardReadModels` is an immutable value object."""
-    from hedgekit.dashboard.views import DashboardReadModels
+    from windbreak.dashboard.views import DashboardReadModels
 
     read_models = DashboardReadModels(positions=[], equity_curve=[], decisions=[])
 
@@ -33,7 +33,7 @@ def test_dashboard_read_models_is_frozen() -> None:
 
 def test_dashboard_read_models_defaults_to_empty_when_constructed_bare() -> None:
     """An empty `DashboardReadModels` is the documented "no data yet" input."""
-    from hedgekit.dashboard.views import DashboardReadModels
+    from windbreak.dashboard.views import DashboardReadModels
 
     read_models = DashboardReadModels(positions=[], equity_curve=[], decisions=[])
 
@@ -46,7 +46,7 @@ def test_render_positions_shows_no_data_yet_placeholder_when_empty() -> None:
     """An empty positions read model renders a readable placeholder, not a
     crash or an empty table.
     """
-    from hedgekit.dashboard.views import render_positions
+    from windbreak.dashboard.views import render_positions
 
     html = render_positions([])
 
@@ -57,7 +57,7 @@ def test_render_positions_renders_the_ticker_and_quantity() -> None:
     """A populated positions read model renders each position's ticker and
     quantity.
     """
-    from hedgekit.dashboard.views import render_positions
+    from windbreak.dashboard.views import render_positions
 
     rows = [
         {
@@ -84,7 +84,7 @@ def test_render_positions_renders_the_ticker_and_quantity() -> None:
 
 def test_render_equity_vs_floor_shows_no_data_yet_placeholder_when_empty() -> None:
     """An empty equity-curve read model renders a readable placeholder."""
-    from hedgekit.dashboard.views import render_equity_vs_floor
+    from windbreak.dashboard.views import render_equity_vs_floor
 
     html = render_equity_vs_floor([])
 
@@ -93,7 +93,7 @@ def test_render_equity_vs_floor_shows_no_data_yet_placeholder_when_empty() -> No
 
 def test_render_equity_vs_floor_renders_equity_and_floor_values() -> None:
     """A populated equity-curve read model renders each row's equity and floor."""
-    from hedgekit.dashboard.views import render_equity_vs_floor
+    from windbreak.dashboard.views import render_equity_vs_floor
 
     rows = [
         {
@@ -115,7 +115,7 @@ def test_render_equity_vs_floor_renders_equity_and_floor_values() -> None:
 
 def test_render_decisions_shows_no_data_yet_placeholder_when_empty() -> None:
     """An empty decisions read model renders a readable placeholder."""
-    from hedgekit.dashboard.views import render_decisions
+    from windbreak.dashboard.views import render_decisions
 
     html = render_decisions([])
 
@@ -124,7 +124,7 @@ def test_render_decisions_shows_no_data_yet_placeholder_when_empty() -> None:
 
 def test_render_decisions_renders_reasons_for_a_selector_decision_row() -> None:
     """A `SelectorDecisionRecorded` row renders its market ticker and reasons."""
-    from hedgekit.dashboard.views import render_decisions
+    from windbreak.dashboard.views import render_decisions
 
     rows = [
         {
@@ -153,7 +153,7 @@ def test_render_decisions_escapes_a_hostile_reason_string() -> None:
     them unescaped would be a stored-XSS vector (mirrors
     `tests/dashboard/test_app.py::test_status_fields_are_html_escaped`).
     """
-    from hedgekit.dashboard.views import render_decisions
+    from windbreak.dashboard.views import render_decisions
 
     rows = [
         {
@@ -175,7 +175,7 @@ def test_render_decisions_escapes_a_hostile_reason_string() -> None:
 
 def test_render_decisions_escapes_a_hostile_ticker_string() -> None:
     """A hostile ticker/forecast_id string is also rendered escaped."""
-    from hedgekit.dashboard.views import render_decisions
+    from windbreak.dashboard.views import render_decisions
 
     rows = [
         {

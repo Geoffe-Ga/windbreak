@@ -1,1 +1,1 @@
-"""Tests for hedgekit.config."""
+"""Tests for windbreak.config."""

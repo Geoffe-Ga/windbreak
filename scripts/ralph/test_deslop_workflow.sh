@@ -4,7 +4,7 @@
 # Pure static-analysis tests over .github/workflows/deslop.yml and its area
 # registry .github/deslop-areas.json — no `gh` stub needed.
 #
-# hedgekit is a root-only Python repo: there is no frontend/ tree and no
+# windbreak is a root-only Python repo: there is no frontend/ tree and no
 # backend/requirements* layout (requirements live at the repo ROOT, and there
 # is no Node/npm step anywhere). deslop.yml was bootstrapped from a donor
 # project that DOES have a frontend/backend split; issue #120 retargeted it to

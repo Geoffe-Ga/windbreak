@@ -69,7 +69,7 @@ echo "=== Coverage Report ==="
 # Build pytest arguments
 PYTEST_ARGS=(
     -v
-    --cov=hedgekit
+    --cov=windbreak
     --cov-branch
     --cov-report=term-missing
     --cov-fail-under=90

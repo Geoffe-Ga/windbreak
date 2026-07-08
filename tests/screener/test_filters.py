@@ -1,8 +1,8 @@
-"""Tests for `hedgekit.screener.filters`, the real SPEC S16 filters (issue #21).
+"""Tests for `windbreak.screener.filters`, the real SPEC S16 filters (issue #21).
 
-`hedgekit.screener.filters` does not exist yet, so importing it fails
+`windbreak.screener.filters` does not exist yet, so importing it fails
 collection with `ModuleNotFoundError: No module named
-'hedgekit.screener.filters'` -- the expected Gate 1 RED state for issue #21.
+'windbreak.screener.filters'` -- the expected Gate 1 RED state for issue #21.
 
 Each filter is assumed to be a pure function taking the thing it screens plus
 keyword-only integer thresholds, and returning a `FilterResult(passed,
@@ -33,9 +33,9 @@ from datetime import UTC, datetime, timedelta
 from hypothesis import given
 from hypothesis import strategies as st
 
-from hedgekit.connector.models import NormalizedMarket
-from hedgekit.numeric import ContractCentis, MoneyMicros
-from hedgekit.screener.filters import (
+from windbreak.connector.models import NormalizedMarket
+from windbreak.numeric import ContractCentis, MoneyMicros
+from windbreak.screener.filters import (
     LEGALLY_RISKY_CATEGORIES,
     BookStats,
     category_filter,

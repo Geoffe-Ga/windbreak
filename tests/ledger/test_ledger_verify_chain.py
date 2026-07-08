@@ -19,8 +19,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from hedgekit.ledger.events import GENESIS_PREV_HASH, ModeHeartbeat, canonical_json
-from hedgekit.ledger.store import (
+from windbreak.ledger.events import GENESIS_PREV_HASH, ModeHeartbeat, canonical_json
+from windbreak.ledger.store import (
     ChainIntegrityError,
     SqliteLedgerStore,
     compute_event_hash,

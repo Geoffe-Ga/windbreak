@@ -1,6 +1,6 @@
-"""Failing-first tests for hedgekit.numeric.rounding (issue #12, SPEC S6.1).
+"""Failing-first tests for windbreak.numeric.rounding (issue #12, SPEC S6.1).
 
-`divide()` is hedgekit's only sanctioned integer division: it is always
+`divide()` is windbreak's only sanctioned integer division: it is always
 paired with an explicit `RoundingDirection` so every conservative-rounding
 decision in the codebase is visible at the call site rather than implied
 by a bare `//`. `OVERSTATE_COST` always rounds toward +infinity (sign-safe
@@ -15,7 +15,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from hedgekit.numeric.rounding import RoundingDirection, divide
+from windbreak.numeric.rounding import RoundingDirection, divide
 
 _OVER = RoundingDirection.OVERSTATE_COST
 _UNDER = RoundingDirection.UNDERSTATE_EQUITY

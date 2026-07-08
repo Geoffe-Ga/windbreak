@@ -1,1 +1,1 @@
-"""Tests for the hedgekit.connector.kalshi adapter (issue #17)."""
+"""Tests for the windbreak.connector.kalshi adapter (issue #17)."""

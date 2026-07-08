@@ -1,1 +1,1 @@
-"""Tests for hedgekit.connector and hedgekit.screener (issue #16)."""
+"""Tests for windbreak.connector and windbreak.screener (issue #16)."""

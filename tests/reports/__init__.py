@@ -1,7 +1,7 @@
 """Failing-first tests for the weekly report stub (issue #48, RED).
 
-`hedgekit.reports` does not exist yet, so every test module here fails
-collection with `ModuleNotFoundError: No module named 'hedgekit.reports'`,
+`windbreak.reports` does not exist yet, so every test module here fails
+collection with `ModuleNotFoundError: No module named 'windbreak.reports'`,
 the expected Gate 1 RED state for issue #48.
 """
 

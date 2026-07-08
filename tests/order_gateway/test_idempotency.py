@@ -1,8 +1,8 @@
 """Failing-first tests for `client_order_id` and Gateway-level idempotent
 resubmission (issue #38, RED).
 
-`hedgekit/order_gateway/client_order_id.py` does not exist yet, and
-`hedgekit/order_gateway/gateway.py`/`hedgekit/order_gateway/ledger_writer.py`
+`windbreak/order_gateway/client_order_id.py` does not exist yet, and
+`windbreak/order_gateway/gateway.py`/`windbreak/order_gateway/ledger_writer.py`
 do not yet expose `SubmitOutcome`/`GatewayResult.outcome`/the ledger-writer
 surface, so every import below fails collection -- the expected Gate 1 RED
 state for issue #38.
@@ -32,36 +32,36 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from hedgekit.numeric.types import (
-    ContractCentis,
-    MoneyMicros,
-    PricePips,
-    ProbabilityPpm,
-)
-from hedgekit.order_gateway.client_order_id import client_order_id
-from hedgekit.order_gateway.gateway import (
-    OrderGateway,
-    PaperSubmitter,
-    SubmissionAck,
-    SubmitOutcome,
-)
-from hedgekit.order_gateway.ledger_writer import (
-    InMemoryGatewayLedgerWriter,
-    OrderTransitionLedgered,
-)
-from hedgekit.order_gateway.state_machine import OrderState
-from hedgekit.riskkernel.checks import OrderIntent
-from hedgekit.tokens.verify import InMemorySingleUseRegistry
 from tests.order_gateway.conftest import (
     DEFAULT_NOW_EPOCH_S,
     KEY_MATERIAL,
     issue_matching_token,
     make_intent,
 )
+from windbreak.numeric.types import (
+    ContractCentis,
+    MoneyMicros,
+    PricePips,
+    ProbabilityPpm,
+)
+from windbreak.order_gateway.client_order_id import client_order_id
+from windbreak.order_gateway.gateway import (
+    OrderGateway,
+    PaperSubmitter,
+    SubmissionAck,
+    SubmitOutcome,
+)
+from windbreak.order_gateway.ledger_writer import (
+    InMemoryGatewayLedgerWriter,
+    OrderTransitionLedgered,
+)
+from windbreak.order_gateway.state_machine import OrderState
+from windbreak.riskkernel.checks import OrderIntent
+from windbreak.tokens.verify import InMemorySingleUseRegistry
 
 if TYPE_CHECKING:
-    from hedgekit.connector.paper import PaperExchange
-    from hedgekit.tokens.verify import SignedApprovalToken
+    from windbreak.connector.paper import PaperExchange
+    from windbreak.tokens.verify import SignedApprovalToken
 
 #: Every `OrderIntent` field name, in declaration order -- drives the
 #: per-field-sensitivity parametrization below.
@@ -166,7 +166,7 @@ def _perturbed_value(intent: OrderIntent, field_name: str) -> object:
 
     Raises:
         TypeError: If the current field's type is neither `str` nor one of
-            the four `hedgekit.numeric` unit types.
+            the four `windbreak.numeric` unit types.
     """
     current = getattr(intent, field_name)
     if isinstance(current, str):

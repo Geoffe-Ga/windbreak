@@ -1,8 +1,8 @@
 """Failing-first tests for crash recovery (issue #40, RED).
 
-`hedgekit/order_gateway/wal.py` and `hedgekit/order_gateway/recovery.py` do not
+`windbreak/order_gateway/wal.py` and `windbreak/order_gateway/recovery.py` do not
 exist yet, so the module-level imports below fail collection with
-`ModuleNotFoundError: No module named 'hedgekit.order_gateway.wal'` (or
+`ModuleNotFoundError: No module named 'windbreak.order_gateway.wal'` (or
 `.recovery`) -- the expected Gate 1 RED state for issue #40. `OrderGateway`
 also does not yet accept the `wal`/`ledger_reader`/`reconciliation_source`
 constructor keywords, expose `.recover()`/`.accepting_approvals`/`.halted`, or
@@ -54,20 +54,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from hedgekit.connector.paper import PaperOrderIntent
-from hedgekit.ledger.store import SqliteLedgerStore
-from hedgekit.numeric.types import ContractCentis, PricePips
-from hedgekit.order_gateway.client_order_id import client_order_id
-from hedgekit.order_gateway.gateway import (
-    GatewayHaltedError,
-    OrderGateway,
-    PaperSubmitter,
-    SubmitOutcome,
-)
-from hedgekit.order_gateway.ledger_writer import SqliteGatewayLedgerWriter
-from hedgekit.order_gateway.recovery import RecoveryReport
-from hedgekit.order_gateway.state_machine import OrderEvent, OrderState, transition
-from hedgekit.order_gateway.wal import WriteAheadLog
 from tests.order_gateway.conftest import (
     DEFAULT_MARKET_TICKER,
     DEFAULT_NOW_EPOCH_S,
@@ -80,22 +66,36 @@ from tests.order_gateway.test_reduce_only import (
     _position,
     _StubPositionSource,
 )
+from windbreak.connector.paper import PaperOrderIntent
+from windbreak.ledger.store import SqliteLedgerStore
+from windbreak.numeric.types import ContractCentis, PricePips
+from windbreak.order_gateway.client_order_id import client_order_id
+from windbreak.order_gateway.gateway import (
+    GatewayHaltedError,
+    OrderGateway,
+    PaperSubmitter,
+    SubmitOutcome,
+)
+from windbreak.order_gateway.ledger_writer import SqliteGatewayLedgerWriter
+from windbreak.order_gateway.recovery import RecoveryReport
+from windbreak.order_gateway.state_machine import OrderEvent, OrderState, transition
+from windbreak.order_gateway.wal import WriteAheadLog
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from hedgekit.connector.paper import PaperExchange
-    from hedgekit.ledger.events import Event
-    from hedgekit.ledger.store import LedgerRecord
-    from hedgekit.order_gateway.gateway import (
+    from windbreak.connector.paper import PaperExchange
+    from windbreak.ledger.events import Event
+    from windbreak.ledger.store import LedgerRecord
+    from windbreak.order_gateway.gateway import (
         GatewayPositionSource,
         OrderSubmitter,
         SubmissionAck,
     )
-    from hedgekit.order_gateway.ledger_writer import GatewayLedgerWriter
-    from hedgekit.order_gateway.wal import WalRecord
-    from hedgekit.riskkernel.checks import OrderIntent
-    from hedgekit.tokens.verify import SignedApprovalToken
+    from windbreak.order_gateway.ledger_writer import GatewayLedgerWriter
+    from windbreak.order_gateway.wal import WalRecord
+    from windbreak.riskkernel.checks import OrderIntent
+    from windbreak.tokens.verify import SignedApprovalToken
 
 
 def _build_recovering_gateway(

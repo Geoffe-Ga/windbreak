@@ -1,11 +1,11 @@
 ## Epic Summary
 
-Harden hedgekit for real-money LIVE_MICRO operation and ship the operator-facing documentation set. This epic covers SPEC §18 M7 ("Production read-only validation; trade-key scope validation; jurisdiction preflight; micro-cap deployment; restore/kill/reconciliation drills on production APIs; live-vs-paper slippage comparison; profit-sweep + ratchet in anger") plus the §19 documentation requirements. It is the final v1 epic: when it closes, the 60-day LIVE_MICRO→LIVE criteria (§10.9) are *computable safely* — whether they are ever met depends on the data, not the code.
+Harden windbreak for real-money LIVE_MICRO operation and ship the operator-facing documentation set. This epic covers SPEC §18 M7 ("Production read-only validation; trade-key scope validation; jurisdiction preflight; micro-cap deployment; restore/kill/reconciliation drills on production APIs; live-vs-paper slippage comparison; profit-sweep + ratchet in anger") plus the §19 documentation requirements. It is the final v1 epic: when it closes, the 60-day LIVE_MICRO→LIVE criteria (§10.9) are *computable safely* — whether they are ever met depends on the data, not the code.
 
 ## Scope
 
 **In scope:**
-- `hedgekit preflight`: production read-only validation, trade-key scope validation (withdrawal capability → hard startup failure), jurisdiction preflight, secrets hygiene checks (world-readable secrets, unverifiable scope, unset LLM budgets) per §15 and §1.1-3.
+- `windbreak preflight`: production read-only validation, trade-key scope validation (withdrawal capability → hard startup failure), jurisdiction preflight, secrets hygiene checks (world-readable secrets, unverifiable scope, unset LLM budgets) per §15 and §1.1-3.
 - LIVE_MICRO deployment path: `micro_cap_micros` hard cap enforcement, human-ack flow (§10.8) exercised against real orders, outbound network allowlist enforcement (§15).
 - Live-vs-paper slippage comparison and live Brier degradation-band monitoring feeding the §10.9 gate inputs and §10.10 demotion triggers.
 - Scripted, repeatable operational drills on production APIs: restore-from-backup, kill/re-arm, reconciliation-mismatch response, key rotation; profit-sweep advisory and floor ratchet (§10.7) exercised in anger.
@@ -20,7 +20,7 @@ Harden hedgekit for real-money LIVE_MICRO operation and ship the operator-facing
 
 The epic is done when:
 
-- [ ] `hedgekit preflight` runs against production APIs read-only and fails closed on any scope, jurisdiction, or secrets violation — with a fixture-tested check matrix.
+- [ ] `windbreak preflight` runs against production APIs read-only and fails closed on any scope, jurisdiction, or secrets violation — with a fixture-tested check matrix.
 - [ ] A LIVE_MICRO session on production APIs cannot deploy more than `micro_cap_micros` regardless of any other config, proven by test and by drill.
 - [ ] Live-vs-paper slippage and live Brier degradation are computed continuously, ledgered, surfaced on the dashboard, and wired into §10.9 gate evaluation and §10.10 demotion triggers.
 - [ ] Every RUNBOOK procedure has been executed at least once as a scripted drill against production APIs (restore, kill/re-arm, reconciliation mismatch, key rotation) with ledgered evidence.
@@ -30,7 +30,7 @@ The epic is done when:
 
 ## Child Issues
 
-- [ ] #56 — feat(livemicro): `hedgekit preflight` production-readiness checklist
+- [ ] #56 — feat(livemicro): `windbreak preflight` production-readiness checklist
 - [ ] #57 — feat(livemicro): LIVE_MICRO micro-cap deployment with human-ack and network allowlist
 - [ ] #58 — feat(livemicro): Live-vs-paper slippage and Brier degradation monitoring
 - [ ] #59 — feat(livemicro): Scripted operational drills

@@ -1,6 +1,6 @@
 ## Role
 
-You are a senior Python engineer with experience in tamper-evident systems, working in this repo's `hedgekit/evaluation/` package (mypy --strict). You are implementing the anti-Goodhart mechanism (SPEC T15).
+You are a senior Python engineer with experience in tamper-evident systems, working in this repo's `windbreak/evaluation/` package (mypy --strict). You are implementing the anti-Goodhart mechanism (SPEC T15).
 
 ## Goal
 
@@ -12,8 +12,8 @@ At PAPER entry, the complete gate definition (metrics, windows, thresholds, base
 - **Predecessor issue(s):** #53 (must be merged first — the gate plan references windows and cohorts by name).
 - **SPEC section:** `plans/SPEC_v3.md` §13.6 (pre-registration), §4 T15 (metric shopping / Goodhart), §10.9 (the gates being registered: ≥300 resolved, ≥100 independent event groups, Brier skill CI excluding zero, etc.), §17.4 ("Any change to this model re-registers the gate plan" — the paper-fill model hash is part of the plan).
 - **Files involved:**
-  - `hedgekit/evaluation/preregistration.py` — new: `GatePlan` dataclass, canonical serialization (sorted keys, integer units, no floats), hash, ledger events (`GATE_PLAN_REGISTERED`, `GATE_PLAN_CHANGED`)
-  - `hedgekit/evaluation/registry.py` — gate computations read thresholds *only* from the registered plan, never from live config
+  - `windbreak/evaluation/preregistration.py` — new: `GatePlan` dataclass, canonical serialization (sorted keys, integer units, no floats), hash, ledger events (`GATE_PLAN_REGISTERED`, `GATE_PLAN_CHANGED`)
+  - `windbreak/evaluation/registry.py` — gate computations read thresholds *only* from the registered plan, never from live config
   - `tests/evaluation/test_preregistration.py`
 - **Prior decisions:** the ledger is hash-chained and append-only (§12) — registration is an event, not a table update; the Risk Kernel (EPIC_04) consumes the "PAPER clock start" timestamp when checking the ≥90-day requirement, so expose it as a read model. The paper-fill model version (§17.4) is a field of the plan.
 - **State of the world:** metrics, windows, and cohorts are real; gate thresholds are currently read straight from config at computation time.

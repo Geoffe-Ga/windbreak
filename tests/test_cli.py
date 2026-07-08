@@ -1,4 +1,4 @@
-"""Tests for the `hedgekit run` CLI (issue #10).
+"""Tests for the `windbreak run` CLI (issue #10).
 
 Covers argument parsing (`build_parser`) in isolation, plus one
 end-to-end smoke test through `main()` that pins the observable
@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from hedgekit.main import build_parser, main
+from windbreak.main import build_parser, main
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -129,7 +129,7 @@ def test_main_run_emits_json_heartbeat_lines(
 
     Every line on stderr must parse as JSON with `level == "INFO"` and the
     heartbeat's `seq=1` marker inside `msg` -- pinning that `main()` routes
-    logging through `hedgekit.logging_setup.configure_logging` instead of
+    logging through `windbreak.logging_setup.configure_logging` instead of
     `logging.basicConfig`.
     """
     exit_code = main(["run", "--heartbeat-interval", "0", "--max-beats", "1"])
@@ -201,7 +201,7 @@ def test_alert_test_subcommand_is_valid_but_hidden_from_help(
 
 def test_alert_test_subcommand_accepts_all_registered_alert_types() -> None:
     """Every `AlertType`'s `cli_token` is a valid `alert-test` positional choice."""
-    from hedgekit.alerts.registry import AlertType, cli_token
+    from windbreak.alerts.registry import AlertType, cli_token
 
     parser = build_parser()
     for alert_type in AlertType:
@@ -276,7 +276,7 @@ def test_main_run_with_only_ledger_path_flag_never_creates_a_ledger(
     activates the PAPER loop: no ledger file is ever created, and the
     RESEARCH heartbeat is unaffected.
 
-    Uses the built-in `HedgekitConfig` default (`mode_ceiling: "paper"`, SPEC
+    Uses the built-in `WindbreakConfig` default (`mode_ceiling: "paper"`, SPEC
     §16) with no `--config` at all, so this pins that *flags alone* -- not
     just the mode ceiling -- gate PAPER activation.
     """

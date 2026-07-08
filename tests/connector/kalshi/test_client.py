@@ -1,4 +1,4 @@
-"""Tests for hedgekit.connector.kalshi.client (issue #17): thin HTTPS JSON GET.
+"""Tests for windbreak.connector.kalshi.client (issue #17): thin HTTPS JSON GET.
 
 `KalshiClient.get(*segments, params=...)` treats each positional argument as
 one path segment, percent-encoding it individually (`urllib.parse.quote(seg,
@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
-from hedgekit.connector.kalshi.client import (
+from windbreak.connector.kalshi.client import (
     KalshiApiError,
     KalshiClient,
     KalshiResponse,

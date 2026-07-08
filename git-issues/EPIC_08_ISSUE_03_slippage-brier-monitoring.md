@@ -1,6 +1,6 @@
 ## Role
 
-You are a senior Python engineer with market-microstructure and forecast-evaluation experience, working in this repo's `hedgekit/evaluation/` and `hedgekit/riskkernel/` packages (Python ≥3.11, mypy --strict).
+You are a senior Python engineer with market-microstructure and forecast-evaluation experience, working in this repo's `windbreak/evaluation/` and `windbreak/riskkernel/` packages (Python ≥3.11, mypy --strict).
 
 ## Goal
 
@@ -12,10 +12,10 @@ Live LIVE_MICRO fills are continuously compared against the §17.4 paper-fill mo
 - **Predecessor issue(s):** #57 (must be merged first — there are no live fills to measure without the micro-cap deployment path).
 - **SPEC section:** `plans/SPEC_v3.md` §10.9 ("live slippage ≤ configured multiple of paper model; live Brier within degradation band"), §10.10 ("rolling Brier degradation; live-vs-paper slippage divergence" as automatic demotion triggers), §13.1 (execution-quality track), §13.5 (slippage by market/category), §17.4 (the normative paper-fill model being compared against).
 - **Files involved:**
-  - `hedgekit/evaluation/execution_quality.py` — per-fill modeled-vs-actual comparison (create or extend from EPIC_07).
-  - `hedgekit/evaluation/` gate computation — add the two §10.9 live inputs to the pre-registered gate evaluation.
-  - `hedgekit/riskkernel/` — demotion trigger consumption (§10.10): divergence beyond config → demote one mode, ledgered.
-  - `hedgekit/dashboard/` — live-vs-paper slippage and rolling-Brier panels (§14 display list).
+  - `windbreak/evaluation/execution_quality.py` — per-fill modeled-vs-actual comparison (create or extend from EPIC_07).
+  - `windbreak/evaluation/` gate computation — add the two §10.9 live inputs to the pre-registered gate evaluation.
+  - `windbreak/riskkernel/` — demotion trigger consumption (§10.10): divergence beyond config → demote one mode, ledgered.
+  - `windbreak/dashboard/` — live-vs-paper slippage and rolling-Brier panels (§14 display list).
   - `tests/evaluation/`, `tests/riskkernel/` — synthetic known-answer fixtures.
 - **Prior decisions:** three evaluation tracks are never merged into one number (§13.1); gate definitions are pre-registered and hash-committed — if this issue adds gate inputs, the gate plan re-registers and the clock resets per §13.6 (this is expected and must be ledgered, not worked around). Dual-path (SQL + Python) computation applies to any gate-feeding metric (§13.6, T12).
 - **State of the world:** EPIC_07 shipped the three-track evaluation, clustered bootstrap, and pre-registration flow against paper data. Live fills now exist (issue 02) but nothing compares them to the paper model; demotion triggers for slippage/Brier divergence are defined in config but not fed.

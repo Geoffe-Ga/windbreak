@@ -1,4 +1,4 @@
-"""Tests for the on_beat snapshot wiring in hedgekit.main (issue #16).
+"""Tests for the on_beat snapshot wiring in windbreak.main (issue #16).
 
 `run_loop` gains a keyword-only `on_beat: Callable[[int], None] | None = None`
 hook invoked once per beat with the 1-based sequence number; `main`'s `run`
@@ -10,7 +10,7 @@ with issue #16's connector work.
 `run_loop` does not accept `on_beat` yet (TypeError: unexpected keyword
 argument) and `--snapshot-fixture-dir` is not a recognized CLI flag yet
 (argparse SystemExit(2)) -- both are the expected Gate 1 RED failures for
-issue #16, in addition to `hedgekit.connector`/`hedgekit.screener` not
+issue #16, in addition to `windbreak.connector`/`windbreak.screener` not
 existing.
 """
 
@@ -21,7 +21,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from hedgekit.main import main, run_loop
+from windbreak.main import main, run_loop
 
 if TYPE_CHECKING:
     import pytest

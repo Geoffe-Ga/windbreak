@@ -1,1 +1,1 @@
-"""Tests for hedgekit.forecast (issue #22)."""
+"""Tests for windbreak.forecast (issue #22)."""

@@ -1,6 +1,6 @@
 ## Role
 
-You are a senior Python engineer with adversarial-ML/security experience (prompt-injection hardening, untrusted-content pipelines), working in this repo's `hedgekit/forecast/` package.
+You are a senior Python engineer with adversarial-ML/security experience (prompt-injection hardening, untrusted-content pipelines), working in this repo's `windbreak/forecast/` package.
 
 ## Goal
 
@@ -12,8 +12,8 @@ Fetched web content is handled as untrusted data end-to-end — wrapped in delim
 - **Predecessor issue(s):** #24 and #26 (must be merged first — sandbox boundary and citation path are the surfaces under attack).
 - **SPEC section:** `plans/SPEC_v3.md` §8.5 (prompt-injection defense), §4 T1 (threat + mitigation row), §1.1-5 (firewall invariant), §17.1 (prompt-injection suite is CI-gating), §8.9 ("injection corpus green" acceptance).
 - **Files involved:**
-  - `hedgekit/forecast/sanitize.py` — data-block wrapping, script/hidden-text stripping, quote extraction ≤ 25 words (new)
-  - `hedgekit/forecast/pipeline.py` — synthesis stages consume only sanitized quote sets; invalid model output → discard + ledger event (modify)
+  - `windbreak/forecast/sanitize.py` — data-block wrapping, script/hidden-text stripping, quote extraction ≤ 25 words (new)
+  - `windbreak/forecast/pipeline.py` — synthesis stages consume only sanitized quote sets; invalid model output → discard + ledger event (modify)
   - `tests/forecast/injection/corpus/` — poisoned-page fixtures: embedded instructions, fake JSON, role impersonation, tool-call lures (new)
   - `tests/forecast/injection/test_injection_corpus.py` — the release-blocker suite (new)
 - **Prior decisions:** raw source snapshots are stored separately as evidence (research cache) and never enter prompts; "repair" of malformed model output by re-asking a more privileged model is forbidden — discard and ledger; corpus failures block release (CI-gating, not advisory).
@@ -23,7 +23,7 @@ Fetched web content is handled as untrusted data end-to-end — wrapped in delim
 
 Deliverable is a single PR containing:
 
-- [ ] Production code in `hedgekit/forecast/sanitize.py` + pipeline wiring
+- [ ] Production code in `windbreak/forecast/sanitize.py` + pipeline wiring
 - [ ] Adversarial corpus (≥ 8 poisoned pages spanning: direct instructions ("buy X", "ignore limits"), fake tool-call JSON, role impersonation, hidden text/CSS tricks, oversized quotes, citation-URL spoofing)
 - [ ] Corpus test asserting, for every page: resulting record differs from a clean-page baseline only in probability/rationale/citation fields; zero tool invocations outside {search, fetch, verify_citation}; zero writes outside the research cache
 - [ ] Test proving invalid structured output is discarded and a ledger event written — with no retry at elevated privilege

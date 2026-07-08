@@ -1,6 +1,6 @@
 ## Role
 
-You are a senior technical writer with production trading-systems and security-documentation experience, working at the root of this repo with full read access to `hedgekit/` and `plans/SPEC_v3.md`.
+You are a senior technical writer with production trading-systems and security-documentation experience, working at the root of this repo with full read access to `windbreak/` and `plans/SPEC_v3.md`.
 
 ## Goal
 
@@ -13,7 +13,7 @@ All eight §19 documents exist at the repo root, are accurate against the shippe
 - **SPEC section:** `plans/SPEC_v3.md` §19 (full document list + mandated README statements + RUNBOOK contents), §2 (residual risks that must appear in OPERATOR_WARNINGS.md), §10.7 (floor governance procedures), §12 (audit-bundle export), §16 (config reference to document).
 - **Files involved:**
   - `SECURITY.md` — §15 posture: secrets handling, credential boundaries (§5.2 table), network allowlist, reporting a vulnerability.
-  - `RUNBOOK.md` — §19's explicit list: start/stop/pause/kill/re-arm; restore from backup; rotate keys; raise floor; request floor lowering; respond to reconciliation-mismatch, canary-drift, and schema-anomaly halts; export audit bundle; export tax records. Each procedure references its drill (`hedgekit drill …`) where one exists.
+  - `RUNBOOK.md` — §19's explicit list: start/stop/pause/kill/re-arm; restore from backup; rotate keys; raise floor; request floor lowering; respond to reconciliation-mismatch, canary-drift, and schema-anomaly halts; export audit bundle; export tax records. Each procedure references its drill (`windbreak drill …`) where one exists.
   - `ARCHITECTURE.md` — §5 topology (reuse the mermaid diagram), process isolation, order flow, import-boundary rules.
   - `ACCOUNTING.md` — §6.1 fixed-point units, conservative rounding, §10.4 floor formula, balance semantics (§7.3), settlement lag (T18).
   - `EVALUATION.md` — §13 three tracks, baselines, windows, clustered bootstrap, pre-registration, power analysis, temporal integrity.
@@ -30,7 +30,7 @@ Deliverable is a single PR containing:
 
 - [ ] The seven new documents + README updates, each opening with a one-paragraph scope statement and citing SPEC §s.
 - [ ] Every RUNBOOK procedure is numbered, copy-pasteable, and names the exact CLI commands and expected ledger/alert evidence.
-- [ ] `tests/docs/test_docs_consistency.py`: every `hedgekit <subcommand>` and `config.key` referenced in the docs exists in the CLI registry / config schema — CI fails on drift.
+- [ ] `tests/docs/test_docs_consistency.py`: every `windbreak <subcommand>` and `config.key` referenced in the docs exists in the CLI registry / config schema — CI fails on drift.
 - [ ] No production-code changes (docs + docs-test only).
 - [ ] No drive-by changes unrelated to the goal.
 
@@ -41,10 +41,10 @@ Deliverable is a single PR containing:
 ```markdown
 ### Respond to a reconciliation-mismatch halt
 
-1. Confirm the halt: `hedgekit status` → mode `HALT`, alert `RECONCILIATION_MISMATCH`.
-2. Export the evidence bundle: `hedgekit audit-bundle --since <event-id>`.
-3. Compare exchange truth vs ledger: `hedgekit reconcile --dry-run` …
-4. Only after the mismatch is explained: `hedgekit rearm` (typed confirmation).
+1. Confirm the halt: `windbreak status` → mode `HALT`, alert `RECONCILIATION_MISMATCH`.
+2. Export the evidence bundle: `windbreak audit-bundle --since <event-id>`.
+3. Compare exchange truth vs ledger: `windbreak reconcile --dry-run` …
+4. Only after the mismatch is explained: `windbreak rearm` (typed confirmation).
    The system will NOT resume on its own — fail-closed is by design (SPEC §3.2).
 ```
 

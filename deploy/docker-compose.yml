@@ -1,4 +1,4 @@
-# hedgekit four-process deployment skeleton (issue #15, SPEC S5.1-S5.2, S14).
+# windbreak four-process deployment skeleton (issue #15, SPEC S5.1-S5.2, S14).
 #
 # One service per SPEC process. Every service runs the same image (built from
 # the repo-root Dockerfile) and selects its process via `--process`. The
@@ -8,33 +8,33 @@
 services:
   pipeline:
     build: .
-    command: ["hedgekit", "run", "--process", "pipeline"]
+    command: ["windbreak", "run", "--process", "pipeline"]
     restart: on-failure
     volumes:
-      - ledger:/var/lib/hedgekit/ledger
+      - ledger:/var/lib/windbreak/ledger
 
   riskkernel:
     build: .
-    command: ["hedgekit", "run", "--process", "riskkernel"]
+    command: ["windbreak", "run", "--process", "riskkernel"]
     restart: on-failure
     volumes:
-      - ledger:/var/lib/hedgekit/ledger
+      - ledger:/var/lib/windbreak/ledger
 
   order-gateway:
     build: .
-    command: ["hedgekit", "run", "--process", "order_gateway"]
+    command: ["windbreak", "run", "--process", "order_gateway"]
     restart: on-failure
     volumes:
-      - ledger:/var/lib/hedgekit/ledger
+      - ledger:/var/lib/windbreak/ledger
 
   dashboard:
     build: .
-    command: ["hedgekit", "run", "--process", "dashboard"]
+    command: ["windbreak", "run", "--process", "dashboard"]
     restart: on-failure
     # Dashboard reads the ledger without any trade authority (SPEC S5.1),
     # so its ledger mount is read-only.
     volumes:
-      - ledger:/var/lib/hedgekit/ledger:ro
+      - ledger:/var/lib/windbreak/ledger:ro
     # Loopback-only publish: the dashboard accepts no public inbound (SPEC S14).
     ports:
       - "127.0.0.1:8080:8080"

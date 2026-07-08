@@ -1,4 +1,4 @@
-# Claude Code Project Context: hedgekit
+# Claude Code Project Context: windbreak
 
 **Version**: 2.0 (Modular)
 
@@ -62,7 +62,7 @@
 
 ## 📖 Project Overview
 
-hedgekit is a Python project built with maximum quality engineering principles. Every line of code is held to the highest standards of testing, documentation, security, and maintainability.
+windbreak is a Python project built with maximum quality engineering principles. Every line of code is held to the highest standards of testing, documentation, security, and maintainability.
 
 **Purpose**: To deliver production-grade Python software with comprehensive quality enforcement, zero-tolerance for technical debt, and AI-optimized development workflows.
 
@@ -80,7 +80,7 @@ hedgekit is a Python project built with maximum quality engineering principles. 
 **Component Structure**:
 
 ```
-hedgekit/
+windbreak/
 ├── .github/
 │   ├── workflows/
 │   │   ├── ci.yml                    # Continuous Integration
@@ -106,7 +106,7 @@ hedgekit/
 │   ├── security.sh                   # Security scanning
 │   └── mutation.sh                   # Mutation testing
 ├── src/
-│   └── hedgekit/                     # Main package
+│   └── windbreak/                     # Main package
 ├── tests/
 │   ├── unit/                         # Unit tests
 │   ├── integration/                  # Integration tests
@@ -139,7 +139,7 @@ git checkout -b feature/my-feature
 pytest tests/unit/test_my_feature.py
 
 # Implement feature
-vim src/hedgekit/my_feature.py
+vim src/windbreak/my_feature.py
 
 # 3. Run ALL quality checks
 ./scripts/check-all.sh
@@ -268,7 +268,7 @@ v1.0.0.
 import pytest
 from hypothesis import given, strategies as st
 
-from hedgekit.calculator import Calculator
+from windbreak.calculator import Calculator
 
 
 class TestCalculator:
@@ -299,7 +299,7 @@ class TestCalculator:
 
 ```python
 from hypothesis import given, strategies as st
-from hedgekit.serialization import serialize, deserialize
+from windbreak.serialization import serialize, deserialize
 
 
 @given(st.dictionaries(st.text(), st.integers()))

@@ -1,6 +1,6 @@
 """Failing-first tests for the `--process` CLI flag (issue #15, RED).
 
-Issue #15 gives `hedgekit run` a `--process` flag selecting which of the
+Issue #15 gives `windbreak run` a `--process` flag selecting which of the
 four SPEC processes (pipeline, riskkernel, order_gateway, dashboard) this
 invocation represents, and threads that choice through to `run_loop` as a
 keyword-only `component` parameter so every heartbeat and shutdown log line
@@ -8,7 +8,7 @@ carries `extra={"component": component}`.
 
 None of this exists yet:
 
-- `hedgekit.main.PROCESS_CHOICES` is undefined, so the import below fails
+- `windbreak.main.PROCESS_CHOICES` is undefined, so the import below fails
   the whole module at collection with `ImportError`.
 - The `run` subparser has no `--process` option.
 - `run_loop` accepts no `component` keyword.
@@ -29,7 +29,7 @@ import sys
 
 import pytest
 
-from hedgekit.main import PROCESS_CHOICES, build_parser, main, run_loop
+from windbreak.main import PROCESS_CHOICES, build_parser, main, run_loop
 
 
 def test_process_choices_constant_matches_the_four_spec_processes() -> None:
@@ -133,7 +133,7 @@ def test_run_loop_component_defaults_to_pipeline() -> None:
         def emit(self, record: logging.LogRecord) -> None:
             caplog_records.append(record)
 
-    logger = logging.getLogger("hedgekit")
+    logger = logging.getLogger("windbreak")
     handler = _Collector()
     logger.addHandler(handler)
     original_level = logger.level
@@ -207,7 +207,7 @@ def test_main_run_with_process_flag_stamps_matching_component_in_json(
 
 @pytest.mark.timeout(30)
 def test_main_process_riskkernel_smoke_via_subprocess() -> None:
-    """`python -m hedgekit run --process riskkernel` exits 0 and logs the component.
+    """`python -m windbreak run --process riskkernel` exits 0 and logs the component.
 
     Bounded via `--max-beats 1` and `--heartbeat-interval 0` -- no signal
     races, no unbounded loop. This is the sole subprocess-level test in this
@@ -217,7 +217,7 @@ def test_main_process_riskkernel_smoke_via_subprocess() -> None:
         [
             sys.executable,
             "-m",
-            "hedgekit",
+            "windbreak",
             "run",
             "--process",
             "riskkernel",

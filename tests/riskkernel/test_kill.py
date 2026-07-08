@@ -1,17 +1,17 @@
-"""Failing-first tests for hedgekit.riskkernel.kill (issue #35, RED).
+"""Failing-first tests for windbreak.riskkernel.kill (issue #35, RED).
 
 Issue #35 gives the Risk Kernel a single kill executor (:class:`KillSwitch`)
 reachable from four triggers -- CLI, a `KILL` state-dir file, a dashboard
 challenge/confirm handshake, and consecutive reconciliation-mismatch
 auto-detection -- plus the typed-confirmation re-arm procedure that is the
-*only* way back out of `KILLED`. `hedgekit/riskkernel/kill.py` does not exist
+*only* way back out of `KILLED`. `windbreak/riskkernel/kill.py` does not exist
 yet, so the import below fails the whole module at collection with
-`ModuleNotFoundError: No module named 'hedgekit.riskkernel.kill'` -- the
+`ModuleNotFoundError: No module named 'windbreak.riskkernel.kill'` -- the
 expected Gate 1 RED state for issue #35. This file also pins three new
 ledger events (`KillEngaged`, `CancelAllDirective`, `KillReArmed` in
-`hedgekit/ledger/events.py`), a new `RiskConfig.kill_after_consecutive_mismatches`
+`windbreak/ledger/events.py`), a new `RiskConfig.kill_after_consecutive_mismatches`
 config field, a `RiskKernel`-level `KILLED` hard-veto and `kill_integration`
-wiring, and a `hedgekit kill` / `hedgekit rearm` CLI pair -- none of which
+wiring, and a `windbreak kill` / `windbreak rearm` CLI pair -- none of which
 exist yet either, so several individual imports below would independently
 fail collection too (an `ImportError` on the not-yet-defined ledger event
 classes, in particular) even once `kill.py` exists on its own.
@@ -35,20 +35,21 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from hedgekit.alerts.dispatch import AlertDispatcher, LoggingLedgerWriter
-from hedgekit.alerts.registry import AlertType
-from hedgekit.config import RiskConfig
-from hedgekit.connector.fake import FakeExchange
-from hedgekit.ledger.events import (
+from tests.riskkernel.conftest import make_context, make_intent
+from windbreak.alerts.dispatch import AlertDispatcher, LoggingLedgerWriter
+from windbreak.alerts.registry import AlertType
+from windbreak.config import RiskConfig
+from windbreak.connector.fake import FakeExchange
+from windbreak.ledger.events import (
     EVENT_TYPES,
     CancelAllDirective,
     KillEngaged,
     KillReArmed,
 )
-from hedgekit.main import main as hedgekit_main
-from hedgekit.numeric.types import ContractCentis, MoneyMicros
-from hedgekit.riskkernel.demotion import DemotionTrigger
-from hedgekit.riskkernel.kill import (
+from windbreak.main import main as windbreak_main
+from windbreak.numeric.types import ContractCentis, MoneyMicros
+from windbreak.riskkernel.demotion import DemotionTrigger
+from windbreak.riskkernel.kill import (
     DashboardChallengeError,
     DashboardKillStub,
     KillFileWatcher,
@@ -57,24 +58,23 @@ from hedgekit.riskkernel.kill import (
     KillTrigger,
     ReconciliationMismatchMonitor,
 )
-from hedgekit.riskkernel.modes import (
+from windbreak.riskkernel.modes import (
     REARM_CONFIRMATION_PHRASE,
     KillReArmError,
     Mode,
     ModeStateMachine,
 )
-from hedgekit.riskkernel.process import InMemoryKernelLedgerWriter, RiskKernel
-from hedgekit.riskkernel.reservations import (
+from windbreak.riskkernel.process import InMemoryKernelLedgerWriter, RiskKernel
+from windbreak.riskkernel.reservations import (
     DuplicateReservationError,
     ReservationLedger,
 )
-from hedgekit.riskkernel.verification import (
+from windbreak.riskkernel.verification import (
     LedgerExpectations,
     ReadOnlyVerifier,
     VerificationOutcome,
     VerificationTolerances,
 )
-from tests.riskkernel.conftest import make_context, make_intent
 
 #: The fixed "current instant" every `KillSwitch` built by `_build_switch`
 #: reports, via an injected clock, so every `KillEngaged.epoch` assertion below
@@ -1146,14 +1146,14 @@ def test_kill_drill_open_reservations_kill_file_mid_run_then_rearm_restores_capa
         )
 
 
-# --- CLI: `hedgekit kill` / `hedgekit rearm` -------------------------------------
+# --- CLI: `windbreak kill` / `windbreak rearm` -------------------------------------
 
 
 def test_main_kill_subcommand_writes_a_kill_file_and_exits_zero(tmp_path: Path) -> None:
-    """`hedgekit kill --state-dir DIR` writes a `KILL` file into `DIR` and
+    """`windbreak kill --state-dir DIR` writes a `KILL` file into `DIR` and
     exits 0.
     """
-    exit_code = hedgekit_main(["kill", "--state-dir", str(tmp_path)])
+    exit_code = windbreak_main(["kill", "--state-dir", str(tmp_path)])
 
     assert exit_code == 0
     assert (tmp_path / "KILL").exists()
@@ -1162,14 +1162,14 @@ def test_main_kill_subcommand_writes_a_kill_file_and_exits_zero(tmp_path: Path) 
 def test_main_rearm_subcommand_writes_the_typed_phrase_verbatim_and_exits_zero(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`hedgekit rearm --state-dir DIR` reads the confirmation phrase from its
+    """`windbreak rearm --state-dir DIR` reads the confirmation phrase from its
     injected stdin reader and writes it *verbatim* (no stripping, no case
     change) to a `REARM` file in `DIR`, exiting 0.
     """
     typed_phrase = "RE-ARM KILL 7: I ACCEPT FULL RESPONSIBILITY  "
     monkeypatch.setattr("builtins.input", lambda *args, **kwargs: typed_phrase)
 
-    exit_code = hedgekit_main(["rearm", "--state-dir", str(tmp_path)])
+    exit_code = windbreak_main(["rearm", "--state-dir", str(tmp_path)])
 
     assert exit_code == 0
     assert (tmp_path / "REARM").read_text(encoding="utf-8") == typed_phrase

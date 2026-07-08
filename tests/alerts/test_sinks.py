@@ -1,4 +1,4 @@
-"""Tests for hedgekit.alerts.sinks (issue #14): outbound alert channels.
+"""Tests for windbreak.alerts.sinks (issue #14): outbound alert channels.
 
 Every sink is exercised through an injected transport double -- zero real
 sockets, zero real SMTP connections. The default transports (`_https_post`,
@@ -6,7 +6,7 @@ sockets, zero real SMTP connections. The default transports (`_https_post`,
 / `smtplib.SMTP` for fakes, so the wiring between "sink" and "network call"
 is pinned without ever touching the network.
 
-None of `hedgekit.alerts.sinks`'s public names exist yet, so importing this
+None of `windbreak.alerts.sinks`'s public names exist yet, so importing this
 module fails at collection with `ModuleNotFoundError` -- the expected RED
 state for issue #14's Gate 1.
 """
@@ -23,8 +23,8 @@ from typing import TYPE_CHECKING, ClassVar
 
 import pytest
 
-from hedgekit.alerts.registry import AlertSeverity, AlertType
-from hedgekit.alerts.sinks import (
+from windbreak.alerts.registry import AlertSeverity, AlertType
+from windbreak.alerts.sinks import (
     _TRANSPORT_TIMEOUT_SECONDS,
     DesktopSink,
     LogOnlySink,
@@ -396,13 +396,13 @@ class TestLogOnlySink:
     def test_uses_the_injected_logger(self, caplog: pytest.LogCaptureFixture) -> None:
         """A custom logger passed to the constructor is the one that emits."""
         caplog.set_level(logging.INFO)
-        logger = logging.getLogger("hedgekit.test.custom_alerts")
+        logger = logging.getLogger("windbreak.test.custom_alerts")
         sink = LogOnlySink(logger=logger)
 
         sink.send(AlertType.VETO, AlertSeverity.WARNING, "vetoed")
 
         assert len(caplog.records) == 1
-        assert caplog.records[0].name == "hedgekit.test.custom_alerts"
+        assert caplog.records[0].name == "windbreak.test.custom_alerts"
 
 
 @pytest.mark.parametrize(

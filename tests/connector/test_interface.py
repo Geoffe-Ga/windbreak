@@ -1,10 +1,10 @@
-"""Tests for hedgekit.connector.interface (issue #16): the MarketConnector protocol.
+"""Tests for windbreak.connector.interface (issue #16): the MarketConnector protocol.
 
 SPEC S7.2 defines exactly 13 connector methods. These tests pin: the protocol
 is `@runtime_checkable` so `isinstance(fake, MarketConnector)` works, every
-method is present, and each has the documented arity. `hedgekit/connector/`
+method is present, and each has the documented arity. `windbreak/connector/`
 does not exist yet, so importing it fails collection with
-`ModuleNotFoundError: No module named 'hedgekit.connector'` -- the expected
+`ModuleNotFoundError: No module named 'windbreak.connector'` -- the expected
 Gate 1 RED state for issue #16.
 """
 
@@ -13,10 +13,10 @@ from __future__ import annotations
 import inspect
 from typing import TYPE_CHECKING
 
-from hedgekit.connector.interface import MarketConnector, UnknownMarketError
+from windbreak.connector.interface import MarketConnector, UnknownMarketError
 
 if TYPE_CHECKING:
-    from hedgekit.connector.fake import FakeExchange
+    from windbreak.connector.fake import FakeExchange
 
 #: Expected positional-parameter count (excluding `self`) per SPEC S7.2 method.
 _EXPECTED_PARAM_COUNTS = {

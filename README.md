@@ -1,16 +1,29 @@
-# hedgekit
+# windbreak
 
 An open-source, locally hosted, always-on AI forecast trader for fully collateralized binary event markets (e.g., Kalshi).
 
 **Status:** Pre-implementation scaffold. Building against [`plans/SPEC_v3.md`](plans/SPEC_v3.md).
 
-**Quality metrics:** [📊 Live dashboard](https://geoffe-ga.github.io/hedgekit/dashboard.html) — regenerated on every push to `main` by the [Quality Metrics Dashboard workflow](.github/workflows/metrics.yml).
+**Quality metrics:** [📊 Live dashboard](https://geoffe-ga.github.io/windbreak/dashboard.html) — regenerated on every push to `main` by the [Quality Metrics Dashboard workflow](.github/workflows/metrics.yml).
 
 **License target:** Apache-2.0
 
+## Why "windbreak"
+
+A windbreak is a barrier that blocks damaging wind so what's behind it can grow —
+that's the design brief for this project. It's meant to be a windbreak against
+the headwinds of capitalism ordinary people face building wealth: scarcity
+mindset, debt, disadvantage, and the general asymmetry of who gets access to
+sophisticated trading tools. Breaking those headwinds — and breaking the wind
+of risk itself — is the point: AI-assisted trading infrastructure a normal
+person can run, not just institutions, with the Risk Kernel, kill switch, and
+floor invariant blunting the "wind" of catastrophic loss so entry into
+prediction-market trading is safer and lower-risk than going in unprotected.
+If it works, it's meant to be someone's windfall, their big break.
+
 ## What this is
 
-`hedgekit` is a local-first daemon that:
+`windbreak` is a local-first daemon that:
 
 1. Screens prediction markets for questions where careful research can plausibly beat the crowd.
 2. Uses an LLM "superforecaster" scaffold to produce calibrated probability estimates with verified citations.
@@ -89,7 +102,7 @@ pre-commit run --all-files   # all 32 hooks (recommended before commit)
 ### Repository layout
 
 ```
-hedgekit/            # Main package
+windbreak/            # Main package
 tests/               # Test suite
 scripts/             # Quality-gate scripts + Ralph fleet mechanics (scripts/ralph/)
 plans/               # SPEC_v3.md and planning documents
@@ -114,7 +127,7 @@ docker compose -f deploy/docker-compose.yml up -d
 
 Starts four services — `pipeline`, `riskkernel`, `order-gateway`, `dashboard`
 — each built from the repo-root `Dockerfile` and running
-`hedgekit run --process <name>`, with `restart: on-failure`. Only `dashboard`
+`windbreak run --process <name>`, with `restart: on-failure`. Only `dashboard`
 publishes a port, bound to `127.0.0.1:8080` (SPEC §14: no public inbound), and
 its ledger mount is read-only since it holds no trade authority. Process
 isolation in practice:
@@ -122,23 +135,23 @@ isolation in practice:
 ```bash
 $ docker compose -f deploy/docker-compose.yml kill pipeline
 $ docker compose -f deploy/docker-compose.yml ps --format '{{.Name}} {{.State}}'
-hedgekit-pipeline       exited
-hedgekit-riskkernel     running
-hedgekit-order-gateway  running
-hedgekit-dashboard      running
+windbreak-pipeline       exited
+windbreak-riskkernel     running
+windbreak-order-gateway  running
+windbreak-dashboard      running
 ```
 
 **systemd**
 
 `deploy/systemd/` ships one unit per process —
-`hedgekit-{pipeline,riskkernel,order-gateway,dashboard}.service` — each with
+`windbreak-{pipeline,riskkernel,order-gateway,dashboard}.service` — each with
 `Restart=on-failure`. Units are install-prefix-agnostic:
-`ExecStart=/usr/bin/env hedgekit run --process <name>` resolves `hedgekit`
+`ExecStart=/usr/bin/env windbreak run --process <name>` resolves `windbreak`
 from `PATH` rather than a hardcoded install path.
 
 **Dashboard**
 
-The dashboard server (`hedgekit.dashboard.app`) binds `127.0.0.1` only — never
+The dashboard server (`windbreak.dashboard.app`) binds `127.0.0.1` only — never
 a public interface — and every request must present a static bearer token
 (`Authorization: Bearer <token>`), serving a single read-only status page
 (mode + last heartbeat). At M0 this HTTP surface exists only as a library: the
@@ -149,7 +162,7 @@ backing: config, #11; ledger, #13) once those land. It is a **stub**: real
 views (positions, equity, calibration) and mutations (pause, kill, acknowledge,
 raise floor) arrive with later epics.
 
-This is an M0 skeleton: the tracer `hedgekit run` (no flags) still just idles
+This is an M0 skeleton: the tracer `windbreak run` (no flags) still just idles
 in `RESEARCH` mode, emitting heartbeats.
 
 ### Ralph fleet loop

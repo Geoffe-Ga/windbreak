@@ -1,10 +1,10 @@
 ## Role
 
-You are a senior Python systems engineer working in this repo's `hedgekit/` package, experienced with process isolation, HMAC/signature verification, and typed state machines under `mypy --strict`.
+You are a senior Python systems engineer working in this repo's `windbreak/` package, experienced with process isolation, HMAC/signature verification, and typed state machines under `mypy --strict`.
 
 ## Goal
 
-A credential-isolated `hedgekit/order_gateway/` package runs as its own process, verifies Kernel-signed approval tokens (signature, intent-hash match, expiry, single-use), models the full §11.3 order state machine as typed transitions, and routes every "submission" to PaperExchange stubs — with an import-boundary test proving only `order_gateway` may import the exchange order-submission client.
+A credential-isolated `windbreak/order_gateway/` package runs as its own process, verifies Kernel-signed approval tokens (signature, intent-hash match, expiry, single-use), models the full §11.3 order state machine as typed transitions, and routes every "submission" to PaperExchange stubs — with an import-boundary test proving only `order_gateway` may import the exchange order-submission client.
 
 ## Context
 
@@ -12,21 +12,21 @@ A credential-isolated `hedgekit/order_gateway/` package runs as its own process,
 - **Predecessor issue(s):** none — this is the skeleton issue for this epic. (Cross-epic: requires the M3 Risk Kernel token format and the M1 PaperExchange to be merged.)
 - **SPEC section:** `plans/SPEC_v3.md` §11.1–§11.3 (responsibility, requirements, state machine), §10.6 (approval-token fields the Gateway must verify), §5.2 (credential boundaries: trade-only creds + verification key live here), §5.3 (import-boundary CI rule)
 - **Files involved:**
-  - `hedgekit/order_gateway/__init__.py` — new package; the ONLY package allowed to import the exchange order-submission client
-  - `hedgekit/order_gateway/tokens.py` — token verification: signature over canonical serialization, intent-hash match, expiry, single-use ledger
-  - `hedgekit/order_gateway/state_machine.py` — §11.3 states and legal transitions as typed enums/functions; illegal transitions raise
-  - `hedgekit/order_gateway/gateway.py` — process entrypoint; accepts (intent, token) pairs, verifies, walks state machine, calls stubbed submitter
+  - `windbreak/order_gateway/__init__.py` — new package; the ONLY package allowed to import the exchange order-submission client
+  - `windbreak/order_gateway/tokens.py` — token verification: signature over canonical serialization, intent-hash match, expiry, single-use ledger
+  - `windbreak/order_gateway/state_machine.py` — §11.3 states and legal transitions as typed enums/functions; illegal transitions raise
+  - `windbreak/order_gateway/gateway.py` — process entrypoint; accepts (intent, token) pairs, verifies, walks state machine, calls stubbed submitter
   - `tests/order_gateway/test_tokens.py` — verification matrix against Kernel-signed fixtures
   - `tests/order_gateway/test_state_machine.py` — every legal and illegal transition
   - `tests/architecture/test_import_boundaries.py` — extend with the order-submission-client rule (or `plans/architecture/.importlinter` if the repo uses import-linter contracts)
 - **Prior decisions:** Token fields and canonical serialization are defined by the Risk Kernel epic (§10.6): `{intent_id, market_ticker, outcome, action, limit_price_pips, count_centis, max_fee_micros, expires_at, idempotency_key, config_hash, kernel_sequence_number}`, TTL 60s, single-use. Do not redefine them — import the shared schema and consume Kernel-produced signing fixtures.
-- **State of the world:** `hedgekit/` contains the generated scaffold plus M0–M3 output: ledger, fixed-point types, Risk Kernel (signing side), Market Connector, PaperExchange. No `order_gateway` package exists yet.
+- **State of the world:** `windbreak/` contains the generated scaffold plus M0–M3 output: ledger, fixed-point types, Risk Kernel (signing side), Market Connector, PaperExchange. No `order_gateway` package exists yet.
 
 ## Output Format
 
 Deliverable is a single PR containing:
 
-- [ ] New `hedgekit/order_gateway/` package with `tokens.py`, `state_machine.py`, `gateway.py`
+- [ ] New `windbreak/order_gateway/` package with `tokens.py`, `state_machine.py`, `gateway.py`
 - [ ] Stubbed submission: state machine reaches `SUBMISSION_REQUESTED → SUBMITTED → ACKED` against a PaperExchange stub returning typed fake acks
 - [ ] Tests in `tests/order_gateway/` proving the token matrix and full transition table
 - [ ] Import-boundary test asserting only `order_gateway` imports the exchange order-submission client
@@ -57,7 +57,7 @@ def test_illegal_transition_raises():
 
 ## Constraints
 
-**Scope fence:** Do not implement real exchange submission, retry logic, crash recovery, the sweeper, or reduce-only checks — those belong to issues #38 through #41. Submission is a stub. Do not touch `hedgekit/riskkernel/` (the signing side) except to import its published token schema. If you find yourself touching files outside the list above, stop and check with the user.
+**Scope fence:** Do not implement real exchange submission, retry logic, crash recovery, the sweeper, or reduce-only checks — those belong to issues #38 through #41. Submission is a stub. Do not touch `windbreak/riskkernel/` (the signing side) except to import its published token schema. If you find yourself touching files outside the list above, stop and check with the user.
 
 **Anti-bypass (verbatim, non-negotiable):**
 
@@ -69,7 +69,7 @@ def test_illegal_transition_raises():
 > reference URL, an alternative considered, and a review date. See the
 > `max-quality-no-shortcuts` skill.
 
-**Tracer-code invariant:** The system must remain demoable after this PR merges. `hedgekit run` and all existing surfaces keep working; the Gateway skeleton adds a new process without breaking any other.
+**Tracer-code invariant:** The system must remain demoable after this PR merges. `windbreak run` and all existing surfaces keep working; the Gateway skeleton adds a new process without breaking any other.
 
 ## Definition of Done (stay-green)
 

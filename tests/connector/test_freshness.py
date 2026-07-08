@@ -1,4 +1,4 @@
-"""Tests for hedgekit.connector.freshness (issue #20): caller-scoped TTL checks.
+"""Tests for windbreak.connector.freshness (issue #20): caller-scoped TTL checks.
 
 `is_fresh` / `ensure_fresh` compare a snapshot's age (`now - fetched_at`)
 against a *caller-supplied* `ttl_seconds` -- there is no module-level default
@@ -9,10 +9,10 @@ is fresh; one microsecond past it is stale. A `fetched_at` in the future
 (`now < fetched_at`, i.e. clock skew) is always stale, regardless of
 `ttl_seconds` -- an anomalous clock is never treated as "extra fresh".
 
-`hedgekit.connector.freshness` does not exist yet, so importing it fails
-collection with `ModuleNotFoundError: No module named 'hedgekit.connector'`
-(or, once `hedgekit.connector` exists from an earlier issue,
-`ModuleNotFoundError: No module named 'hedgekit.connector.freshness'`) --
+`windbreak.connector.freshness` does not exist yet, so importing it fails
+collection with `ModuleNotFoundError: No module named 'windbreak.connector'`
+(or, once `windbreak.connector` exists from an earlier issue,
+`ModuleNotFoundError: No module named 'windbreak.connector.freshness'`) --
 the expected Gate 1 RED state for issue #20.
 """
 
@@ -22,7 +22,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from hedgekit.connector.freshness import StaleSnapshotError, ensure_fresh, is_fresh
+from windbreak.connector.freshness import StaleSnapshotError, ensure_fresh, is_fresh
 
 #: A fixed "now" every test measures ages against; never wall-clock time.
 _NOW = datetime(2026, 7, 4, 12, 0, 0, tzinfo=UTC)

@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from hedgekit.ledger.events import (
+from windbreak.ledger.events import (
     AlertEmitted,
     ConfigLoaded,
     ModeHeartbeat,
@@ -40,8 +40,8 @@ from hedgekit.ledger.events import (
     SubmissionRefused,
     canonical_json,
 )
-from hedgekit.ledger.rebuild import rebuild
-from hedgekit.ledger.store import (
+from windbreak.ledger.rebuild import rebuild
+from windbreak.ledger.store import (
     ChainIntegrityError,
     SqliteLedgerStore,
     compute_event_hash,

@@ -1,10 +1,10 @@
 """Failing-first tests for the adverse-selection sweeper (issue #41, RED).
 
-`hedgekit/order_gateway/sweeper.py` does not exist yet, so the module-level
+`windbreak/order_gateway/sweeper.py` does not exist yet, so the module-level
 import below fails collection with `ModuleNotFoundError: No module named
-'hedgekit.order_gateway.sweeper'` -- the expected Gate 1 RED state for issue
+'windbreak.order_gateway.sweeper'` -- the expected Gate 1 RED state for issue
 #41. `OrderGateway` also does not yet expose `.resting_meta()` /
-`.attach_sweeper()` / `.sweep()`, and `hedgekit.ledger.events` does not yet
+`.attach_sweeper()` / `.sweep()`, and `windbreak.ledger.events` does not yet
 define `MarketFreeze` / `ReturnToScreener` (pinned separately in
 `tests/ledger/test_ledger_events.py`); once the module-level import above is
 satisfied, those gaps surface as `AttributeError`/`RuntimeError` instead.
@@ -26,7 +26,7 @@ sketch -- flagged for the implementer where the sketch leaves a choice open):
     * `MarketFreeze.event_type` is the literal class name `"MarketFreeze"`
       (never `"MARKET_FREEZE"`) -- the issue sketch spells the *concept* in
       shouty-snake-case, but every other concrete `Event` subtype in
-      `hedgekit.ledger.events` derives `event_type` from `type(self).__name__`
+      `windbreak.ledger.events` derives `event_type` from `type(self).__name__`
       via `_derive_typed_event`, and nothing in the issue asks `MarketFreeze`
       to special-case that.
     * The move-breach reference price is the side-matched top of book at
@@ -104,19 +104,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from hedgekit.ledger.store import SqliteLedgerStore
-from hedgekit.numeric.types import ContractCentis, PricePips
-from hedgekit.order_gateway.gateway import OrderGateway, PaperSubmitter, SubmitOutcome
-from hedgekit.order_gateway.ledger_writer import SqliteGatewayLedgerWriter
-from hedgekit.order_gateway.recovery import fold_ledger_states
-from hedgekit.order_gateway.state_machine import OrderState
-from hedgekit.order_gateway.sweeper import (
-    RestingOrderMeta,
-    Sweeper,
-    SweepOutcome,
-    SweepPolicy,
-)
-from hedgekit.order_gateway.wal import WriteAheadLog
 from tests.order_gateway.conftest import (
     DEFAULT_MARKET_TICKER,
     DEFAULT_NOW_EPOCH_S,
@@ -131,12 +118,25 @@ from tests.order_gateway.test_reconciler import (
     _resting_full_consume_exchange,
 )
 from tests.order_gateway.test_reduce_only import _position, _StubPositionSource
+from windbreak.ledger.store import SqliteLedgerStore
+from windbreak.numeric.types import ContractCentis, PricePips
+from windbreak.order_gateway.gateway import OrderGateway, PaperSubmitter, SubmitOutcome
+from windbreak.order_gateway.ledger_writer import SqliteGatewayLedgerWriter
+from windbreak.order_gateway.recovery import fold_ledger_states
+from windbreak.order_gateway.state_machine import OrderState
+from windbreak.order_gateway.sweeper import (
+    RestingOrderMeta,
+    Sweeper,
+    SweepOutcome,
+    SweepPolicy,
+)
+from windbreak.order_gateway.wal import WriteAheadLog
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from hedgekit.connector.paper import PaperExchange
-    from hedgekit.ledger.store import LedgerRecord
+    from windbreak.connector.paper import PaperExchange
+    from windbreak.ledger.store import LedgerRecord
 
 #: The `deep_walk` fixture's ask sits at 4600 pips; 4400 stays safely below
 #: it, so a resting order placed here always fills zero and rests in full --
@@ -188,7 +188,7 @@ def _gap_move_exchange() -> PaperExchange:
         each ticker's top-of-book YES bid with no trade print (see the module
         docstring's fixture note for the exact per-ticker gap sizes).
     """
-    from hedgekit.connector.paper import PaperExchange
+    from windbreak.connector.paper import PaperExchange
 
     books_dir = (
         Path(__file__).resolve().parents[1]

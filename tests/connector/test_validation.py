@@ -1,4 +1,4 @@
-"""Tests for hedgekit.connector.validation (issue #20): fail-closed schema drift.
+"""Tests for windbreak.connector.validation (issue #20): fail-closed schema drift.
 
 `SchemaValidator.validate(segments, payload)` implements SPEC §3 principle 3
 ("fail closed on drift") for every raw payload a connector fetches:
@@ -15,7 +15,7 @@
 * A raising ledger writer is isolated (logged and swallowed); the
   `SchemaAnomalyHaltError` still raises regardless.
 
-`hedgekit.connector.validation` does not exist yet, so importing it fails
+`windbreak.connector.validation` does not exist yet, so importing it fails
 collection with `ModuleNotFoundError` -- the expected Gate 1 RED state for
 issue #20.
 
@@ -25,17 +25,17 @@ this test module's docstrings at point of use for the reasoning):
 * The `SCHEMA_ANOMALY` event payload uses the keys `"schema_key"`,
   `"version"`, `"fields"`, and `"raw_exchange_payload_hash"` -- the last
   name matches the existing `PRODUCT_REFUSED` / `MARKET_MALFORMED` event
-  convention in `hedgekit.connector.kalshi.normalize` for consistency.
+  convention in `windbreak.connector.kalshi.normalize` for consistency.
 * The payload hash is over the *full* top-level payload passed to
   `.validate()` (via the same canonical-JSON + SHA-256 scheme as
-  `hedgekit.connector.kalshi.normalize.payload_hash`), not just the
+  `windbreak.connector.kalshi.normalize.payload_hash`), not just the
   sub-mapping where the anomaly was found.
 * An unregistered path does *not* ledger a `SCHEMA_ANOMALY` event (the
   design text says "ledger ... THEN raise" only for the recognized-schema
   case; the unregistered-path bullet says only "raise").
 * The ledgered event's `ts` uses the same ISO-8601-UTC-with-trailing-`Z`
   rendering (`%Y-%m-%dT%H:%M:%S.%f` + `"Z"`) already used throughout
-  `hedgekit.connector` (`snapshot.utc_now_iso` / `adapter._iso_timestamp`).
+  `windbreak.connector` (`snapshot.utc_now_iso` / `adapter._iso_timestamp`).
 """
 
 from __future__ import annotations
@@ -50,8 +50,8 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from hedgekit.connector.snapshot import ConnectorEvent, InMemoryEventLedgerWriter
-from hedgekit.connector.validation import (
+from windbreak.connector.snapshot import ConnectorEvent, InMemoryEventLedgerWriter
+from windbreak.connector.validation import (
     SCHEMA_ANOMALY_EVENT,
     ResponseSchema,
     SchemaAnomalyHaltError,
@@ -59,7 +59,7 @@ from hedgekit.connector.validation import (
     SchemaValidator,
     kalshi_default_schema_registry,
 )
-from hedgekit.ledger import canonical_json
+from windbreak.ledger import canonical_json
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

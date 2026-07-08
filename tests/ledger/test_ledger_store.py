@@ -1,4 +1,4 @@
-"""Tests for `hedgekit.ledger.store.SqliteLedgerStore` (issue #13).
+"""Tests for `windbreak.ledger.store.SqliteLedgerStore` (issue #13).
 
 Pins the on-disk contract from SPEC §12: monotonically increasing
 sequence numbers starting at 1, hash chaining from a fixed genesis
@@ -19,8 +19,8 @@ import sqlite3
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
-from hedgekit.ledger.events import GENESIS_PREV_HASH, ConfigLoaded, ModeHeartbeat
-from hedgekit.ledger.store import LedgerRecord, SqliteLedgerStore, compute_event_hash
+from windbreak.ledger.events import GENESIS_PREV_HASH, ConfigLoaded, ModeHeartbeat
+from windbreak.ledger.store import LedgerRecord, SqliteLedgerStore, compute_event_hash
 
 if TYPE_CHECKING:
     from collections.abc import Callable

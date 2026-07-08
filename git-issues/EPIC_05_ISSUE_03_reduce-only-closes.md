@@ -1,6 +1,6 @@
 ## Role
 
-You are a senior Python engineer working in this repo's `hedgekit/order_gateway/` package, experienced with defensive validation in financial order paths.
+You are a senior Python engineer working in this repo's `windbreak/order_gateway/` package, experienced with defensive validation in financial order paths.
 
 ## Goal
 
@@ -12,8 +12,8 @@ Every `SELL_TO_CLOSE` order is provably reduce-only: the Gateway sets the exchan
 - **Predecessor issue(s):** #38 (must be merged first — real submission path)
 - **SPEC section:** `plans/SPEC_v3.md` §6.4 ("SELL_TO_CLOSE is reduce-only, always"; "If the exchange lacks a reduce-only flag, the Gateway enforces reduce-only locally immediately before submission and re-verifies position size after fills"), §11.2 (reduce-only enforcement requirement), §1.1-2 (bounded-loss invariant), §11.5 (zero net-short acceptance criterion)
 - **Files involved:**
-  - `hedgekit/order_gateway/reduce_only.py` — new: pre-submission position check + post-fill re-verification
-  - `hedgekit/order_gateway/gateway.py` — wire the check into the `SELL_TO_CLOSE` path; `BUY_TO_OPEN` is untouched
+  - `windbreak/order_gateway/reduce_only.py` — new: pre-submission position check + post-fill re-verification
+  - `windbreak/order_gateway/gateway.py` — wire the check into the `SELL_TO_CLOSE` path; `BUY_TO_OPEN` is untouched
   - `tests/order_gateway/test_reduce_only.py` — close ≤ position passes; close > position refused; concurrent partial fills shrink the closeable amount; post-fill mismatch halts
 - **Prior decisions:** Position reads go through the connector's `get_positions()` (§7.2). Fixed-point `ContractCentis` integers only — no floats anywhere in the count math (§6.1, §17.3). The Kernel also checks "reduce-only provable for closes" (§10.3); this Gateway check is the independent second layer (defense in depth), not a replacement.
 - **State of the world:** After issue 02, the Gateway submits both open and close intents to PaperExchange with no position-awareness; a close larger than the held position would currently pass through.

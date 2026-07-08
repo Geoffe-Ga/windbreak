@@ -1,7 +1,7 @@
-"""Tests for hedgekit.connector.fees (issue #18): FeeModel's fee-bound math.
+"""Tests for windbreak.connector.fees (issue #18): FeeModel's fee-bound math.
 
-`hedgekit/connector/fees.py` does not exist yet, so importing it fails
-collection with `ModuleNotFoundError: No module named 'hedgekit.connector.fees'`
+`windbreak/connector/fees.py` does not exist yet, so importing it fails
+collection with `ModuleNotFoundError: No module named 'windbreak.connector.fees'`
 -- the expected Gate 1 RED state for issue #18.
 
 `FeeModel` carries a schedule's maker/taker/settlement rates in ppm and exposes
@@ -30,7 +30,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from hedgekit.connector.fees import FeeModel
+from windbreak.connector.fees import FeeModel
 
 #: Bounds chosen to keep hypothesis examples fast while still covering the
 #: full legal domain of each parameter.

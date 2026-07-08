@@ -1,6 +1,6 @@
 ## Role
 
-You are a senior Python engineer working in this repo's `hedgekit/selector/` package on portfolio-concentration controls (data modeling + enforcement, with an LLM-assisted tagging pipeline treated as untrusted input).
+You are a senior Python engineer working in this repo's `windbreak/selector/` package on portfolio-concentration controls (data modeling + enforcement, with an LLM-assisted tagging pipeline treated as untrusted input).
 
 ## Goal
 
@@ -12,8 +12,8 @@ Every market carries structured correlation-driver tags from the seed taxonomy, 
 - **Predecessor issue(s):** #45 (must be merged first — the cap-clipping pipeline this issue's bucket arithmetic plugs into). Independent of #46; may land before or after it.
 - **SPEC section:** `plans/SPEC_v3.md` §9.9 (correlation buckets, seed taxonomy), §4 row T10, §16 key `max_pos_bucket_pct_ppm`; §20 Open Question 5 (taxonomy governance — do not resolve it here; implement seed list + override mechanics and leave governance to the operator docs)
 - **Files involved:**
-  - `hedgekit/selector/correlation.py` — tag data model, seed taxonomy constants (`us-election`, `fed-policy`, `inflation`, `weather`, `geopolitics-<region>`, `ai-regulation`, `company-specific`, `legal-case`), bucket-exposure aggregation (new)
-  - `hedgekit/selector/sizing.py` — wire real bucket exposure into the existing per-bucket cap stage
+  - `windbreak/selector/correlation.py` — tag data model, seed taxonomy constants (`us-election`, `fed-policy`, `inflation`, `weather`, `geopolitics-<region>`, `ai-regulation`, `company-specific`, `legal-case`), bucket-exposure aggregation (new)
+  - `windbreak/selector/sizing.py` — wire real bucket exposure into the existing per-bucket cap stage
   - `tests/selector/test_correlation_buckets.py`
 - **Prior decisions:** tags are *data*, not code — LLM-assisted tagging happens upstream (forecast/screening pipeline) and arrives in `SelectorInputs.correlation_tags`; the selector treats tags as given and never calls an LLM (§9.1 purity). The Kernel enforces the same caps independently (EPIC_04) — defense in depth means this issue must NOT assume the Kernel catches anything, and the Kernel must not assume the selector does; both enforce fully.
 - **State of the world:** sizing clips to per-bucket caps but bucket exposure is computed from a placeholder that treats every market as its own bucket (no correlation grouping).

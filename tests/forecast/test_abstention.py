@@ -2,14 +2,14 @@
 pipeline's citation-backed abstention path.
 
 Pins three layers of the SPEC S8.5/S8.8 abstention contract: (1) the pure
-`hedgekit.forecast.records.is_live_eligible` gate and its four independent
+`windbreak.forecast.records.is_live_eligible` gate and its four independent
 ineligibility triggers, (2) the new `ForecastRecord.__post_init__` invariant
 forbidding `abstention_reason` and `eligible_for_live=True` together, and (3)
 `run_pipeline`'s citation-verification-driven abstention: zero verified
 citations always abstains (even with `min_verified_citations=0`, an ABSOLUTE
 precedence pin), a non-zero-but-below-threshold verified count still produces
 a full, stored, live-*in*eligible record, and the tracer/default-fixture path
-meeting the default threshold is live-eligible. `hedgekit/forecast/citations.py`
+meeting the default threshold is live-eligible. `windbreak/forecast/citations.py`
 does not exist yet (nor do `is_live_eligible`,
 `ForecastRecord`'s new invariant, or `run_pipeline`'s new
 `min_verified_citations` keyword), so importing them below fails collection --
@@ -37,31 +37,31 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from hedgekit.forecast import (
+from windbreak.forecast import (
     ForbiddenLiveTransport,
     InMemoryTriageLedger,
     run_triaged_pipeline,
 )
-from hedgekit.forecast.citations import FAILURE_CONTENT_HASH_MISMATCH
-from hedgekit.forecast.pipeline import (
+from windbreak.forecast.citations import FAILURE_CONTENT_HASH_MISMATCH
+from windbreak.forecast.pipeline import (
     ABSTENTION_NO_VERIFIED_CITATIONS,
     DEFAULT_MIN_VERIFIED_CITATIONS,
     run_pipeline,
 )
-from hedgekit.forecast.records import (
+from windbreak.forecast.records import (
     ForecastRecord,
     forecast_record_to_payload,
     is_live_eligible,
 )
-from hedgekit.forecast.triage import TRIAGE_PROCEED_EVENT
+from windbreak.forecast.triage import TRIAGE_PROCEED_EVENT
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from hedgekit.connector.models import NormalizedMarket
-    from hedgekit.forecast.records import BaselineQuoteSnapshot
-    from hedgekit.forecast.sandbox import ResearchTools
+    from windbreak.connector.models import NormalizedMarket
+    from windbreak.forecast.records import BaselineQuoteSnapshot
+    from windbreak.forecast.sandbox import ResearchTools
 
     FakeVoteTransportFactory = Callable[..., object]
     ResearchToolsFactory = Callable[..., ResearchTools]

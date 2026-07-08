@@ -1,15 +1,15 @@
 ## Epic Summary
 
-Deliver M0 Foundations (plans/SPEC_v3.md §18 M0): the repo scaffold for the four-process architecture, the typed config loader, fixed-point numeric types with an AST float-lint, the hash-chained append-only ledger with rebuild, structured logging with secret redaction, the alert-sink abstraction, and docker-compose/systemd skeletons plus a stub dashboard. Done means `hedgekit run` idles in RESEARCH mode with visible heartbeats — the tracer skeleton every later milestone builds on.
+Deliver M0 Foundations (plans/SPEC_v3.md §18 M0): the repo scaffold for the four-process architecture, the typed config loader, fixed-point numeric types with an AST float-lint, the hash-chained append-only ledger with rebuild, structured logging with secret redaction, the alert-sink abstraction, and docker-compose/systemd skeletons plus a stub dashboard. Done means `windbreak run` idles in RESEARCH mode with visible heartbeats — the tracer skeleton every later milestone builds on.
 
 ## Scope
 
 **In scope:**
-- Package layout for processes A–D (`hedgekit/pipeline`, `hedgekit/riskkernel`, `hedgekit/order_gateway`, `hedgekit/dashboard`) plus shared `hedgekit/ledger`, `hedgekit/config`, `hedgekit/numeric`, `hedgekit/alerts` (SPEC §5.1).
-- `hedgekit run` entrypoint idling in RESEARCH with heartbeat logging (§18 M0 done criterion).
+- Package layout for processes A–D (`windbreak/pipeline`, `windbreak/riskkernel`, `windbreak/order_gateway`, `windbreak/dashboard`) plus shared `windbreak/ledger`, `windbreak/config`, `windbreak/numeric`, `windbreak/alerts` (SPEC §5.1).
+- `windbreak run` entrypoint idling in RESEARCH with heartbeat logging (§18 M0 done criterion).
 - Typed config loader covering the full §16 schema; unknown keys fatal; config versions ledgered with hash + diff.
 - Fixed-point numeric types `PricePips`, `ContractCentis`, `MoneyMicros`, `ProbabilityPpm` with conservative rounding and an AST lint forbidding floats on money/price/probability paths (§6.1, §17.3).
-- Hash-chained append-only ledger on SQLite (WAL) with `hedgekit rebuild` equivalence (§12).
+- Hash-chained append-only ledger on SQLite (WAL) with `windbreak rebuild` equivalence (§12).
 - Structured logging with secret redaction; alert-sink abstraction (ntfy, SMTP, webhook, desktop, log-only) with the §14 mandatory-alert registry.
 - docker-compose + systemd unit skeletons for A–D; stub localhost-only dashboard page.
 
@@ -23,20 +23,20 @@ Deliver M0 Foundations (plans/SPEC_v3.md §18 M0): the repo scaffold for the fou
 
 The epic is done when:
 
-- [ ] `hedgekit run` starts, enters RESEARCH mode, and emits heartbeat log lines until interrupted (§18 M0 "Done").
+- [ ] `windbreak run` starts, enters RESEARCH mode, and emits heartbeat log lines until interrupted (§18 M0 "Done").
 - [ ] Loading a config file with one unknown key exits non-zero with a fatal error naming the key (§16).
 - [ ] The AST float-lint fails CI when a float literal or `float` annotation touches a money/price/probability path (§17.3).
-- [ ] `hedgekit rebuild` reproduces byte-identical read-model state from the event ledger in CI (§12).
+- [ ] `windbreak rebuild` reproduces byte-identical read-model state from the event ledger in CI (§12).
 - [ ] A secret value passed through logging is redacted in output; every §14 mandatory alert has a registered emitter that reaches the configured sink.
 - [ ] All child issues are closed.
 - [ ] Smoke tests for the full epic surface pass on `main`.
 
 ## Child Issues
 
-- [ ] #10 — feat(foundations): Wire four-process package skeleton and `hedgekit run` heartbeat loop
+- [ ] #10 — feat(foundations): Wire four-process package skeleton and `windbreak run` heartbeat loop
 - [ ] #11 — feat(foundations): Typed config loader with unknown-keys-fatal and ledgered versions
 - [ ] #12 — feat(foundations): Fixed-point numeric types with AST float-lint
-- [ ] #13 — feat(foundations): Hash-chained append-only ledger with `hedgekit rebuild`
+- [ ] #13 — feat(foundations): Hash-chained append-only ledger with `windbreak rebuild`
 - [ ] #14 — feat(foundations): Structured logging with secret redaction and alert-sink abstraction
 - [ ] #15 — chore(foundations): docker-compose/systemd skeletons and stub localhost dashboard
 

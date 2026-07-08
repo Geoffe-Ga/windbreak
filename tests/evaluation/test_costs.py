@@ -1,11 +1,11 @@
-"""Failing-first tests for `hedgekit.evaluation.costs` (issue #55, RED).
+"""Failing-first tests for `windbreak.evaluation.costs` (issue #55, RED).
 
-`hedgekit.evaluation.costs` does not exist yet, so every test below imports
+`windbreak.evaluation.costs` does not exist yet, so every test below imports
 its new symbols from that module as the FIRST statement inside the test body
 (matching this package's established RED convention; see
 `test_preregistration.py` / `test_cohorts.py`) so each test collects and fails
 independently on its own
-`ModuleNotFoundError: No module named 'hedgekit.evaluation.costs'`.
+`ModuleNotFoundError: No module named 'windbreak.evaluation.costs'`.
 
 Pins issue #55's research-cost meter:
 
@@ -24,13 +24,13 @@ Pins issue #55's research-cost meter:
   `cost_per_profitable_trade_micros = ceil(total_cost / profitable_count)`,
   `cost_adjusted_expectancy_micros = floor((sum(pnl) - total_cost) / trade_count)`.
 - Rejects a negative or `bool`-masquerading-as-`int` `research_cost_micros`
-  (per the repo-wide "no bool-as-int" rule; `hedgekit.forecast.records.ForecastRecord`
+  (per the repo-wide "no bool-as-int" rule; `windbreak.forecast.records.ForecastRecord`
   itself does not validate this field, so `aggregate_research_costs` must).
 
 Resolved API detail this suite assumes and the implementer must honor: both
 `resolutions: Mapping[str, ResolutionOutcome]` and
 `trade_pnls_micros: Mapping[str, int]` are keyed by **`market_ticker`**, not
-`forecast_id` -- mirroring `hedgekit.evaluation.registry.EvaluationInputs.resolutions`
+`forecast_id` -- mirroring `windbreak.evaluation.registry.EvaluationInputs.resolutions`
 (itself keyed by `market_ticker`, per that class's own docstring) and every
 other place this codebase associates a forecast with its market's ground
 truth. A `ForecastRecord`'s own `market_ticker` field is therefore the join
@@ -45,9 +45,9 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from hedgekit.evaluation.resolution import ResolutionOutcome
-from hedgekit.forecast.records import ForecastRecord
-from hedgekit.numeric.types import MoneyMicros
+from windbreak.evaluation.resolution import ResolutionOutcome
+from windbreak.forecast.records import ForecastRecord
+from windbreak.numeric.types import MoneyMicros
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -128,7 +128,7 @@ def test_aggregate_research_costs_matches_hand_computation_including_triage_only
         floor((5_000_000 + -1_000_000 - 7_000_000) / 2) = floor(-3_000_000 / 2)
         = -1_500_000 (exact; both directions agree here).
     """
-    from hedgekit.evaluation.costs import CostMeter, aggregate_research_costs
+    from windbreak.evaluation.costs import CostMeter, aggregate_research_costs
 
     records = (
         _forecast_record(
@@ -190,7 +190,7 @@ def test_aggregate_research_costs_cost_per_resolved_ceilings_up_overstate_cost()
     ceil(10_000_000 / 3) = ceil(3_333_333.33) = 3_333_334 (never 3_333_333,
     which would understate the true per-forecast cost).
     """
-    from hedgekit.evaluation.costs import aggregate_research_costs
+    from windbreak.evaluation.costs import aggregate_research_costs
 
     records = (
         _forecast_record(
@@ -226,7 +226,7 @@ def test_aggregate_research_costs_expectancy_floors_down_understate_equity() -> 
     -4_000_000; floor(-4_000_000 / 3) = -1_333_334 (more negative than plain
     truncation's -1_333_333, which would overstate the equity-side figure).
     """
-    from hedgekit.evaluation.costs import aggregate_research_costs
+    from windbreak.evaluation.costs import aggregate_research_costs
 
     records = (
         _forecast_record(
@@ -262,7 +262,7 @@ def test_aggregate_research_costs_expectancy_floors_down_understate_equity() -> 
 
 def test_aggregate_research_costs_zero_resolved_yields_none_cost_per_resolved() -> None:
     """No resolved market -> `cost_per_resolved_forecast_micros` is `None`."""
-    from hedgekit.evaluation.costs import aggregate_research_costs
+    from windbreak.evaluation.costs import aggregate_research_costs
 
     records = (
         _forecast_record(
@@ -279,7 +279,7 @@ def test_aggregate_research_costs_zero_resolved_yields_none_cost_per_resolved() 
 
 def test_aggregate_research_costs_zero_profitable_yields_none_per_profitable() -> None:
     """No profitable trade -> `cost_per_profitable_trade_micros` is `None`."""
-    from hedgekit.evaluation.costs import aggregate_research_costs
+    from windbreak.evaluation.costs import aggregate_research_costs
 
     records = (
         _forecast_record(
@@ -302,7 +302,7 @@ def test_aggregate_research_costs_zero_profitable_yields_none_per_profitable() -
 
 def test_aggregate_research_costs_zero_trades_yields_none_trade_fields() -> None:
     """No trades at all -> both trade-denominated fields are `None`."""
-    from hedgekit.evaluation.costs import aggregate_research_costs
+    from windbreak.evaluation.costs import aggregate_research_costs
 
     records = (
         _forecast_record(
@@ -331,7 +331,7 @@ def test_aggregate_research_costs_zero_trades_yields_none_trade_fields() -> None
 
 def test_aggregate_research_costs_rejects_negative_research_cost() -> None:
     """A negative `research_cost_micros` raises `ValueError`."""
-    from hedgekit.evaluation.costs import aggregate_research_costs
+    from windbreak.evaluation.costs import aggregate_research_costs
 
     records = (
         _forecast_record(
@@ -345,7 +345,7 @@ def test_aggregate_research_costs_rejects_negative_research_cost() -> None:
 
 def test_aggregate_research_costs_rejects_bool_masquerading_as_research_cost() -> None:
     """A `bool` `research_cost_micros` (an `int` subclass) raises `TypeError`."""
-    from hedgekit.evaluation.costs import aggregate_research_costs
+    from windbreak.evaluation.costs import aggregate_research_costs
 
     records = (
         _forecast_record(
@@ -365,7 +365,7 @@ def test_aggregate_research_costs_rejects_bool_masquerading_as_trade_pnl() -> No
     A `True` must never be silently counted as a profitable `1`-micro trade nor
     summed into total PnL, mirroring the `research_cost_micros` bool guard.
     """
-    from hedgekit.evaluation.costs import aggregate_research_costs
+    from windbreak.evaluation.costs import aggregate_research_costs
 
     records = (
         _forecast_record(
@@ -382,7 +382,7 @@ def test_aggregate_research_costs_rejects_bool_masquerading_as_trade_pnl() -> No
 
 def test_aggregate_research_costs_of_no_records_is_all_zero_and_none() -> None:
     """An empty record sequence yields a zeroed, all-`None` `CostMeter`."""
-    from hedgekit.evaluation.costs import aggregate_research_costs
+    from windbreak.evaluation.costs import aggregate_research_costs
 
     meter = aggregate_research_costs((), resolutions={}, trade_pnls_micros={})
 

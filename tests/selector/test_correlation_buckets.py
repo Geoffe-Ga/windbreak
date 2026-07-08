@@ -1,28 +1,28 @@
 """Gate 1 RED tests for issue #47's correlation-bucket tagging (SPEC S9.9).
 
-`hedgekit.selector.correlation` does not exist yet, so every test below fails
+`windbreak.selector.correlation` does not exist yet, so every test below fails
 collection with ``ModuleNotFoundError: No module named
-'hedgekit.selector.correlation'`` -- the expected Gate 1 RED state for this
+'windbreak.selector.correlation'`` -- the expected Gate 1 RED state for this
 issue's new tag data model, seed taxonomy, and bucket-exposure aggregation.
 Once that module lands, the ``select()``-level tests further down still fail
 on ``TypeError: __init__() got an unexpected keyword argument 'bucket_peers'``
-until :class:`~hedgekit.selector.types.SelectorInputs` grows its new
+until :class:`~windbreak.selector.types.SelectorInputs` grows its new
 ``bucket_peers`` field and its ``correlation_tags`` field is retyped from
 ``tuple[str, ...]`` to ``tuple[CorrelationTag, ...]`` -- both are the correct
 RED reason (missing symbols/fields for not-yet-wired behavior), never a typo.
 
 This module pins the design contract the chief architect handed off:
 
-    * :class:`~hedgekit.selector.correlation.CorrelationTag` -- a frozen,
+    * :class:`~windbreak.selector.correlation.CorrelationTag` -- a frozen,
       slotted ``(bucket_id, source, tagged_at)`` triple. ``source`` must be
       ``"llm"`` or ``"human"``; ``bucket_id`` must be one of the seven fixed
       seed-taxonomy ids or a ``geopolitics-<region>`` id with a non-empty
       region suffix -- anything else raises ``ValueError`` at construction.
-    * :func:`~hedgekit.selector.correlation.effective_buckets` -- resolves a
+    * :func:`~windbreak.selector.correlation.effective_buckets` -- resolves a
       target market's own tags into its *effective* bucket ids: any human tag
       present supersedes every LLM tag (the LLM tags are still retained in the
       input tuple for the ledger, just excluded from the effective result).
-    * :func:`~hedgekit.selector.correlation.aggregate_bucket_exposure` -- sums
+    * :func:`~windbreak.selector.correlation.aggregate_bucket_exposure` -- sums
       peer exposure per matching effective bucket and returns the maximum
       sum and the bucket id achieving it (lexicographically-smallest bucket
       id on ties), or ``(0, None)`` when the target has no effective buckets
@@ -64,13 +64,13 @@ from typing import cast
 
 import pytest
 
-from hedgekit.config.schema import RiskConfig
-from hedgekit.connector.fees import FeeModel
-from hedgekit.connector.models import OrderBookLevel, OrderBookSnapshot
-from hedgekit.forecast.records import Citation, ForecastRecord
-from hedgekit.numeric import ContractCentis, MoneyMicros, PricePips
-from hedgekit.selector import SelectorInputs, select
-from hedgekit.selector.correlation import (
+from windbreak.config.schema import RiskConfig
+from windbreak.connector.fees import FeeModel
+from windbreak.connector.models import OrderBookLevel, OrderBookSnapshot
+from windbreak.forecast.records import Citation, ForecastRecord
+from windbreak.numeric import ContractCentis, MoneyMicros, PricePips
+from windbreak.selector import SelectorInputs, select
+from windbreak.selector.correlation import (
     BUCKET_AI_REGULATION,
     BUCKET_COMPANY_SPECIFIC,
     BUCKET_FED_POLICY,
@@ -86,8 +86,8 @@ from hedgekit.selector.correlation import (
     aggregate_bucket_exposure,
     effective_buckets,
 )
-from hedgekit.selector.sizing import CapClipResult, clip_to_caps
-from hedgekit.selector.types import (
+from windbreak.selector.sizing import CapClipResult, clip_to_caps
+from windbreak.selector.types import (
     FeeModelInput,
     PositionReadModelInput,
     RiskConfigInput,
@@ -478,7 +478,7 @@ def test_aggregate_bucket_exposure_no_matching_peers_returns_zero_and_none() -> 
 # sized below) gives exactly one marginal price for every fill in this
 # section: executable_price_ppm = 5_000*100 = 500_000 ppm-of-$1, the "cap
 # reference price" every notional cap clips against (see
-# `hedgekit.selector._cap_reference_price_ppm`).
+# `windbreak.selector._cap_reference_price_ppm`).
 #
 # `max_pos_market_pct_ppm` / `max_pos_event_pct_ppm` are widened to 1_000_000
 # ppm (100% of equity) and `max_notional_per_day_micros` to $1,000,000 so

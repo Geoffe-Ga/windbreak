@@ -5,7 +5,7 @@ at test-body time with `FileNotFoundError` (surfaced by `configparser` as it
 tries to read a nonexistent unit file). Once the four unit files land, these
 tests pin their shared contract: each declares `[Unit]`, `[Service]`, and
 `[Install]` sections, restarts `on-failure`, and its `ExecStart` invokes
-`hedgekit run --process <token>` for that unit's process -- the same
+`windbreak run --process <token>` for that unit's process -- the same
 underscored `order_gateway` token used by the CLI and the compose skeleton.
 """
 
@@ -21,10 +21,10 @@ _SYSTEMD_DIR = _REPO_ROOT / "deploy" / "systemd"
 
 #: Maps each expected unit filename to its `--process` CLI token.
 _UNIT_TO_CLI_TOKEN = {
-    "hedgekit-pipeline.service": "pipeline",
-    "hedgekit-riskkernel.service": "riskkernel",
-    "hedgekit-order-gateway.service": "order_gateway",
-    "hedgekit-dashboard.service": "dashboard",
+    "windbreak-pipeline.service": "pipeline",
+    "windbreak-riskkernel.service": "riskkernel",
+    "windbreak-order-gateway.service": "order_gateway",
+    "windbreak-dashboard.service": "dashboard",
 }
 
 
@@ -78,11 +78,11 @@ def test_unit_restarts_on_failure(filename: str, cli_token: str) -> None:
 
 
 @pytest.mark.parametrize(("filename", "cli_token"), sorted(_UNIT_TO_CLI_TOKEN.items()))
-def test_unit_exec_start_runs_hedgekit_with_matching_process_token(
+def test_unit_exec_start_runs_windbreak_with_matching_process_token(
     filename: str, cli_token: str
 ) -> None:
-    """`ExecStart` ends with `hedgekit run --process <token>` for this unit."""
+    """`ExecStart` ends with `windbreak run --process <token>` for this unit."""
     parser = _parse_unit(filename)
 
     exec_start = parser.get("Service", "ExecStart")
-    assert exec_start.endswith(f"hedgekit run --process {cli_token}")
+    assert exec_start.endswith(f"windbreak run --process {cli_token}")

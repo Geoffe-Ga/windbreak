@@ -1,6 +1,6 @@
 ## Role
 
-You are a senior Python systems engineer working in this repo's `hedgekit/` package, experienced with multi-process daemons, state machines, and strict-typed Python (mypy --strict).
+You are a senior Python systems engineer working in this repo's `windbreak/` package, experienced with multi-process daemons, state machines, and strict-typed Python (mypy --strict).
 
 ## Goal
 
@@ -12,20 +12,20 @@ A `riskkernel` process exists as an independently runnable service with the full
 - **Predecessor issue(s):** none — this is the skeleton issue (requires EPIC_01/M0 foundations: ledger, config loader, structured logging)
 - **SPEC section:** `plans/SPEC_v3.md` §10.1–§10.3, §5.1 (process topology), §5.3 (import-boundary CI test), §18 M3
 - **Files involved:**
-  - `hedgekit/riskkernel/__init__.py` — new package; the ONLY package allowed to import the signing-key handle (enforced later; scaffold the boundary now)
-  - `hedgekit/riskkernel/process.py` — entrypoint (`python -m hedgekit.riskkernel`), heartbeat loop, ledger wiring
-  - `hedgekit/riskkernel/modes.py` — mode state machine
-  - `hedgekit/riskkernel/checks.py` — check-pipeline scaffold, every check returns VETO (stub)
+  - `windbreak/riskkernel/__init__.py` — new package; the ONLY package allowed to import the signing-key handle (enforced later; scaffold the boundary now)
+  - `windbreak/riskkernel/process.py` — entrypoint (`python -m windbreak.riskkernel`), heartbeat loop, ledger wiring
+  - `windbreak/riskkernel/modes.py` — mode state machine
+  - `windbreak/riskkernel/checks.py` — check-pipeline scaffold, every check returns VETO (stub)
   - `tests/riskkernel/test_modes.py`, `tests/riskkernel/test_process_isolation.py`, `tests/riskkernel/test_checks_stub.py`
-  - `plans/architecture/.importlinter` — add contract: only `hedgekit.riskkernel` may import the (stubbed) signing-key module
+  - `plans/architecture/.importlinter` — add contract: only `windbreak.riskkernel` may import the (stubbed) signing-key module
 - **Prior decisions:** Process isolation is mandatory (§5.1): killing Process A must not kill the Kernel. The Kernel never fetches web content, never calls LLMs, never holds trade credentials (§10.1). Every check *error* fails closed (§10.3).
-- **State of the world:** `hedgekit/` contains only the generated `main.py` hello-world stub. The ledger and config loader come from EPIC_01. Nothing Kernel-shaped exists.
+- **State of the world:** `windbreak/` contains only the generated `main.py` hello-world stub. The ledger and config loader come from EPIC_01. Nothing Kernel-shaped exists.
 
 ## Output Format
 
 Deliverable is a single PR containing:
 
-- [ ] `hedgekit/riskkernel/` package with process entrypoint, mode state machine, and stub check pipeline
+- [ ] `windbreak/riskkernel/` package with process entrypoint, mode state machine, and stub check pipeline
 - [ ] Mode state machine implementing exactly: `RESEARCH → PAPER → LIVE_MICRO → LIVE`; any mode → `PAUSED | HALT | KILLED`; `KILLED` re-arm is a typed-confirmation stub; `mode_ceiling` from config bounds all transitions upward (§10.2)
 - [ ] Stub `evaluate_intent(intent) -> Veto` that runs the §10.3 check list as named no-op checks, each returning VETO with reason `"not implemented"`, and ledgers the veto
 - [ ] Heartbeat event written to the ledger on an interval; import-linter contract added
@@ -63,7 +63,7 @@ def test_stub_pipeline_vetoes_everything():
 > reference URL, an alternative considered, and a review date. See the
 > `max-quality-no-shortcuts` skill.
 
-**Tracer-code invariant:** The system must remain demoable after this PR merges. `hedgekit run` (Process A) must keep idling in RESEARCH with heartbeats while the Kernel runs beside it.
+**Tracer-code invariant:** The system must remain demoable after this PR merges. `windbreak run` (Process A) must keep idling in RESEARCH with heartbeats while the Kernel runs beside it.
 
 ## Definition of Done (stay-green)
 

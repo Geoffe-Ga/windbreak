@@ -1,7 +1,7 @@
-"""Failing-first tests for `hedgekit.evaluation` (issue #49, RED).
+"""Failing-first tests for `windbreak.evaluation` (issue #49, RED).
 
-`hedgekit.evaluation` does not exist yet, so every import below fails
-collection with `ModuleNotFoundError: No module named 'hedgekit.evaluation'`
+`windbreak.evaluation` does not exist yet, so every import below fails
+collection with `ModuleNotFoundError: No module named 'windbreak.evaluation'`
 -- the expected Gate 1 RED state for issue #49.
 
 Pins the three-track evaluation report skeleton (SPEC-EPIC_07):
@@ -81,7 +81,7 @@ def test_three_track_report_renders_no_edge_bluntly() -> None:
     forecast-track section must still print the literal `NO_EDGE_BANNER`
     text, not a hedge like "inconclusive" or "insufficient data".
     """
-    from hedgekit.evaluation import NO_EDGE_BANNER, run_evaluation
+    from windbreak.evaluation import NO_EDGE_BANNER, run_evaluation
 
     report = run_evaluation(fixture_path=SYNTHETIC_FIXTURE)
     text = report.render_text()
@@ -97,7 +97,7 @@ def test_three_track_report_renders_no_edge_bluntly() -> None:
 
 def test_run_evaluation_returns_exactly_three_uniquely_named_tracks() -> None:
     """`run_evaluation` returns one `TrackReport` per `Track`, no dupes."""
-    from hedgekit.evaluation import EvaluationReport, run_evaluation
+    from windbreak.evaluation import EvaluationReport, run_evaluation
 
     report = run_evaluation(fixture_path=SYNTHETIC_FIXTURE)
 
@@ -118,7 +118,7 @@ def test_every_registered_metric_appears_exactly_once_and_renders() -> None:
     tracks, has a value that is either an `int` or the `NOT_IMPLEMENTED`
     sentinel, and shows up verbatim in `render_text()`.
     """
-    from hedgekit.evaluation import (
+    from windbreak.evaluation import (
         NOT_IMPLEMENTED,
         registered_metrics,
         run_evaluation,
@@ -160,7 +160,7 @@ def test_render_text_no_edge_banner_gates_on_headline_skill_sign(
     skill metric is a non-positive `int` (`<= 0`); a positive `int` renders
     with no banner.
     """
-    from hedgekit.evaluation import (
+    from windbreak.evaluation import (
         HEADLINE_SKILL_METRIC,
         NO_EDGE_BANNER,
         EvaluationReport,
@@ -197,7 +197,7 @@ def test_render_text_not_implemented_sentinel_never_triggers_the_banner() -> Non
     """A `NOT_IMPLEMENTED` headline value renders the literal sentinel text
     and never the NO EDGE banner -- "not measured yet" is not "no edge".
     """
-    from hedgekit.evaluation import (
+    from windbreak.evaluation import (
         HEADLINE_SKILL_METRIC,
         NO_EDGE_BANNER,
         NOT_IMPLEMENTED,
@@ -235,7 +235,7 @@ def test_evaluation_report_post_init_rejects_missing_or_duplicate_tracks() -> No
     """`EvaluationReport.__post_init__` requires exactly the three
     `Track.value` names, each exactly once.
     """
-    from hedgekit.evaluation import EvaluationReport, Track, TrackReport
+    from windbreak.evaluation import EvaluationReport, Track, TrackReport
 
     with pytest.raises(ValueError, match="track"):
         EvaluationReport(
@@ -271,11 +271,11 @@ def test_registered_metrics_has_the_nine_seed_specs_with_correct_shape() -> None
     `calibration_intercept`, `sharpness`) alongside the original four seed
     slots, growing the registry from four specs to nine. Issue #53 turns
     `traded_vs_skipped_brier_delta` into a real computation too (delegating
-    to `hedgekit.evaluation.cohorts`) and moves its window from
+    to `windbreak.evaluation.cohorts`) and moves its window from
     `TRADE_TRIGGERING` to `LATEST_BEFORE_CLOSE`; only
     `fill_vs_model_slippage` remains unimplemented.
     """
-    from hedgekit.evaluation import (
+    from windbreak.evaluation import (
         HEADLINE_SKILL_METRIC,
         ObservationWindow,
         Track,
@@ -320,12 +320,12 @@ def test_seed_metric_compute_stub_returns_the_documented_value() -> None:
     `brier` and `brier_skill_vs_executable_price` were dropped from this
     check as of issue #51 (both are real computations, see
     `test_metrics.py`), and `traded_vs_skipped_brier_delta` is dropped as of
-    issue #53: it now delegates to `hedgekit.evaluation.cohorts` and is a
+    issue #53: it now delegates to `windbreak.evaluation.cohorts` and is a
     real `int` computation too, so a "documented stub value" assertion no
     longer applies to it either -- see `test_cohorts.py` for its exact
     hand-computed values.
     """
-    from hedgekit.evaluation import (
+    from windbreak.evaluation import (
         NOT_IMPLEMENTED,
         EvaluationInputs,
         registered_metrics,
@@ -349,7 +349,7 @@ def test_registered_metrics_returns_a_mapping_with_no_duplicate_names() -> None:
     public entry point to trigger from outside the seed set, and is left as
     a follow-up for whoever builds the registry to unit-test at that layer.
     """
-    from hedgekit.evaluation import registered_metrics
+    from windbreak.evaluation import registered_metrics
 
     metrics = registered_metrics()
 
@@ -392,7 +392,7 @@ def test_run_evaluation_missing_forecasts_key_raises_value_error(
     tmp_path: Path,
 ) -> None:
     """A fixture with no `forecasts` key raises `ValueError` naming it."""
-    from hedgekit.evaluation import run_evaluation
+    from windbreak.evaluation import run_evaluation
 
     path = _write_fixture(tmp_path, {"resolutions": []})
 
@@ -404,7 +404,7 @@ def test_run_evaluation_missing_resolutions_key_raises_value_error(
     tmp_path: Path,
 ) -> None:
     """A fixture with no `resolutions` key raises `ValueError` naming it."""
-    from hedgekit.evaluation import run_evaluation
+    from windbreak.evaluation import run_evaluation
 
     path = _write_fixture(tmp_path, {"forecasts": []})
 
@@ -418,7 +418,7 @@ def test_run_evaluation_out_of_range_probability_ppm_raises_value_error(
     """A `probability_ppm` outside `[0, 1_000_000]` raises `ValueError`
     naming the `probability_ppm` field.
     """
-    from hedgekit.evaluation import run_evaluation
+    from windbreak.evaluation import run_evaluation
 
     bad_forecast = {**_VALID_FORECAST, "probability_ppm": 1_000_001}
     path = _write_fixture(
@@ -438,9 +438,9 @@ def test_run_evaluation_bool_masquerading_as_int_raises_type_error(
 ) -> None:
     """A JSON `true`/`false` in `probability_ppm` -- decoded as a Python
     `bool`, an `int` subclass -- raises `TypeError` naming the field, per
-    the repo-wide "no bool-as-int" rule (see `hedgekit.numeric.types`).
+    the repo-wide "no bool-as-int" rule (see `windbreak.numeric.types`).
     """
-    from hedgekit.evaluation import run_evaluation
+    from windbreak.evaluation import run_evaluation
 
     bad_forecast = {**_VALID_FORECAST, "probability_ppm": True}
     path = _write_fixture(
@@ -461,7 +461,7 @@ def test_run_evaluation_unknown_resolution_outcome_raises_value_error(
     """A resolution `outcome` other than `"yes"`/`"no"` raises `ValueError`
     naming the `outcome` field.
     """
-    from hedgekit.evaluation import run_evaluation
+    from windbreak.evaluation import run_evaluation
 
     path = _write_fixture(
         tmp_path,
@@ -481,7 +481,7 @@ def test_run_evaluation_duplicate_resolution_ticker_raises_value_error(
     """Two resolutions for the same `market_ticker` raise `ValueError`
     naming the `market_ticker` field.
     """
-    from hedgekit.evaluation import run_evaluation
+    from windbreak.evaluation import run_evaluation
 
     path = _write_fixture(
         tmp_path,
@@ -593,7 +593,7 @@ def test_resolutions_from_fixture_returns_exact_typed_resolutions() -> None:
     """`resolutions_from_fixture` maps each `{market_ticker, outcome}` entry
     to a `ResolutionOutcome`-valued mapping, matching the input exactly.
     """
-    from hedgekit.evaluation.resolution import (
+    from windbreak.evaluation.resolution import (
         ResolutionOutcome,
         resolutions_from_fixture,
     )
@@ -619,7 +619,7 @@ def test_resolutions_from_fixture_rejects_duplicate_ticker() -> None:
     """A duplicate `market_ticker` across resolutions raises `ValueError`
     naming the `market_ticker` field.
     """
-    from hedgekit.evaluation.resolution import resolutions_from_fixture
+    from windbreak.evaluation.resolution import resolutions_from_fixture
 
     fixture = {
         "resolutions": [
@@ -636,7 +636,7 @@ def test_resolutions_from_fixture_rejects_unknown_outcome() -> None:
     """An `outcome` string other than `"yes"`/`"no"` raises `ValueError`
     naming the `outcome` field.
     """
-    from hedgekit.evaluation.resolution import resolutions_from_fixture
+    from windbreak.evaluation.resolution import resolutions_from_fixture
 
     fixture = {"resolutions": [{"market_ticker": "MKT-A", "outcome": "unresolved"}]}
 
@@ -653,8 +653,8 @@ def test_fixture_forecast_rejects_out_of_range_probability_ppm() -> None:
     """`FixtureForecast.__post_init__` rejects a `probability_ppm` outside
     `[0, 1_000_000]`, naming the field.
     """
-    from hedgekit.evaluation import FixtureForecast
-    from hedgekit.numeric.types import ProbabilityPpm
+    from windbreak.evaluation import FixtureForecast
+    from windbreak.numeric.types import ProbabilityPpm
 
     with pytest.raises(ValueError, match="probability_ppm"):
         FixtureForecast(
@@ -682,11 +682,11 @@ def test_fixture_forecast_rejects_out_of_range_probability_ppm() -> None:
 def test_fixture_forecast_rejects_bool_as_baseline_price() -> None:
     """`FixtureForecast.__post_init__` rejects a `bool` masquerading as
     `baseline_executable_price_pips`, naming the field -- the same
-    "no bool-as-int" rule `hedgekit.numeric.types._IntUnit` already
+    "no bool-as-int" rule `windbreak.numeric.types._IntUnit` already
     enforces for the wrapped unit types.
     """
-    from hedgekit.evaluation import FixtureForecast
-    from hedgekit.numeric.types import ProbabilityPpm
+    from windbreak.evaluation import FixtureForecast
+    from windbreak.numeric.types import ProbabilityPpm
 
     with pytest.raises(TypeError, match="baseline_executable_price_pips"):
         FixtureForecast(

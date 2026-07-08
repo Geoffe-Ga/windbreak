@@ -1,4 +1,4 @@
-"""Tests for hedgekit.forecast.triage (issue #23): two-stage triage + cost ledgering.
+"""Tests for windbreak.forecast.triage (issue #23): two-stage triage + cost ledgering.
 
 Pins the SPEC S8.4 two-stage triage contract: a cheap Stage-0 prior (`>=`
 threshold, mutation-critical at the exact boundary), the STOP path that never
@@ -6,8 +6,8 @@ touches the expensive full pipeline, the PROCEED path where both stages'
 costs accumulate, and a `TriageLedgerWriter` event trail that is
 deterministic and carries exact-int payload leaves (never a float, per the
 package-wide no-float convention `scripts/lint_no_floats.py` enforces).
-`hedgekit/forecast/triage.py` does not exist yet, so importing
-`hedgekit.forecast.triage` fails collection with `ModuleNotFoundError` --
+`windbreak/forecast/triage.py` does not exist yet, so importing
+`windbreak.forecast.triage` fails collection with `ModuleNotFoundError` --
 the expected Gate 1 RED state for issue #23.
 
 Three deliberate test-design choices, explained here because they shape every
@@ -49,13 +49,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from hedgekit.forecast.cassettes import (
+from windbreak.forecast.cassettes import (
     ForbiddenLiveTransport,
     RecordingCassette,
     ReplayCassette,
 )
-from hedgekit.forecast.records import forecast_record_to_payload
-from hedgekit.forecast.triage import (
+from windbreak.forecast.records import forecast_record_to_payload
+from windbreak.forecast.triage import (
     PER_FORECAST_BUDGET_MICROS,
     TRIAGE_PROCEED_EVENT,
     TRIAGE_STOP_EVENT,
@@ -72,10 +72,10 @@ if TYPE_CHECKING:
     from datetime import datetime
     from pathlib import Path
 
-    from hedgekit.connector.models import NormalizedMarket
-    from hedgekit.forecast.cassettes import LlmRequest, LlmTransport
-    from hedgekit.forecast.records import BaselineQuoteSnapshot
-    from hedgekit.forecast.sandbox import ResearchTools
+    from windbreak.connector.models import NormalizedMarket
+    from windbreak.forecast.cassettes import LlmRequest, LlmTransport
+    from windbreak.forecast.records import BaselineQuoteSnapshot
+    from windbreak.forecast.sandbox import ResearchTools
 
     #: See the module docstring's "Transport-reuse choice" note: the
     #: conftest-provided factory *is* `FakeVoteTransport`, callable with an
@@ -85,7 +85,7 @@ if TYPE_CHECKING:
     FakeVoteTransportFactory = Callable[..., LlmTransport]
 
 #: The `baseline` fixture's price (4500 pips) converted at the package's
-#: fixed 100x pips-to-ppm factor (see `hedgekit/forecast/pipeline.py`'s
+#: fixed 100x pips-to-ppm factor (see `windbreak/forecast/pipeline.py`'s
 #: `_baseline_probability_ppm`) -- named here so every gating assertion below
 #: reads against the same, single source of truth.
 _BASELINE_PPM = 450_000

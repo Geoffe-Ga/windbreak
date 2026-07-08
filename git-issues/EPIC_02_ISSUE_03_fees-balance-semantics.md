@@ -1,6 +1,6 @@
 ## Role
 
-You are a senior Python engineer working in this repo's `hedgekit/connector/` subpackage, with a background in exchange accounting semantics and contract testing.
+You are a senior Python engineer working in this repo's `windbreak/connector/` subpackage, with a background in exchange accounting semantics and contract testing.
 
 ## Goal
 
@@ -12,9 +12,9 @@ The connector exposes a fee-model lookup and a machine-readable `BalanceSemantic
 - **Predecessor issue(s):** #17 (must be merged first — Kalshi adapter exists)
 - **SPEC section:** `plans/SPEC_v3.md` §7.3 (balance-semantics contract — "blocker for live trading"), §2 ("Why fees and microstructure are first-class" — fees ∝ `p·(1−p)`, rounded up), §4 T18 (settlement-lag mis-accounting), §20 Q1 (pull fee fields from the live schedule; golden tests against exchange-documented examples), §20 Q4 (idle-cash interest terms)
 - **Files involved:**
-  - `hedgekit/connector/semantics.py` — `BalanceSemantics` model: open-order collateral inclusion/exclusion, fee debit + rounding behavior, partial-fill representation, cancellation collateral release, unsettled-proceeds visibility, paused/halted-market behavior — each field a typed enum, never a bare bool, with `UNKNOWN` as an explicit member
-  - `hedgekit/connector/fees.py` — `FeeModel` with `max_trading_fee_micros(price_pips, count_centis)` and `max_settlement_fee_micros(...)` upper-bound calculators, conservative rounding (§6.1)
-  - `hedgekit/connector/kalshi/adapter.py` — implement `get_balance_semantics()` and `get_fee_model()`
+  - `windbreak/connector/semantics.py` — `BalanceSemantics` model: open-order collateral inclusion/exclusion, fee debit + rounding behavior, partial-fill representation, cancellation collateral release, unsettled-proceeds visibility, paused/halted-market behavior — each field a typed enum, never a bare bool, with `UNKNOWN` as an explicit member
+  - `windbreak/connector/fees.py` — `FeeModel` with `max_trading_fee_micros(price_pips, count_centis)` and `max_settlement_fee_micros(...)` upper-bound calculators, conservative rounding (§6.1)
+  - `windbreak/connector/kalshi/adapter.py` — implement `get_balance_semantics()` and `get_fee_model()`
   - `tests/connector/kalshi/test_balance_semantics.py`, `tests/connector/kalshi/test_fees.py`
   - `tests/fixtures/exchange/kalshi/` — balance/fill/settlement fixtures for each semantics question
 - **Prior decisions:** All fee math is fixed-point `MoneyMicros`; rounding always overstates cost (§6.1). Fee schedules are data fetched/recorded from the exchange, never constants hardcoded from secondary sources (§20 Q1).

@@ -1,6 +1,6 @@
 ## Role
 
-You are a senior Python engineer with forecast-evaluation experience, working in this repo's `hedgekit/evaluation/` package (mypy --strict). You are guarding against the subtlest failure mode in §13: fooling ourselves with the sample we chose to look at.
+You are a senior Python engineer with forecast-evaluation experience, working in this repo's `windbreak/evaluation/` package (mypy --strict). You are guarding against the subtlest failure mode in §13: fooling ourselves with the sample we chose to look at.
 
 ## Goal
 
@@ -12,10 +12,10 @@ Every eligible forecast is scored — not only traded ones — with reports spli
 - **Predecessor issue(s):** #51 and #52 (must be merged first — needs real metrics and the temporal gate).
 - **SPEC section:** `plans/SPEC_v3.md` §13.3 (selection-bias controls), §13.4 (observation windows: first-per-market, latest-before-close, daily snapshots, trade-triggering; "the headline Brier metric names its window"), §6.3 (`abstention_reason` is a first-class outcome), §13.1 (selection-quality track: did traded forecasts outperform skipped ones?).
 - **Files involved:**
-  - `hedgekit/evaluation/cohorts.py` — new: cohort assignment from ledger events (selector decisions, screen decisions)
-  - `hedgekit/evaluation/windows.py` — new: the four declared observation windows as an enum + window resolver; every metric call site must name one
-  - `hedgekit/evaluation/abstention.py` — new: counterfactual scoring of abstentions (was abstaining wise, given resolution?)
-  - `hedgekit/evaluation/report.py` — extend the selection-quality track with per-cohort tables
+  - `windbreak/evaluation/cohorts.py` — new: cohort assignment from ledger events (selector decisions, screen decisions)
+  - `windbreak/evaluation/windows.py` — new: the four declared observation windows as an enum + window resolver; every metric call site must name one
+  - `windbreak/evaluation/abstention.py` — new: counterfactual scoring of abstentions (was abstaining wise, given resolution?)
+  - `windbreak/evaluation/report.py` — extend the selection-quality track with per-cohort tables
   - `tests/evaluation/test_cohorts.py`, `tests/evaluation/test_windows.py`, `tests/evaluation/test_abstention.py`
 - **Prior decisions:** the metric API from issue 3 already takes a window parameter — this issue makes it mandatory and type-safe (no default window; callers must choose). Headline Brier uses `latest_before_close` per the generated config (`evaluation.observation_window`).
 - **State of the world:** metrics compute on unfiltered-but-temporally-valid records with a window parameter that is currently accepted but unenforced.

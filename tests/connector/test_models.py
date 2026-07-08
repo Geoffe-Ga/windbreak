@@ -1,11 +1,11 @@
-"""Tests for hedgekit.connector.models (issue #16): the SPEC S6.2 frozen models.
+"""Tests for windbreak.connector.models (issue #16): the SPEC S6.2 frozen models.
 
 Pins `NormalizedMarket.__post_init__` validation (market_type, jurisdiction
 enum, tick/min-order integrality and positivity, non-empty payload hash),
 immutability, and `market_to_payload`'s JSON-safety (no float leaf anywhere,
-datetimes rendered as ISO-8601 `Z` strings). `hedgekit/connector/` does not
-exist yet, so importing `hedgekit.connector.models` fails collection with
-`ModuleNotFoundError: No module named 'hedgekit.connector'` -- the expected
+datetimes rendered as ISO-8601 `Z` strings). `windbreak/connector/` does not
+exist yet, so importing `windbreak.connector.models` fails collection with
+`ModuleNotFoundError: No module named 'windbreak.connector'` -- the expected
 Gate 1 RED state for issue #16.
 """
 
@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from hedgekit.connector.models import NormalizedMarket, market_to_payload
+from windbreak.connector.models import NormalizedMarket, market_to_payload
 
 _VALID_KWARGS: dict[str, object] = {
     "exchange": "fake-exchange",

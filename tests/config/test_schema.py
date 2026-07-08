@@ -1,6 +1,6 @@
-"""Tests for the `hedgekit.config` schema (issue #11, SPEC S16).
+"""Tests for the `windbreak.config` schema (issue #11, SPEC S16).
 
-Pins the shape of `HedgekitConfig`: its defaults are the SPEC S16
+Pins the shape of `WindbreakConfig`: its defaults are the SPEC S16
 example verbatim, it is immutable, it holds no float leaves (SPEC
 S6.1: integer units only), and the lone float in the SPEC S16 YAML
 (`bootstrap_confidence`) loads as an integer parts-per-million field.
@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from hedgekit.config import HedgekitConfig, load_config
+from windbreak.config import WindbreakConfig, load_config
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -41,13 +41,13 @@ def _leaves(value: object) -> Iterator[object]:
 
 
 def test_default_config_matches_spec16_example(spec16_path: Path) -> None:
-    """HedgekitConfig()'s defaults ARE the SPEC S16 example, verbatim."""
-    assert HedgekitConfig() == load_config(spec16_path)
+    """WindbreakConfig()'s defaults ARE the SPEC S16 example, verbatim."""
+    assert WindbreakConfig() == load_config(spec16_path)
 
 
 def test_config_is_immutable() -> None:
     """Mutating a nested config field raises FrozenInstanceError."""
-    cfg = HedgekitConfig()
+    cfg = WindbreakConfig()
 
     with pytest.raises(dataclasses.FrozenInstanceError):
         cfg.risk.min_net_edge_ppm = 1
@@ -55,7 +55,7 @@ def test_config_is_immutable() -> None:
 
 def test_no_float_fields_anywhere() -> None:
     """No config value is ever a Python float (SPEC S6.1: integers only)."""
-    cfg = HedgekitConfig()
+    cfg = WindbreakConfig()
 
     leaves = list(_leaves(cfg))
 

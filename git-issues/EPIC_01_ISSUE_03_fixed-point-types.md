@@ -1,6 +1,6 @@
 ## Role
 
-You are a senior Python engineer working in `hedgekit/numeric/`, expert in fixed-point arithmetic, `hypothesis` property testing, and writing custom AST lint rules.
+You are a senior Python engineer working in `windbreak/numeric/`, expert in fixed-point arithmetic, `hypothesis` property testing, and writing custom AST lint rules.
 
 ## Goal
 
@@ -9,16 +9,16 @@ The four SPEC §6.1 fixed-point types (`PricePips`, `ContractCentis`, `MoneyMicr
 ## Context
 
 - **Parent epic:** #2
-- **Predecessor issue(s):** #10 (must be merged first — `hedgekit/numeric/` package exists).
+- **Predecessor issue(s):** #10 (must be merged first — `windbreak/numeric/` package exists).
 - **SPEC section:** plans/SPEC_v3.md §6.1 (units: PricePips = 0.0001 payout-dollars; ContractCentis = 0.01 contracts; MoneyMicros = 1e-6 dollars; ProbabilityPpm = 1e-6 probability; "Rounding is always conservative in the direction of overstating cost/risk and understating equity"); §17.3 (AST lint + property tests; metamorphic conservatism).
 - **Files involved:**
-  - `hedgekit/numeric/types.py` — the four types + arithmetic and cross-unit conversion (e.g., price × count → money) (new).
-  - `hedgekit/numeric/rounding.py` — `RoundingDirection.OVERSTATE_COST` / `UNDERSTATE_EQUITY` helpers (new).
+  - `windbreak/numeric/types.py` — the four types + arithmetic and cross-unit conversion (e.g., price × count → money) (new).
+  - `windbreak/numeric/rounding.py` — `RoundingDirection.OVERSTATE_COST` / `UNDERSTATE_EQUITY` helpers (new).
   - `scripts/lint_no_floats.py` — AST walker; configured path allowlist/denylist (new).
   - `.pre-commit-config.yaml` — register the float-lint hook.
   - `tests/numeric/` — unit + hypothesis property tests (new).
-- **Prior decisions:** types must be distinct under mypy --strict (NewType or subclass — pick one and document why in the module docstring); mixing units without an explicit conversion is a type error. Display formatting may produce `str`, never `float`. The lint must catch: float literals, `float` annotations, `/` true division producing floats, and `float(...)` casts inside `hedgekit/numeric/`, `hedgekit/ledger/`, and (future) `hedgekit/riskkernel/` — the path list lives in the script's config so later epics extend it.
-- **State of the world:** `hedgekit/numeric/__init__.py` is an empty stub; no lint hook exists; scaffold pre-commit runs 32 generic hooks.
+- **Prior decisions:** types must be distinct under mypy --strict (NewType or subclass — pick one and document why in the module docstring); mixing units without an explicit conversion is a type error. Display formatting may produce `str`, never `float`. The lint must catch: float literals, `float` annotations, `/` true division producing floats, and `float(...)` casts inside `windbreak/numeric/`, `windbreak/ledger/`, and (future) `windbreak/riskkernel/` — the path list lives in the script's config so later epics extend it.
+- **State of the world:** `windbreak/numeric/__init__.py` is an empty stub; no lint hook exists; scaffold pre-commit runs 32 generic hooks.
 
 ## Output Format
 
@@ -44,8 +44,8 @@ assert cost == MoneyMicros(137_010_000)  # never one micro less
 
 **Example: lint catch**
 ```
-$ python scripts/lint_no_floats.py hedgekit/
-hedgekit/numeric/types.py:88: FLOAT-001 float literal on money path (0.25)
+$ python scripts/lint_no_floats.py windbreak/
+windbreak/numeric/types.py:88: FLOAT-001 float literal on money path (0.25)
 exit status 1
 ```
 
@@ -63,7 +63,7 @@ exit status 1
 > reference URL, an alternative considered, and a review date. See the
 > `max-quality-no-shortcuts` skill.
 
-**Tracer-code invariant:** The system must remain demoable after this PR merges — `hedgekit run` still idles with heartbeats. If your change breaks an unrelated endpoint or CLI surface, you have gone outside scope — revert and re-plan.
+**Tracer-code invariant:** The system must remain demoable after this PR merges — `windbreak run` still idles with heartbeats. If your change breaks an unrelated endpoint or CLI surface, you have gone outside scope — revert and re-plan.
 
 ## Definition of Done (stay-green)
 

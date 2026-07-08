@@ -2,8 +2,8 @@
 (issue #37, RED).
 
 SPEC S5.2/S5.3 reserve the exchange order-submission client
-(`hedgekit.connector.paper`, and by extension its `PaperExchange`/
-`PaperOrderIntent` re-exports off `hedgekit.connector`) to the Order Gateway
+(`windbreak.connector.paper`, and by extension its `PaperExchange`/
+`PaperOrderIntent` re-exports off `windbreak.connector`) to the Order Gateway
 alone: no other package may hold a live trading credential. This mirrors
 `tests/riskkernel/test_process_isolation.py`'s pure-`ast` signing-key-isolation
 scanner exactly, retargeted at the connector-paper boundary, plus a matching
@@ -31,27 +31,27 @@ import pytest
 #: (`<root>/tests/architecture/test_import_boundaries.py`).
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
-_HEDGEKIT_PACKAGE_DIR = _REPO_ROOT / "hedgekit"
-_ORDER_GATEWAY_PACKAGE_DIR = _HEDGEKIT_PACKAGE_DIR / "order_gateway"
-_CONNECTOR_PACKAGE_DIR = _HEDGEKIT_PACKAGE_DIR / "connector"
+_WINDBREAK_PACKAGE_DIR = _REPO_ROOT / "windbreak"
+_ORDER_GATEWAY_PACKAGE_DIR = _WINDBREAK_PACKAGE_DIR / "order_gateway"
+_CONNECTOR_PACKAGE_DIR = _WINDBREAK_PACKAGE_DIR / "connector"
 #: The PAPER-mode composition root (issue #48): a legitimate importer of
-#: `hedgekit.connector.paper`, because `build_paper_deps` constructs a
+#: `windbreak.connector.paper`, because `build_paper_deps` constructs a
 #: `PaperExchange` in its PAPER factory. This is an intentional allowlist
 #: extension, not a gate weakening: the boundary's intent -- keeping the paper
 #: fake out of the RESEARCH/LIVE trading path -- is preserved because the
-#: RESEARCH loop never imports `hedgekit.scheduler` (it wires the PAPER tick via
+#: RESEARCH loop never imports `windbreak.scheduler` (it wires the PAPER tick via
 #: a local import only when PAPER is actually activated), and the scheduler
 #: imports paper solely inside that PAPER factory.
-_SCHEDULER_PACKAGE_DIR = _HEDGEKIT_PACKAGE_DIR / "scheduler"
+_SCHEDULER_PACKAGE_DIR = _WINDBREAK_PACKAGE_DIR / "scheduler"
 _IMPORTLINTER_PATH = _REPO_ROOT / "plans" / "architecture" / ".importlinter"
 
 #: The single module this boundary reserves to `order_gateway`/`connector`.
-_FORBIDDEN_PAPER_MODULE = "hedgekit.connector.paper"
+_FORBIDDEN_PAPER_MODULE = "windbreak.connector.paper"
 
-#: The parent package a `from hedgekit.connector import X` re-export loophole
+#: The parent package a `from windbreak.connector import X` re-export loophole
 #: goes through -- either the submodule itself as a bare symbol (`paper`) or
 #: one of its two re-exported names (`PaperExchange`, `PaperOrderIntent`).
-_PAPER_PARENT_MODULE = "hedgekit.connector"
+_PAPER_PARENT_MODULE = "windbreak.connector"
 _PAPER_REEXPORTED_NAMES = frozenset({"PaperExchange", "PaperOrderIntent"})
 
 #: The `.importlinter` contract section declaring this boundary.
@@ -70,10 +70,10 @@ _PAPER_CONTRACT_SECTION = "importlinter:contract:order-submission-client-isolati
 def _find_paper_imports(source: str) -> tuple[str, ...]:
     """Return every spelling of a forbidden `connector.paper` import found.
 
-    Flags: a plain `import hedgekit.connector.paper`; an absolute
-    `from hedgekit.connector.paper import X` (module itself); the
-    submodule-as-symbol loophole `from hedgekit.connector import paper`; the
-    re-export loophole `from hedgekit.connector import PaperExchange` (or
+    Flags: a plain `import windbreak.connector.paper`; an absolute
+    `from windbreak.connector.paper import X` (module itself); the
+    submodule-as-symbol loophole `from windbreak.connector import paper`; the
+    re-export loophole `from windbreak.connector import PaperExchange` (or
     `PaperOrderIntent`); and every *relative* import (`node.level > 0`),
     conservatively -- a `..`-hop could reach the forbidden module, and the
     codebase's own convention is absolute imports throughout.
@@ -124,7 +124,7 @@ def _find_paper_imports_from(node: ast.ImportFrom) -> tuple[str, ...]:
 
 
 def test_zero_forbidden_paper_imports_outside_order_gateway_and_connector() -> None:
-    """Every shipped `hedgekit/**/*.py` module outside `order_gateway/`,
+    """Every shipped `windbreak/**/*.py` module outside `order_gateway/`,
     `connector/`, and `scheduler/` themselves imports across the
     order-submission-client boundary cleanly -- zero hits. All three packages are
     legitimately exempt: `connector/` is where `PaperExchange` itself is defined
@@ -133,10 +133,10 @@ def test_zero_forbidden_paper_imports_outside_order_gateway_and_connector() -> N
     `scheduler/` is the PAPER-mode composition root (issue #48) that constructs a
     `PaperExchange` only inside its `build_paper_deps` PAPER factory -- the
     boundary's intent (keeping the paper fake off the RESEARCH/LIVE path) holds
-    because the RESEARCH loop never imports `hedgekit.scheduler`.
+    because the RESEARCH loop never imports `windbreak.scheduler`.
     """
     violations: list[str] = []
-    for path in sorted(_HEDGEKIT_PACKAGE_DIR.rglob("*.py")):
+    for path in sorted(_WINDBREAK_PACKAGE_DIR.rglob("*.py")):
         if (
             _ORDER_GATEWAY_PACKAGE_DIR in path.parents
             or _CONNECTOR_PACKAGE_DIR in path.parents
@@ -155,11 +155,11 @@ def test_zero_forbidden_paper_imports_outside_order_gateway_and_connector() -> N
 @pytest.mark.parametrize(
     "source",
     [
-        "import hedgekit.connector.paper\n",
-        "from hedgekit.connector.paper import PaperExchange\n",
-        "from hedgekit.connector import paper\n",
-        "from hedgekit.connector import PaperExchange\n",
-        "from hedgekit.connector import PaperOrderIntent\n",
+        "import windbreak.connector.paper\n",
+        "from windbreak.connector.paper import PaperExchange\n",
+        "from windbreak.connector import paper\n",
+        "from windbreak.connector import PaperExchange\n",
+        "from windbreak.connector import PaperOrderIntent\n",
         "from . import paper\n",
         "from ..connector import paper\n",
     ],
@@ -183,8 +183,8 @@ def test_ast_checker_flags_each_seeded_paper_import(source: str) -> None:
 @pytest.mark.parametrize(
     "source",
     [
-        "from hedgekit.connector import FakeExchange\n",
-        "from hedgekit.connector.models import Fill\n",
+        "from windbreak.connector import FakeExchange\n",
+        "from windbreak.connector.models import Fill\n",
     ],
     ids=["unrelated-connector-reexport", "unrelated-connector-submodule"],
 )

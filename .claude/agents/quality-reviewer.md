@@ -12,7 +12,7 @@ receives_from: []
 
 ## Identity
 
-Level 2 orchestrator responsible for coordinating comprehensive code reviews across the hedgekit project.
+Level 2 orchestrator responsible for coordinating comprehensive code reviews across the windbreak project.
 Analyzes pull requests and routes different aspects to specialized reviewers, ensuring thorough coverage
 without overlap. Prevents redundant reviews while ensuring all critical dimensions are covered.
 

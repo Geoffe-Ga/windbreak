@@ -1,14 +1,14 @@
-"""Failing-first tests for `hedgekit.evaluation.preregistration` (#54, RED).
+"""Failing-first tests for `windbreak.evaluation.preregistration` (#54, RED).
 
-`hedgekit.evaluation.preregistration` does not exist yet, so every test below
+`windbreak.evaluation.preregistration` does not exist yet, so every test below
 imports its new symbols from that module as the FIRST statement inside the
 test body (matching this package's established RED convention in
 `test_windows.py` and `test_cohorts.py`) so each test collects and fails
 independently on its own
-`ModuleNotFoundError: No module named 'hedgekit.evaluation.preregistration'`
+`ModuleNotFoundError: No module named 'windbreak.evaluation.preregistration'`
 rather than one collection-time explosion. Symbols from already-existing
-modules (`hedgekit.config.schema`, `hedgekit.evaluation.registry`,
-`hedgekit.ledger.store`, `hedgekit.ledger.events`) are imported at module
+modules (`windbreak.config.schema`, `windbreak.evaluation.registry`,
+`windbreak.ledger.store`, `windbreak.ledger.events`) are imported at module
 scope, since those modules already exist and importing them cannot hide which
 new behavior a given test covers.
 
@@ -58,10 +58,10 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from hedgekit.config.schema import EvaluationConfig
-from hedgekit.evaluation import registry
-from hedgekit.ledger.events import canonical_json
-from hedgekit.ledger.store import SqliteLedgerStore
+from windbreak.config.schema import EvaluationConfig
+from windbreak.evaluation import registry
+from windbreak.ledger.events import canonical_json
+from windbreak.ledger.store import SqliteLedgerStore
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -169,7 +169,7 @@ def _constant_clock(epoch: int) -> Callable[[], int]:
 def test_build_gate_plan_derives_all_nine_registry_metric_windows() -> None:
     """`build_gate_plan` derives `metric_windows` from the live registry.
 
-    Every metric in `hedgekit.evaluation.registry.registered_metrics()` maps
+    Every metric in `windbreak.evaluation.registry.registered_metrics()` maps
     to `(name, window.value)`, sorted by name -- re-derived here from the
     registry itself (immune to registry churn) and cross-checked against a
     hand-verified literal tuple, so a silent registry-shape change is still
@@ -177,7 +177,7 @@ def test_build_gate_plan_derives_all_nine_registry_metric_windows() -> None:
     off `EvaluationConfig()`'s SPEC-§16 defaults, and the two scheme fields
     default to the two named constants.
     """
-    from hedgekit.evaluation.preregistration import (
+    from windbreak.evaluation.preregistration import (
         CORRELATION_GROUP_CLUSTERING_SCHEME,
         EXECUTABLE_PRICE_BASELINE_SCHEME,
         build_gate_plan,
@@ -231,7 +231,7 @@ def test_gate_plan_hash_is_order_independent_of_metric_windows_input_order() -> 
     `__post_init__`) to the same sorted tuple and therefore be
     byte-identical in `canonical_json_str` and `plan_hash`.
     """
-    from hedgekit.evaluation.preregistration import GatePlan
+    from windbreak.evaluation.preregistration import GatePlan
 
     plan_sorted_input = GatePlan(
         metric_windows=(
@@ -290,7 +290,7 @@ def test_gate_plan_canonical_json_and_hash_pin_known_answer() -> None:
     computed via `hashlib` here rather than a separately hand-transcribed hex
     constant).
     """
-    from hedgekit.evaluation.preregistration import GatePlan
+    from windbreak.evaluation.preregistration import GatePlan
 
     plan = GatePlan(
         metric_windows=(("brier", "latest_before_close"),),
@@ -328,7 +328,7 @@ def test_gate_plan_single_field_mutation_always_changes_plan_hash() -> None:
     value -- each mutated alone off a shared baseline built by
     `build_gate_plan`.
     """
-    from hedgekit.evaluation.preregistration import build_gate_plan
+    from windbreak.evaluation.preregistration import build_gate_plan
 
     baseline = build_gate_plan(EvaluationConfig(), paper_fill_model_version="pfm-v1")
 
@@ -391,7 +391,7 @@ def test_gate_plan_rejects_float_threshold_with_type_error() -> None:
     matching this repo's convention (see `test_correlation_buckets.py`) for
     modeling a value the runtime guard, not the type checker, must catch.
     """
-    from hedgekit.evaluation.preregistration import GatePlan
+    from windbreak.evaluation.preregistration import GatePlan
 
     with pytest.raises(TypeError, match="brier_skill_required_ppm"):
         GatePlan(
@@ -412,12 +412,12 @@ def test_gate_plan_rejects_bool_masquerading_as_int_threshold() -> None:
     """A `bool` threshold (an `int` subclass) raises `TypeError`.
 
     Per the repo-wide "no bool-as-int" rule (see
-    `hedgekit.numeric.types._IntUnit` and `FixtureForecast.__post_init__`).
+    `windbreak.numeric.types._IntUnit` and `FixtureForecast.__post_init__`).
     No `cast` is needed: `bool` is a structural subtype of `int`, so this is
     already statically valid, exactly like production code that receives an
     untrusted `bool` where an `int` is expected.
     """
-    from hedgekit.evaluation.preregistration import GatePlan
+    from windbreak.evaluation.preregistration import GatePlan
 
     with pytest.raises(TypeError, match="promotion_min_resolved"):
         GatePlan(
@@ -436,7 +436,7 @@ def test_gate_plan_rejects_bool_masquerading_as_int_threshold() -> None:
 
 def test_gate_plan_rejects_non_str_baseline_scheme_with_type_error() -> None:
     """A non-`str` `baseline_scheme` raises `TypeError` naming the field."""
-    from hedgekit.evaluation.preregistration import GatePlan
+    from windbreak.evaluation.preregistration import GatePlan
 
     with pytest.raises(TypeError, match="baseline_scheme"):
         GatePlan(
@@ -460,7 +460,7 @@ def test_gate_plan_rejects_duplicate_metric_names_with_value_error() -> None:
     window applies?), so it is a construction-time invariant violation, not a
     silently-resolved "last one wins".
     """
-    from hedgekit.evaluation.preregistration import GatePlan
+    from windbreak.evaluation.preregistration import GatePlan
 
     with pytest.raises(ValueError, match="brier"):
         GatePlan(
@@ -498,7 +498,7 @@ def test_register_gate_plan_first_registration_appends_one_event(
     `data` carries the full canonical plan dict plus `plan_hash` and
     `paper_clock_start`; the chain verifies.
     """
-    from hedgekit.evaluation.preregistration import build_gate_plan, register_gate_plan
+    from windbreak.evaluation.preregistration import build_gate_plan, register_gate_plan
 
     store = _ledger_store(tmp_path)
     try:
@@ -542,7 +542,7 @@ def test_register_gate_plan_reregistering_identical_plan_is_idempotent(
     re-registration), whether or not the implementation calls `now()` again
     on the no-op path (a constant clock makes both possibilities agree).
     """
-    from hedgekit.evaluation.preregistration import build_gate_plan, register_gate_plan
+    from windbreak.evaluation.preregistration import build_gate_plan, register_gate_plan
 
     store = _ledger_store(tmp_path)
     try:
@@ -571,7 +571,7 @@ def test_register_gate_plan_change_resets_paper_clock_and_links_previous_hash(
     `previous_plan_hash` links back to the prior plan's hash and whose
     `paper_clock_start` is strictly later than the prior registration's.
     """
-    from hedgekit.evaluation.preregistration import build_gate_plan, register_gate_plan
+    from windbreak.evaluation.preregistration import build_gate_plan, register_gate_plan
 
     store = _ledger_store(tmp_path)
     try:
@@ -602,7 +602,7 @@ def test_register_gate_plan_fill_model_version_change_alone_resets_clock(
     `paper_fill_model_version` is part of the plan's identity, not
     incidental metadata.
     """
-    from hedgekit.evaluation.preregistration import build_gate_plan, register_gate_plan
+    from windbreak.evaluation.preregistration import build_gate_plan, register_gate_plan
 
     store = _ledger_store(tmp_path)
     try:
@@ -634,7 +634,7 @@ def test_register_gate_plan_raises_on_non_monotonic_clock_and_appends_nothing(
     `ValueError` -- and must not append a `GatePlanChanged` record, leaving
     the ledger exactly as it was before the failed call.
     """
-    from hedgekit.evaluation.preregistration import build_gate_plan, register_gate_plan
+    from windbreak.evaluation.preregistration import build_gate_plan, register_gate_plan
 
     store = _ledger_store(tmp_path)
     try:
@@ -671,7 +671,7 @@ def test_latest_gate_plan_registration_round_trips_through_the_ledger(
     that registration's `paper_clock_start`. After a change, the read model
     reflects the *changed* plan and its own, later `paper_clock_start`.
     """
-    from hedgekit.evaluation.preregistration import (
+    from windbreak.evaluation.preregistration import (
         build_gate_plan,
         latest_gate_plan_registration,
         register_gate_plan,
@@ -718,7 +718,7 @@ def test_latest_gate_plan_registration_fails_closed_on_hash_mismatch(
     control (SPEC §13.6) depends on. A `GatePlanRegistered` is appended directly
     with a deliberately wrong `plan_hash` to model a corrupted/tampered payload.
     """
-    from hedgekit.evaluation.preregistration import (
+    from windbreak.evaluation.preregistration import (
         GatePlanRegistered,
         build_gate_plan,
         latest_gate_plan_registration,
@@ -744,9 +744,9 @@ def test_latest_gate_plan_registration_fails_closed_on_hash_mismatch(
 
 def test_gate_plan_from_canonical_rejects_unknown_key_with_value_error() -> None:
     """An unrecognized key in the mapping raises `ValueError` (fatal, house
-    config style -- see `hedgekit.config.loader`'s unknown-key handling).
+    config style -- see `windbreak.config.loader`'s unknown-key handling).
     """
-    from hedgekit.evaluation.preregistration import GatePlan
+    from windbreak.evaluation.preregistration import GatePlan
 
     mapping: dict[str, object] = {
         "metric_windows": [["brier", "latest_before_close"]],
@@ -778,7 +778,7 @@ def test_register_gate_plan_persists_byte_identical_canonical_plan_dict(
     `plan.canonical_json_str` exactly -- the "ledgered canonicality"
     guarantee that the persisted plan is not a lossy or reordered copy.
     """
-    from hedgekit.evaluation.preregistration import build_gate_plan, register_gate_plan
+    from windbreak.evaluation.preregistration import build_gate_plan, register_gate_plan
 
     store = _ledger_store(tmp_path)
     try:

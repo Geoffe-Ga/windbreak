@@ -1,6 +1,6 @@
 """Tests for the heartbeat engine and signal handling (issue #10).
 
-`run_loop` is the deterministic core of `hedgekit run`: it never calls
+`run_loop` is the deterministic core of `windbreak run`: it never calls
 `time.sleep` and never touches real OS signal delivery. Every test here
 drives it via injected `max_beats`, an injected `stop_event`, or a fake
 `threading.Event` subclass, and via direct invocation of the installed
@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from hedgekit.main import ShutdownState, _install_signal_handlers, run_loop
+from windbreak.main import ShutdownState, _install_signal_handlers, run_loop
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

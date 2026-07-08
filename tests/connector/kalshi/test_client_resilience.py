@@ -1,6 +1,6 @@
 """End-to-end tests for issue #20's client/adapter wiring.
 
-Ties `hedgekit.connector.resilience` and `hedgekit.connector.validation`
+Ties `windbreak.connector.resilience` and `windbreak.connector.validation`
 into `KalshiClient` / `KalshiConnector`, exercised through the fake sessions
 in `tests/connector/kalshi/conftest.py`:
 
@@ -27,10 +27,10 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from hedgekit.connector.interface import UnknownMarketError
-from hedgekit.connector.kalshi.adapter import KalshiConnector
-from hedgekit.connector.kalshi.client import KalshiApiError, KalshiClient
-from hedgekit.connector.resilience import (
+from windbreak.connector.interface import UnknownMarketError
+from windbreak.connector.kalshi.adapter import KalshiConnector
+from windbreak.connector.kalshi.client import KalshiApiError, KalshiClient
+from windbreak.connector.resilience import (
     CONNECTOR_HALT_EVENT,
     ConnectorHaltError,
     MaintenanceHaltError,
@@ -38,7 +38,7 @@ from hedgekit.connector.resilience import (
     ResilientCaller,
     build_default_resilient_caller,
 )
-from hedgekit.connector.validation import (
+from windbreak.connector.validation import (
     SCHEMA_ANOMALY_EVENT,
     SchemaAnomalyHaltError,
     SchemaValidator,
@@ -49,7 +49,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
     from datetime import datetime
 
-    from hedgekit.connector.snapshot import InMemoryEventLedgerWriter
+    from windbreak.connector.snapshot import InMemoryEventLedgerWriter
 
 #: `tests/connector/kalshi/test_client_resilience.py` -> `tests/` ->
 #: `tests/fixtures/exchange/kalshi/`.

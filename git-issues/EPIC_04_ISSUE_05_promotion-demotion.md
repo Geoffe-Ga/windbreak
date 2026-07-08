@@ -1,6 +1,6 @@
 ## Role
 
-You are a senior Python engineer building governed state machines, working in this repo's `hedgekit/riskkernel/` package.
+You are a senior Python engineer building governed state machines, working in this repo's `windbreak/riskkernel/` package.
 
 ## Goal
 
@@ -12,9 +12,9 @@ Promotion through `RESEARCH → PAPER → LIVE_MICRO → LIVE` happens only via 
 - **Predecessor issue(s):** #32 (must be merged first)
 - **SPEC section:** `plans/SPEC_v3.md` §10.9 (promotion gates), §10.10 (demotion/halt triggers), §10.2 (mode machine), §1.1-4 (evidence-gated autonomy), §0 ("the promotion-gate loophole is closed — significance is mandatory for live promotion, overrides are ledgered and mode-capped"), threats T7, T15
 - **Files involved:**
-  - `hedgekit/riskkernel/promotion.py` — new: gate definitions as typed data, gate evaluation, promotion decisions
-  - `hedgekit/riskkernel/demotion.py` — new: trigger registry mapping §10.10 conditions to PAUSE/demote-one-mode/HALT actions
-  - `hedgekit/riskkernel/modes.py` — extend with guarded promote/demote entrypoints (no other transition API)
+  - `windbreak/riskkernel/promotion.py` — new: gate definitions as typed data, gate evaluation, promotion decisions
+  - `windbreak/riskkernel/demotion.py` — new: trigger registry mapping §10.10 conditions to PAUSE/demote-one-mode/HALT actions
+  - `windbreak/riskkernel/modes.py` — extend with guarded promote/demote entrypoints (no other transition API)
   - `tests/riskkernel/test_promotion.py`, `tests/riskkernel/test_demotion.py`, `tests/riskkernel/test_override.py`
 - **Prior decisions:** Gate metric *values* (Brier skill, bootstrap CI, resolved counts) are computed by EPIC_07 (M6) and consumed here as a typed `GateEvidence` input — the Kernel evaluates thresholds, it does not compute statistics. Defaults per §10.9: PAPER→LIVE_MICRO needs ≥300 resolved real-time forecasts, ≥100 independent event groups, Brier-skill CI excluding zero (MANDATORY), paper PnL > 0 net of fees+slippage+research over ≥90 days, drawdown < threshold, calibration slope in band, zero Kernel invariant failures. Demotion examples (§10.10): daily-loss breach → pause to next UTC day; drawdown breach → demote one mode; balance mismatch → HALT; canary drift unacknowledged, token replay attempt, stale heartbeat, clock skew, fee model unavailable, jurisdiction unknown, disk below threshold, backup failures → per-trigger action. LIVE_MICRO caps deployed capital at `micro_cap_micros` regardless of all other settings (§10.2).
 - **State of the world:** Mode machine with ceiling exists; verification loop can HALT; no promotion path exists (transitions are manual/test-only).

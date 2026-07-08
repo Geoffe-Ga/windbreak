@@ -62,11 +62,11 @@ echo "=== Code Complexity Analysis ==="
 if command -v radon &> /dev/null; then
     echo ""
     echo "Cyclomatic Complexity (should be <= 10):"
-    radon cc -a hedgekit/ || true
+    radon cc -a windbreak/ || true
 
     echo ""
     echo "Maintainability Index (should be >= 20):"
-    radon mi -a hedgekit/ || true
+    radon mi -a windbreak/ || true
 else
     echo "Warning: radon not installed, skipping cyclomatic complexity check" >&2
 fi
@@ -76,7 +76,7 @@ if command -v xenon &> /dev/null; then
     if $VERBOSE; then
         echo "Running Xenon complexity check..."
     fi
-    xenon --max-absolute B --max-modules B --max-average B hedgekit/ ||         { echo "✗ Complexity exceeds thresholds" >&2; exit 1; }
+    xenon --max-absolute B --max-modules B --max-average B windbreak/ ||         { echo "✗ Complexity exceeds thresholds" >&2; exit 1; }
 else
     if $VERBOSE; then
         echo "Note: xenon not installed for strict complexity checks"

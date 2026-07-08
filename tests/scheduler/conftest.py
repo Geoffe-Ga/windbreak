@@ -1,15 +1,15 @@
 """Shared builders for `tests/scheduler/*` (issue #48, RED).
 
-`hedgekit.scheduler.loop` does not exist yet, so importing `PaperTickDeps`,
+`windbreak.scheduler.loop` does not exist yet, so importing `PaperTickDeps`,
 `build_paper_deps`, `run_single_tick`, `ApprovalSeam`, or `KernelApproval`
 below fails collection with `ModuleNotFoundError: No module named
-'hedgekit.scheduler'` -- the expected Gate 1 RED state for issue #48.
+'windbreak.scheduler'` -- the expected Gate 1 RED state for issue #48.
 
 This module itself imports only already-shipped machinery
-(`hedgekit.riskkernel.*`, `hedgekit.ledger.*`, `hedgekit.numeric`,
+(`windbreak.riskkernel.*`, `windbreak.ledger.*`, `windbreak.numeric`,
 `tests.riskkernel.conftest`), so it collects cleanly on its own; the
 `ModuleNotFoundError` surfaces only from `test_loop.py`'s own
-`from hedgekit.scheduler.loop import ...` line.
+`from windbreak.scheduler.loop import ...` line.
 
 Builder-placement choice mirrors `tests/riskkernel/conftest.py` and
 `tests/order_gateway/conftest.py`: plain, explicitly-imported functions
@@ -20,11 +20,11 @@ test that might be added later.
 
 from __future__ import annotations
 
-from hedgekit.riskkernel.modes import Mode, ModeStateMachine
-from hedgekit.riskkernel.process import InMemoryKernelLedgerWriter, RiskKernel
-from hedgekit.riskkernel.reservations import ApprovalPipeline, ReservationLedger
-from hedgekit.riskkernel.signing import SigningKeyHandle
-from hedgekit.riskkernel.tokens import TokenIssuer
+from windbreak.riskkernel.modes import Mode, ModeStateMachine
+from windbreak.riskkernel.process import InMemoryKernelLedgerWriter, RiskKernel
+from windbreak.riskkernel.reservations import ApprovalPipeline, ReservationLedger
+from windbreak.riskkernel.signing import SigningKeyHandle
+from windbreak.riskkernel.tokens import TokenIssuer
 
 #: A fixed 32-byte HMAC key shared by every mint/verify pair in this package's
 #: tests -- mirrors `tests/order_gateway/conftest.py::KEY_MATERIAL`. SPEC S10.6
@@ -49,7 +49,7 @@ def build_kernel_approval_components(
 ) -> tuple[RiskKernel, ApprovalPipeline, InMemoryKernelLedgerWriter]:
     """Build a real `RiskKernel` + `ApprovalPipeline` pair over one shared ledger.
 
-    Mirrors the exact composition `hedgekit.scheduler.loop.KernelApproval` is
+    Mirrors the exact composition `windbreak.scheduler.loop.KernelApproval` is
     specified to wire: a `RiskKernel` (for the ledgered `IntentVetoed`/
     `IntentApproved` audit event) and an `ApprovalPipeline` (for the
     reserve-and-issue path), both writing through the same in-memory ledger so

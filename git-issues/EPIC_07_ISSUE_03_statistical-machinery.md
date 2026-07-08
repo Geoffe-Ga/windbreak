@@ -1,6 +1,6 @@
 ## Role
 
-You are a senior Python engineer with a statistics background (forecast verification, bootstrap methods), working in this repo's `hedgekit/evaluation/` package (mypy --strict, `hypothesis` available for property tests).
+You are a senior Python engineer with a statistics background (forecast verification, bootstrap methods), working in this repo's `windbreak/evaluation/` package (mypy --strict, `hypothesis` available for property tests).
 
 ## Goal
 
@@ -12,10 +12,10 @@ All SPEC §13.5 metrics — Brier, log score, Brier skill score, expected calibr
 - **Predecessor issue(s):** #50 (must be merged first — metrics consume resolutions and baselines).
 - **SPEC section:** `plans/SPEC_v3.md` §13.5 (statistical machinery), §9.4 (price buckets), §13.2 (skill is measured against the executable-price baseline), §10.9 (gate thresholds these metrics feed), §21 glossary (clustered bootstrap).
 - **Files involved:**
-  - `hedgekit/evaluation/metrics.py` — new: scoring rules + calibration statistics
-  - `hedgekit/evaluation/bootstrap.py` — new: cluster bootstrap over event/correlation groups
-  - `hedgekit/evaluation/power.py` — new: power analysis (minimum detectable Brier skill at N=300 given observed clustering), rendered into the report
-  - `hedgekit/evaluation/registry.py` — register the real metrics, replacing `NOT_IMPLEMENTED` sentinels
+  - `windbreak/evaluation/metrics.py` — new: scoring rules + calibration statistics
+  - `windbreak/evaluation/bootstrap.py` — new: cluster bootstrap over event/correlation groups
+  - `windbreak/evaluation/power.py` — new: power analysis (minimum detectable Brier skill at N=300 given observed clustering), rendered into the report
+  - `windbreak/evaluation/registry.py` — register the real metrics, replacing `NOT_IMPLEMENTED` sentinels
   - `tests/evaluation/test_metrics.py`, `tests/evaluation/test_bootstrap.py` — known-answer + property tests
   - `tests/evaluation/fixtures/clustered_fixture.json` — new fixture with *known correlation structure* (e.g., 3 event groups of perfectly correlated markets) whose correct clustered CI is derivable by hand
 - **Prior decisions:** cluster by `mutually_exclusive_group_id`/correlation bucket so related markets don't masquerade as independent (§13.5); all randomness seeded and logged (§3.5); mixing observation windows in one metric is a test failure (§13.4 — enforcement lands in #53, but design the metric API to take a window parameter now).

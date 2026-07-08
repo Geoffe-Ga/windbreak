@@ -1,6 +1,6 @@
 ## Role
 
-You are a senior Python engineer with security-engineering experience (process isolation, capability-based tool design), working in this repo's `hedgekit/forecast/` package.
+You are a senior Python engineer with security-engineering experience (process isolation, capability-based tool design), working in this repo's `windbreak/forecast/` package.
 
 ## Goal
 
@@ -12,9 +12,9 @@ The research stage can reach exactly three capabilities — `search`, `fetch`, a
 - **Predecessor issue(s):** #22 (must be merged first). Independent of #23 (triage) — parallel-safe.
 - **SPEC section:** `plans/SPEC_v3.md` §8.3 (research tool boundary, "enforced structurally, not by prompt"), §1.1-5 (research/execution firewall), §15 (research cache disjoint from config/ledger/secrets/code; outbound allowlist), §5.3 CI import-boundary note.
 - **Files involved:**
-  - `hedgekit/forecast/sandbox.py` — tool registry, allowlist enforcement, research-cache path jail (new)
-  - `hedgekit/forecast/pipeline.py` — research stage acquires tools only through the sandbox (modify)
-  - `plans/architecture/.importlinter` — contract: `hedgekit.forecast` may not import ledger-write, connector-order, kernel, or gateway modules (modify)
+  - `windbreak/forecast/sandbox.py` — tool registry, allowlist enforcement, research-cache path jail (new)
+  - `windbreak/forecast/pipeline.py` — research stage acquires tools only through the sandbox (modify)
+  - `plans/architecture/.importlinter` — contract: `windbreak.forecast` may not import ledger-write, connector-order, kernel, or gateway modules (modify)
   - `tests/forecast/test_sandbox.py` — boundary tests (new)
 - **Prior decisions:** the boundary is structural: the research stage receives a `ResearchTools` object exposing only the three allowed capabilities; there is no ambient import path to forbidden modules (enforced by import-linter in CI, §5.3). Network egress goes through a single client that rejects non-allowlisted hosts. Fetched content lands only under the configured research cache dir.
 - **State of the world:** pipeline skeleton exists; the research stage is a stub that reads cassette data directly with no tool abstraction and no isolation.
@@ -23,7 +23,7 @@ The research stage can reach exactly three capabilities — `search`, `fetch`, a
 
 Deliverable is a single PR containing:
 
-- [ ] Production code in `hedgekit/forecast/sandbox.py` + research-stage wiring
+- [ ] Production code in `windbreak/forecast/sandbox.py` + research-stage wiring
 - [ ] Import-linter contract update in `plans/architecture/.importlinter` that fails CI on a violating import
 - [ ] Tests in `tests/forecast/test_sandbox.py` proving: non-allowlisted host fetch raises; write outside research cache raises; the tool registry exposes exactly {search, fetch, verify_citation}; the research stage cannot obtain a ledger/config/connector handle through the sandbox
 - [ ] Docstrings documenting the boundary and why it exists (cite §8.3)
@@ -40,7 +40,7 @@ def test_fetch_rejects_non_allowlisted_host(sandbox_tools):
 
 def test_research_cache_is_a_jail(sandbox_tools, tmp_path):
     with pytest.raises(SandboxPathViolation):
-        sandbox_tools.store_evidence(Path("~/.local/share/hedgekit/ledger.db"), b"x")
+        sandbox_tools.store_evidence(Path("~/.local/share/windbreak/ledger.db"), b"x")
 
 def test_tool_surface_is_exactly_three(sandbox_tools):
     assert public_capabilities(sandbox_tools) == {"search", "fetch", "verify_citation"}

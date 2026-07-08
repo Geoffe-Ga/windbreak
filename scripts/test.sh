@@ -112,7 +112,7 @@ esac
 if $COVERAGE; then
     echo "Coverage enabled"
     PYTEST_ARGS+=(
-        --cov=hedgekit
+        --cov=windbreak
         --cov-branch
         --cov-report=term-missing
         --cov-report=html

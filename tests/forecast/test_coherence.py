@@ -1,4 +1,4 @@
-"""Tests for hedgekit.forecast.coherence (issue #25): SPEC S8.7 group coherence.
+"""Tests for windbreak.forecast.coherence (issue #25): SPEC S8.7 group coherence.
 
 Pins `forecast_group`'s Hamilton largest-remainder normalization (exact
 member targets, exact remainder-then-raw-then-lexicographic tie-breaks, an
@@ -6,9 +6,9 @@ optional residual "other" bucket, always-performed normalization regardless
 of coherence), its inclusive tolerance-boundary coherence check, its
 input-validation errors, and `GroupCoherenceResult`'s
 `coherence_flag` / `eligible_for_live` mutual-exclusion invariant.
-`hedgekit/forecast/coherence.py` does not exist yet, so importing
-`hedgekit.forecast.coherence` fails collection with
-`ModuleNotFoundError: No module named 'hedgekit.forecast.coherence'` -- the
+`windbreak/forecast/coherence.py` does not exist yet, so importing
+`windbreak.forecast.coherence` fails collection with
+`ModuleNotFoundError: No module named 'windbreak.forecast.coherence'` -- the
 expected Gate 1 RED state for issue #25.
 """
 
@@ -20,7 +20,7 @@ import pytest
 from hypothesis import assume, given
 from hypothesis import strategies as st
 
-from hedgekit.forecast.coherence import (
+from windbreak.forecast.coherence import (
     OTHER_BUCKET_KEY,
     GroupCoherenceResult,
     forecast_group,

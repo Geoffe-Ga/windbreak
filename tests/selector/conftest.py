@@ -1,8 +1,8 @@
-"""Shared fixtures for hedgekit.selector tests (issue #43, SPEC selector skeleton).
+"""Shared fixtures for windbreak.selector tests (issue #43, SPEC selector skeleton).
 
 `recorded_inputs_bundle_a` / `recorded_inputs_bundle_b` each load one of the
 two committed, distinct fixture bundles (`fixtures/bundle_a.json` /
-`bundle_b.json`) into a real `hedgekit.selector.SelectorInputs` via
+`bundle_b.json`) into a real `windbreak.selector.SelectorInputs` via
 `fixture_loader.load_inputs`, so every test in this package exercises the
 selector's actual input contract rather than a hand-rolled double.
 """
@@ -17,7 +17,7 @@ import pytest
 from tests.selector.fixture_loader import load_inputs
 
 if TYPE_CHECKING:
-    from hedgekit.selector import SelectorInputs
+    from windbreak.selector import SelectorInputs
 
 #: This package's own committed bundle fixtures, resolved relative to this
 #: file so fixtures work regardless of pytest's invocation directory.

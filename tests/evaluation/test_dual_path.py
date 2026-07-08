@@ -1,16 +1,16 @@
-"""Failing-first tests for `hedgekit.evaluation.crosscheck` (issue #55, RED).
+"""Failing-first tests for `windbreak.evaluation.crosscheck` (issue #55, RED).
 
-`hedgekit.evaluation.crosscheck` and `hedgekit.evaluation.sql_gates` do not
+`windbreak.evaluation.crosscheck` and `windbreak.evaluation.sql_gates` do not
 exist yet, so every test below imports their new symbols from those modules as
 the FIRST statement inside the test body (matching this package's established
 RED convention in `test_preregistration.py` / `test_cohorts.py`) so each test
 collects and fails independently on its own
-`ModuleNotFoundError: No module named 'hedgekit.evaluation.crosscheck'` (or
+`ModuleNotFoundError: No module named 'windbreak.evaluation.crosscheck'` (or
 `...sql_gates`) rather than one collection-time explosion. Symbols from
-already-existing modules (`hedgekit.config.schema`, `hedgekit.evaluation.registry`,
-`hedgekit.evaluation.resolution`, `hedgekit.evaluation.temporal`,
-`hedgekit.evaluation.cohorts`, `hedgekit.alerts.registry`, `hedgekit.ledger.store`,
-`hedgekit.numeric.types`) are imported at module scope.
+already-existing modules (`windbreak.config.schema`, `windbreak.evaluation.registry`,
+`windbreak.evaluation.resolution`, `windbreak.evaluation.temporal`,
+`windbreak.evaluation.cohorts`, `windbreak.alerts.registry`, `windbreak.ledger.store`,
+`windbreak.numeric.types`) are imported at module scope.
 
 Pins issue #55's dual-path SQL/Python gate crosscheck:
 
@@ -69,7 +69,7 @@ Resolved API detail this suite assumes and the implementer must honor: a
 `GateComputationMismatch` payload carries the disagreeing metrics under a
 `"mismatches"` key, each entry shaped
 `{"name", "window", "python_value", "sql_value"}` with any sentinel rendered
-by its `.name` (mirroring `hedgekit.evaluation.report._format_value`), plus
+by its `.name` (mirroring `windbreak.evaluation.report._format_value`), plus
 top-level `"plan_hash"` and `"tolerance"` keys.
 """
 
@@ -81,22 +81,22 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from hedgekit.alerts.registry import AlertSeverity
-from hedgekit.config.schema import EvaluationConfig
-from hedgekit.evaluation import cohorts
-from hedgekit.evaluation.preregistration import build_gate_plan
-from hedgekit.evaluation.registry import EvaluationInputs, FixtureForecast
-from hedgekit.evaluation.resolution import ResolutionOutcome
-from hedgekit.evaluation.temporal import TemporalContext
-from hedgekit.ledger.store import SqliteLedgerStore
-from hedgekit.numeric.types import ProbabilityPpm
+from windbreak.alerts.registry import AlertSeverity
+from windbreak.config.schema import EvaluationConfig
+from windbreak.evaluation import cohorts
+from windbreak.evaluation.preregistration import build_gate_plan
+from windbreak.evaluation.registry import EvaluationInputs, FixtureForecast
+from windbreak.evaluation.resolution import ResolutionOutcome
+from windbreak.evaluation.temporal import TemporalContext
+from windbreak.ledger.store import SqliteLedgerStore
+from windbreak.numeric.types import ProbabilityPpm
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from hedgekit.evaluation.preregistration import GatePlan
-    from hedgekit.evaluation.sql_gates import SqlGateComputer
+    from windbreak.evaluation.preregistration import GatePlan
+    from windbreak.evaluation.sql_gates import SqlGateComputer
 
     _AlertHook = Callable[[AlertSeverity, str], None]
 
@@ -375,7 +375,7 @@ def _corrupted_computer(metric_name: str, delta: int) -> SqlGateComputer:
     Returns:
         A `SqlGateComputer` identical to the default except for one query.
     """
-    from hedgekit.evaluation.sql_gates import DEFAULT_GATE_QUERIES, SqlGateComputer
+    from windbreak.evaluation.sql_gates import DEFAULT_GATE_QUERIES, SqlGateComputer
 
     corrupted_query = f"SELECT ({DEFAULT_GATE_QUERIES[metric_name]}) + ({delta})"
     return SqlGateComputer(
@@ -392,7 +392,7 @@ def _raising_computer(metric_name: str) -> SqlGateComputer:
     Returns:
         A `SqlGateComputer` that raises when computing `metric_name`.
     """
-    from hedgekit.evaluation.sql_gates import DEFAULT_GATE_QUERIES, SqlGateComputer
+    from windbreak.evaluation.sql_gates import DEFAULT_GATE_QUERIES, SqlGateComputer
 
     return SqlGateComputer(
         queries={
@@ -425,8 +425,8 @@ def test_crosscheck_gates_known_answer_agreement_matches_hand_computation(
     No `GateComputationMismatch` is appended and no alert fires when every
     metric agrees.
     """
-    from hedgekit.evaluation.crosscheck import CrosscheckStatus, crosscheck_gates
-    from hedgekit.evaluation.registry import NOT_IMPLEMENTED, registered_metrics
+    from windbreak.evaluation.crosscheck import CrosscheckStatus, crosscheck_gates
+    from windbreak.evaluation.registry import NOT_IMPLEMENTED, registered_metrics
 
     inputs = _main_admitted_inputs()
     plan = _built_plan()
@@ -481,7 +481,7 @@ def test_crosscheck_gates_corrupted_sql_is_ledgered_and_alerted_loudly(
     naming both raw values and the plan hash, and the alert hook receives one
     `AlertSeverity.CRITICAL` call naming the metric.
     """
-    from hedgekit.evaluation.crosscheck import (
+    from windbreak.evaluation.crosscheck import (
         INTEGER_ROUNDING_TOLERANCE,
         CrosscheckStatus,
         crosscheck_gates,
@@ -538,7 +538,7 @@ def test_crosscheck_gates_tolerance_boundary_delta_one_is_a_match(
     tmp_path: Path, delta: int
 ) -> None:
     """A `brier` delta of exactly +/-1 is within the default tolerance."""
-    from hedgekit.evaluation.crosscheck import CrosscheckStatus, crosscheck_gates
+    from windbreak.evaluation.crosscheck import CrosscheckStatus, crosscheck_gates
 
     inputs = _main_admitted_inputs()
     plan = _built_plan()
@@ -565,7 +565,7 @@ def test_crosscheck_gates_tolerance_boundary_delta_two_is_a_mismatch(
     tmp_path: Path, delta: int
 ) -> None:
     """A `brier` delta of +/-2 exceeds the default tolerance of 1."""
-    from hedgekit.evaluation.crosscheck import CrosscheckStatus, crosscheck_gates
+    from windbreak.evaluation.crosscheck import CrosscheckStatus, crosscheck_gates
 
     inputs = _main_admitted_inputs()
     plan = _built_plan()
@@ -597,8 +597,8 @@ def test_crosscheck_gates_fill_vs_model_slippage_not_implemented_agrees(
     tmp_path: Path,
 ) -> None:
     """`fill_vs_model_slippage` is `NOT_IMPLEMENTED` on both paths -> agree."""
-    from hedgekit.evaluation.crosscheck import CrosscheckStatus, crosscheck_gates
-    from hedgekit.evaluation.registry import NOT_IMPLEMENTED
+    from windbreak.evaluation.crosscheck import CrosscheckStatus, crosscheck_gates
+    from windbreak.evaluation.registry import NOT_IMPLEMENTED
 
     inputs = _main_admitted_inputs()
     plan = _built_plan()
@@ -627,8 +627,8 @@ def test_crosscheck_gates_forced_int_vs_sentinel_is_a_mismatch(
     while the SQL side computes its ordinary `int` over the (non-empty-cohort)
     main fixture.
     """
-    from hedgekit.evaluation import registry
-    from hedgekit.evaluation.crosscheck import CrosscheckStatus, crosscheck_gates
+    from windbreak.evaluation import registry
+    from windbreak.evaluation.crosscheck import CrosscheckStatus, crosscheck_gates
 
     def _always_undefined(_inputs: EvaluationInputs) -> cohorts.UndefinedBrier:
         """Return `UNDEFINED` unconditionally, ignoring the real inputs."""
@@ -661,7 +661,7 @@ def test_crosscheck_gates_empty_traded_cohort_agrees_as_undefined_on_both_paths(
     tmp_path: Path,
 ) -> None:
     """An empty TRADED cohort yields `UNDEFINED` on both paths -> agree."""
-    from hedgekit.evaluation.crosscheck import CrosscheckStatus, crosscheck_gates
+    from windbreak.evaluation.crosscheck import CrosscheckStatus, crosscheck_gates
 
     inputs = _empty_traded_cohort_inputs()
     plan = _built_plan()
@@ -693,15 +693,15 @@ def test_crosscheck_gates_sql_path_is_independent_of_the_python_reference(
 ) -> None:
     """Corrupting `metrics.mean_brier` alone must not perturb the SQL value.
 
-    `hedgekit.evaluation.registry._compute_brier` delegates to
-    `hedgekit.evaluation.metrics.mean_brier` via a module-attribute reference,
+    `windbreak.evaluation.registry._compute_brier` delegates to
+    `windbreak.evaluation.metrics.mean_brier` via a module-attribute reference,
     so patching that one function forces the Python `brier` value to garbage
     while the (unrelated, independently implemented) SQL path must still
     report the correct `54_000` -- proving the SQL path shares no computation
     with the Python reference.
     """
-    from hedgekit.evaluation import metrics as metrics_module
-    from hedgekit.evaluation.crosscheck import CrosscheckStatus, crosscheck_gates
+    from windbreak.evaluation import metrics as metrics_module
+    from windbreak.evaluation.crosscheck import CrosscheckStatus, crosscheck_gates
 
     def _garbage_mean_brier(_inputs: EvaluationInputs, *, window: object) -> int:
         """Return an obviously-wrong constant, ignoring the real inputs."""
@@ -739,7 +739,7 @@ def test_crosscheck_gates_never_averages_the_two_raw_values(tmp_path: Path) -> N
     `54_250` distinctly -- never their average (`54_125`) or any other
     combined figure.
     """
-    from hedgekit.evaluation.crosscheck import crosscheck_gates
+    from windbreak.evaluation.crosscheck import crosscheck_gates
 
     inputs = _main_admitted_inputs()
     plan = _built_plan()
@@ -776,7 +776,7 @@ def test_crosscheck_gates_unresolved_market_is_excluded_from_both_paths(
     its first 5 (resolved) forecasts must yield byte-identical `brier`
     comparisons on both paths and an overall `MATCH` in both runs.
     """
-    from hedgekit.evaluation.crosscheck import CrosscheckStatus, crosscheck_gates
+    from windbreak.evaluation.crosscheck import CrosscheckStatus, crosscheck_gates
 
     with_unresolved = _main_admitted_inputs()
     without_unresolved = EvaluationInputs(
@@ -826,7 +826,7 @@ def test_crosscheck_gates_a_raising_sql_query_is_not_swallowed(
     is caught and turned into a reported mismatch rather than propagating out
     of, or being silently absorbed by, the crosscheck.
     """
-    from hedgekit.evaluation.crosscheck import CrosscheckStatus, crosscheck_gates
+    from windbreak.evaluation.crosscheck import CrosscheckStatus, crosscheck_gates
 
     inputs = _main_admitted_inputs()
     plan = _built_plan()
@@ -878,7 +878,7 @@ def test_crosscheck_gates_a_raising_python_reference_metric_is_not_propagated(
     failure sentinels that still disagree by identity, so the double failure is
     itself flagged rather than silently agreeing.
     """
-    from hedgekit.evaluation.crosscheck import (
+    from windbreak.evaluation.crosscheck import (
         PYTHON_COMPUTE_FAILED,
         CrosscheckStatus,
         crosscheck_gates,
