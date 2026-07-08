@@ -93,6 +93,39 @@ jobs:
             pytest.xml
           retention-days: 30
 
+  chaos:
+    name: Chaos Suite (SPEC §11.5)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python ${{ env.PYTHON_VERSION_PRIMARY }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION_PRIMARY }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -c constraints-quality.txt -r requirements.txt
+          pip install -c constraints-quality.txt -r requirements-dev.txt
+          pip install -e . -c constraints-quality.txt
+
+      - name: Chaos suite (fault-injection invariants)
+        # This is NOT a gate weakening. --no-cov disables coverage collection
+        # AND the --cov-fail-under=90 enforcement for THIS job only; the 90%
+        # full-suite coverage gate is still enforced by the `quality` job,
+        # where the chaos tests also run and contribute their coverage. This
+        # `chaos` job is an isolated, merge-gating FUNCTIONAL signal that fails
+        # the build on any SPEC §11.5 invariant breach. --strict-markers /
+        # --strict-config stay active (we deliberately avoid --override-ini /
+        # -o addopts=, which would silently drop them).
+        run: pytest -m chaos --no-cov -v
+
   build:
     name: Build Distribution
     runs-on: ubuntu-latest
