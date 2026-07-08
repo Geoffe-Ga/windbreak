@@ -102,7 +102,6 @@ from hedgekit.evaluation.registry import (
     MetricSpec,
     MetricValue,
     NotImplementedSentinel,
-    ObservationWindow,
     Track,
     gate_evaluation_inputs,
     registered_metrics,
@@ -138,6 +137,7 @@ from hedgekit.evaluation.temporal import (
 )
 from hedgekit.evaluation.windows import (
     MixedObservationWindowError,
+    ObservationWindow,
     WindowedForecasts,
     combine,
     resolve_window,

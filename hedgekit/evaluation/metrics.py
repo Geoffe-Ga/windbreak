@@ -38,8 +38,8 @@ if TYPE_CHECKING:
     from hedgekit.evaluation.registry import (
         EvaluationInputs,
         FixtureForecast,
-        ObservationWindow,
     )
+    from hedgekit.evaluation.windows import ObservationWindow
 
 #: One whole probability expressed in ppm (1.0 == 1_000_000 ppm). Also the
 #: ppm-scaling factor used to lift a mean/ratio back into ppm space.

@@ -25,7 +25,7 @@ from hedgekit.evaluation.bootstrap import (
     run_clustered_bootstrap,
     validate_confidence_ppm,
 )
-from hedgekit.evaluation.registry import ObservationWindow
+from hedgekit.evaluation.windows import ObservationWindow
 from hedgekit.numeric.rounding import RoundingDirection, divide
 
 if TYPE_CHECKING:
