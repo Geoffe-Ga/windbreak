@@ -409,17 +409,35 @@ def live_brier_degradation(
     """Return ``mean_brier(LIVE_window) - mean_brier(PAPER)``, in ppm.
 
     Mirrors :func:`traded_vs_skipped_brier_delta`'s two-cohort partition, but
-    splits on ``forecast.live`` instead of ``forecast.traded``: the LIVE cohort
-    is truncated to the most-recent ``window_size`` resolved forecasts (by
-    ``created_sequence`` descending) before scoring, while the PAPER baseline is
-    every resolved PAPER forecast. A positive degradation flags the LIVE track
-    scoring worse (higher Brier) than the PAPER baseline.
+    splits on ``forecast.live`` instead of ``forecast.traded``. Each track is
+    scored in three ordered steps, so a market re-forecast several times still
+    contributes exactly one observation:
+
+    1. Keep only the resolved forecasts on the track
+       (:func:`_resolved_track_forecasts`).
+    2. Collapse per market via :func:`~windbreak.evaluation.windows.resolve_window`
+       under ``window`` -- ``LATEST_BEFORE_CLOSE`` keeps each market's
+       max-``created_sequence`` record -- satisfying
+       :func:`~windbreak.evaluation.metrics.mean_brier`'s documented precondition
+       that the caller has already applied ``windows.resolve_window`` (metrics.py),
+       exactly as the sibling ``traded_vs_skipped_brier_delta`` does. This matters
+       because the value feeds the automatic-demotion gate, so a re-forecast market
+       must not be double-counted.
+    3. Truncate the collapsed LIVE cohort to the most-recent ``window_size``
+       distinct markets (by ``created_sequence`` descending); the PAPER baseline
+       is every collapsed resolved PAPER market.
+
+    A positive degradation flags the LIVE track scoring worse (higher Brier)
+    than the PAPER baseline. One-forecast-per-market inputs make the collapse an
+    identity, so this stays backward-compatible with every existing fixture.
 
     Args:
         inputs: The admitted evaluation inputs to score.
-        window: The declared observation-window label passed through to
+        window: The declared observation-window label; also the per-market
+            collapse strategy passed to
+            :func:`~windbreak.evaluation.windows.resolve_window` and through to
             :func:`~windbreak.evaluation.metrics.mean_brier`.
-        window_size: The rolling-window size applied to the LIVE cohort.
+        window_size: The rolling-window size applied to the collapsed LIVE cohort.
 
     Returns:
         The signed degradation, in ppm.
@@ -431,8 +449,13 @@ def live_brier_degradation(
             the :data:`UNDEFINED` sentinel; it subclasses ``ValueError`` so plain
             ``ValueError`` handlers still catch it.
     """
-    live = _rolling_window(_resolved_track_forecasts(inputs, live=True), window_size)
-    paper = _resolved_track_forecasts(inputs, live=False)
+    live_collapsed = resolve_window(
+        _resolved_track_forecasts(inputs, live=True), window=window
+    ).forecasts
+    live = _rolling_window(live_collapsed, window_size)
+    paper = resolve_window(
+        _resolved_track_forecasts(inputs, live=False), window=window
+    ).forecasts
     if not live:
         raise EmptyCohortError(
             "LIVE cohort has no resolved records; live-brier degradation is undefined"

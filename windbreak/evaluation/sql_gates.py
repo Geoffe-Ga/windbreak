@@ -715,19 +715,34 @@ FROM (
 )
 """,
     "live_brier_degradation": """
-WITH live_windowed AS (
-  SELECT f.probability_ppm AS probability_ppm, r.outcome_ppm AS outcome_ppm
+WITH live_latest AS (
+  SELECT f.probability_ppm AS probability_ppm, r.outcome_ppm AS outcome_ppm,
+         f.created_sequence AS created_sequence
   FROM forecasts AS f
   JOIN resolutions AS r ON f.market_ticker = r.market_ticker
   WHERE f.live = 1
-  ORDER BY f.created_sequence DESC
+    AND f.created_sequence = (
+      SELECT MAX(f2.created_sequence) FROM forecasts AS f2
+      JOIN resolutions AS r2 ON f2.market_ticker = r2.market_ticker
+      WHERE f2.market_ticker = f.market_ticker AND f2.live = 1)
+),
+live_windowed AS (
+  SELECT probability_ppm, outcome_ppm FROM live_latest
+  ORDER BY created_sequence DESC
   LIMIT ?
 ),
-paper_resolved AS (
+paper_latest AS (
   SELECT f.probability_ppm AS probability_ppm, r.outcome_ppm AS outcome_ppm
   FROM forecasts AS f
   JOIN resolutions AS r ON f.market_ticker = r.market_ticker
   WHERE f.live = 0
+    AND f.created_sequence = (
+      SELECT MAX(f2.created_sequence) FROM forecasts AS f2
+      JOIN resolutions AS r2 ON f2.market_ticker = r2.market_ticker
+      WHERE f2.market_ticker = f.market_ticker AND f2.live = 0)
+),
+paper_resolved AS (
+  SELECT probability_ppm, outcome_ppm FROM paper_latest
 )
 SELECT hk_degradation(
   (SELECT SUM((probability_ppm - outcome_ppm) * (probability_ppm - outcome_ppm))

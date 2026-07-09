@@ -36,8 +36,9 @@ class DashboardReadModels:
         execution_quality: Every ``ExecutionQualityRecorded`` row, in ledger
             order (issue #58); defaults to empty so a pre-#58 construction stays
             valid.
-        live_divergence: Every ``LiveDivergenceSampled`` row, in ledger order
-            (issue #58); defaults to empty.
+        live_divergence: Every ``LiveDivergenceSampled`` and
+            ``LiveDivergenceBreached`` row, in ledger order (issue #58); breach
+            rows carry the firing trigger. Defaults to empty.
     """
 
     positions: list[ReadModelRow]

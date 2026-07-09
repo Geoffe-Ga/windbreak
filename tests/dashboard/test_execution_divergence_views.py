@@ -249,6 +249,62 @@ def test_new_route_renders_no_data_yet_when_read_models_source_is_none(
         server.server_close()
 
 
+def test_divergence_route_renders_and_escapes_the_breach_trigger() -> None:
+    """`/divergence` renders a `LiveDivergenceBreached` row's `trigger`,
+    HTML-escaped -- the primary operator-facing audit trail for the SPEC
+    S10.10 automatic-demotion gate (Gate 4 round-2 review fix, Fix 2).
+
+    Today `render_live_divergence`'s `_divergence_row` renders only the four
+    fixed sampled-series/threshold fields (`live_slippage_ratio_ppm`,
+    `live_slippage_ratio_limit_ppm`, `live_brier_degradation_ppm`,
+    `live_brier_degradation_band_ppm`); it never reads a row's `trigger` key
+    at all, so this fails: neither the escaped nor the raw trigger text
+    appears anywhere in the response body.
+    """
+    from windbreak.dashboard.app import DashboardStatus, create_server
+
+    hostile_trigger = "LIVE_PAPER_SLIPPAGE_DIVERGENCE<script>alert(1)</script>"
+    rows = {
+        "live_divergence": [
+            {
+                "seq": 9,
+                "created_at": "2026-01-01T00:00:00.000000+00:00",
+                "event_type": "LiveDivergenceBreached",
+                "data": {
+                    "live_slippage_ratio_ppm": 1_600_000,
+                    "live_slippage_ratio_limit_ppm": 1_500_000,
+                    "live_brier_degradation_ppm": "UNDEFINED",
+                    "live_brier_degradation_band_ppm": 50_000,
+                    "trigger": hostile_trigger,
+                },
+            }
+        ],
+    }
+    server = create_server(
+        token=TEST_TOKEN,
+        status_source=lambda: DashboardStatus(mode="LIVE_MICRO", last_heartbeat=None),
+        read_models_source=_make_read_models_source(rows),
+        port=0,
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        status, _headers, body = _get(
+            server.server_address, "/divergence", headers=_bearer(TEST_TOKEN)
+        )
+
+        assert status == 200
+        assert (
+            "LIVE_PAPER_SLIPPAGE_DIVERGENCE&lt;script&gt;alert(1)&lt;/script&gt;"
+            in body
+        )
+        assert "<script>" not in body
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
+
+
 def test_root_path_is_unaffected_by_the_two_new_routes_existing(
     dashboard_server_with_execution_divergence_rows: tuple[
         http.server.ThreadingHTTPServer, tuple[str, int]

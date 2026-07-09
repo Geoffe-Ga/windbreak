@@ -40,7 +40,10 @@ from windbreak.evaluation.execution_quality import (
     ExecutionQualityRecord,
     ExecutionQualityRecorded,
 )
-from windbreak.evaluation.live_divergence import LiveDivergenceSampled
+from windbreak.evaluation.live_divergence import (
+    LiveDivergenceBreached,
+    LiveDivergenceSampled,
+)
 from windbreak.ledger.events import (
     AlertEmitted,
     ConfigLoaded,
@@ -454,6 +457,65 @@ def test_rebuild_execution_quality_and_live_divergence_projections_are_wired(
     assert [entry["seq"] for entry in config_versions] == [1]
     mode_history = json.loads((output_dir / "mode_history.json").read_text())
     assert [entry["seq"] for entry in mode_history] == [3]
+
+
+def _populate_live_divergence_ledger_with_breach(store: SqliteLedgerStore) -> None:
+    """Append one `LiveDivergenceSampled` row immediately followed by one
+    `LiveDivergenceBreached` row for the same run (Gate 4 round-2 review fix,
+    Fix 2: `LiveDivergenceBreached` must appear in the dashboard divergence
+    projection).
+
+    Sequence numbers: 1=LiveDivergenceSampled, 2=LiveDivergenceBreached.
+
+    Args:
+        store: The ledger store to append the fixed sequence into.
+    """
+    sample = {
+        "live_slippage_ratio_ppm": 1_600_000,
+        "live_brier_degradation_ppm": 60_000,
+        "plan_hash": "hash-breach-test",
+    }
+    store.append(LiveDivergenceSampled(component="evaluation", sample=sample))
+    store.append(
+        LiveDivergenceBreached(
+            component="evaluation",
+            sample=sample,
+            trigger="LIVE_PAPER_SLIPPAGE_DIVERGENCE",
+        )
+    )
+
+
+def test_rebuild_live_divergence_projection_includes_breached_rows(
+    tmp_path: Path, deterministic_clock: Callable[[], datetime]
+) -> None:
+    """`live_divergence.json` holds BOTH `LiveDivergenceSampled` AND
+    `LiveDivergenceBreached` rows, in ledger order, and the breach row's
+    `data` carries its firing `trigger` (Gate 4 round-2 review fix, Fix 2).
+
+    `LiveDivergenceBreached` is the durable, operator-facing audit trail for
+    the SPEC S10.10 automatic-demotion gate. Today
+    `live_divergence_read_model` filters on the `LiveDivergenceSampled` event
+    type alone (`_LIVE_DIVERGENCE_SAMPLED`), so the `LiveDivergenceBreached`
+    row is silently dropped from the read model entirely -- this fails on
+    `assert [entry["seq"] for entry in live_divergence] == [1, 2]` (today it
+    is `[1]`, missing the seq-2 breach row).
+    """
+    db_path = tmp_path / "ledger.db"
+    output_dir = tmp_path / "out"
+    store = SqliteLedgerStore(db_path, now=deterministic_clock)
+    _populate_live_divergence_ledger_with_breach(store)
+    store.close()
+
+    rebuild(db_path, output_dir)
+
+    live_divergence = json.loads((output_dir / "live_divergence.json").read_text())
+
+    assert [entry["seq"] for entry in live_divergence] == [1, 2]
+    assert live_divergence[0]["event_type"] == "LiveDivergenceSampled"
+    assert live_divergence[1]["event_type"] == "LiveDivergenceBreached"
+    assert live_divergence[1]["data"]["trigger"] == "LIVE_PAPER_SLIPPAGE_DIVERGENCE"
+    assert live_divergence[1]["data"]["live_slippage_ratio_ppm"] == 1_600_000
+    assert all("created_at" in entry for entry in live_divergence)
 
 
 def test_rebuild_on_tampered_ledger_raises_chain_integrity_error(

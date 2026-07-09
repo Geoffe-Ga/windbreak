@@ -774,3 +774,90 @@ def test_live_slippage_ratio_sql_path_fails_closed_on_zero_modeled_sum() -> None
     sql_values = SqlGateComputer().compute(admitted, plan)
 
     assert sql_values["live_slippage_ratio"] is SQL_QUERY_FAILED
+
+
+# ---------------------------------------------------------------------------
+# 7. Per-market collapse: a market re-forecast twice on the LIVE track must
+#    score once (its LATEST_BEFORE_CLOSE record), not once per raw forecast
+#    (Gate 4 round-2 review fix, Fix 1: `live_brier_degradation` must collapse
+#    per-market before scoring, on BOTH the Python and SQL paths).
+# ---------------------------------------------------------------------------
+
+
+def test_live_brier_degradation_collapses_re_forecast_market_before_scoring() -> None:
+    """A LIVE market forecast TWICE contributes ONE observation -- its
+    `LATEST_BEFORE_CLOSE` (max `created_sequence`) record -- to
+    `live_brier_degradation`, on BOTH the Python and SQL paths, agreeing
+    EXACTLY (never `+/-1`) on the hand-derived, per-market-collapsed answer.
+
+    Hand computation, per-market collapse applied (the CORRECT answer):
+
+    LIVE cohort, 2 markets after collapse:
+    - `MKT-COLLAPSE-RF` is forecast TWICE: `fc-rf-1` (seq=1, p=200_000) and
+      `fc-rf-2` (seq=2, p=900_000). `LATEST_BEFORE_CLOSE` keeps only the
+      max-`created_sequence` record, `fc-rf-2`. Outcome YES (1_000_000):
+      term = (900_000-1_000_000)^2 = 10_000_000_000.
+    - `MKT-COLLAPSE-L2` (`fc-l2`, seq=3, p=500_000), outcome NO (0):
+      term = (500_000-0)^2 = 250_000_000_000.
+    Collapsed LIVE sum = 260_000_000_000, n=2 (one row per market); mean =
+    `ceil(260_000_000_000 / (2 * 1_000_000)) = 130_000` ppm exactly (no
+    remainder).
+
+    PAPER cohort, 1 market: `MKT-COLLAPSE-P1` (`fc-p1`, seq=4, p=700_000),
+    outcome YES: term = (700_000-1_000_000)^2 = 90_000_000_000; n=1; mean =
+    `ceil(90_000_000_000 / 1_000_000) = 90_000` ppm exactly.
+
+    `live_brier_degradation` (collapsed, correct) = 130_000 - 90_000 =
+    `40_000` ppm exactly -- the value this test pins on BOTH paths.
+
+    Today (RED), neither path applies the per-market collapse before
+    scoring, so `fc-rf-1` is counted as a THIRD, separate LIVE observation
+    instead of being superseded by `fc-rf-2`: sum = 640_000_000_000
+    (fc-rf-1, uncollapsed term) + 10_000_000_000 (fc-rf-2) +
+    250_000_000_000 (fc-l2) = 900_000_000_000; n=3; mean =
+    `ceil(900_000_000_000 / (3 * 1_000_000)) = 300_000` ppm; degradation =
+    300_000 - 90_000 = 210_000 -- WRONG, and != the pinned `40_000` below.
+    This fails today on the Python assertion
+    (`cohorts.live_brier_degradation` feeds `_resolved_track_forecasts`'s
+    raw, uncollapsed per-track forecasts straight into `_rolling_window` and
+    `mean_brier`, violating `mean_brier`'s documented precondition that the
+    caller already applied `windows.resolve_window`) and on the SQL
+    assertion (`sql_gates.py`'s `"live_brier_degradation"` query selects
+    straight from the raw `forecasts` rows with no per-market
+    `MAX(created_sequence)` collapse either).
+    """
+    from windbreak.evaluation.sql_gates import SqlGateComputer
+
+    live_forecasts = (
+        _live_forecast("fc-rf-1", "MKT-COLLAPSE-RF", 200_000, created_sequence=1),
+        _live_forecast("fc-rf-2", "MKT-COLLAPSE-RF", 900_000, created_sequence=2),
+        _live_forecast("fc-l2", "MKT-COLLAPSE-L2", 500_000, created_sequence=3),
+    )
+    paper_forecasts = (
+        _paper_forecast("fc-p1", "MKT-COLLAPSE-P1", 700_000, created_sequence=4),
+    )
+    forecasts = live_forecasts + paper_forecasts
+    resolutions = {
+        "MKT-COLLAPSE-RF": ResolutionOutcome.YES,
+        "MKT-COLLAPSE-L2": ResolutionOutcome.NO,
+        "MKT-COLLAPSE-P1": ResolutionOutcome.YES,
+    }
+    temporal = TemporalContext(
+        deployment_sequence=0, resolution_sequences=dict.fromkeys(resolutions, 100)
+    )
+    inputs = EvaluationInputs(
+        forecasts=forecasts,
+        resolutions=resolutions,
+        temporal=temporal,
+        execution_records=(),
+    )
+    plan = _built_plan()
+    admitted, _rejections = gate_evaluation_inputs(inputs)
+    specs = registered_metrics()
+
+    python_value = specs["live_brier_degradation"].compute(admitted)
+    sql_values = SqlGateComputer().compute(admitted, plan)
+
+    assert python_value == 40_000
+    assert sql_values["live_brier_degradation"] == 40_000
+    assert python_value == sql_values["live_brier_degradation"]

@@ -214,6 +214,7 @@ _LIVE_DIVERGENCE_FILENAME = "live_divergence.json"
 #: divergence sample.
 _EXECUTION_QUALITY_RECORDED = "ExecutionQualityRecorded"
 _LIVE_DIVERGENCE_SAMPLED = "LiveDivergenceSampled"
+_LIVE_DIVERGENCE_BREACHED = "LiveDivergenceBreached"
 
 
 def execution_quality_read_model(
@@ -238,18 +239,25 @@ def execution_quality_read_model(
 def live_divergence_read_model(
     records: list[LedgerRecord],
 ) -> list[dict[str, object]]:
-    """Project every ``LiveDivergenceSampled`` row, in ledger order (issue #58).
+    """Project the live-divergence audit trail, in ledger order (issue #58).
+
+    Folds both ``LiveDivergenceSampled`` (every monitor run) and
+    ``LiveDivergenceBreached`` (one per firing SPEC S10.10 automatic-demotion
+    trigger) rows, preserving ledger order, so an operator sees each sample
+    alongside any breach it triggered. A breach row's ``data`` carries the
+    sampled snapshot plus the firing ``trigger`` name.
 
     Args:
         records: The verified ledger records, in sequence order.
 
     Returns:
-        One ``{seq, created_at, event_type, data}`` entry per divergence sample.
+        One ``{seq, created_at, event_type, data}`` entry per sampled or
+        breached divergence row.
     """
     return [
         _gateway_projection(record)
         for record in records
-        if record.event_type == _LIVE_DIVERGENCE_SAMPLED
+        if record.event_type in {_LIVE_DIVERGENCE_SAMPLED, _LIVE_DIVERGENCE_BREACHED}
     ]
 
 

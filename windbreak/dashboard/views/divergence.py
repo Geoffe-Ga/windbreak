@@ -1,10 +1,13 @@
 """Renderer for the live-vs-paper divergence view (issue #58).
 
-Renders every ``LiveDivergenceSampled`` read-model row into an HTML table of the
-two divergence series against their thresholds. Each series value and each
-threshold is drawn from the sampled-event payload and HTML-escaped
+Renders every ``LiveDivergenceSampled`` and ``LiveDivergenceBreached`` read-model
+row into an HTML table of the two divergence series against their thresholds,
+plus the firing trigger. Each series value, each threshold, and the trigger name
+is drawn from the row payload and HTML-escaped
 (:func:`windbreak.dashboard.views._html.escape`) before output; a sentinel value
-(e.g. ``"UNDEFINED"``) renders verbatim.
+(e.g. ``"UNDEFINED"``) renders verbatim. Sampled rows carry no ``trigger`` and
+render the :data:`_MISSING` placeholder for that cell; breach rows render the
+escaped firing trigger name so an operator can see which threshold fired.
 """
 
 from __future__ import annotations
@@ -45,7 +48,9 @@ def _divergence_row(row: dict[str, object]) -> str:
             (``{seq, created_at, event_type, data}``).
 
     Returns:
-        An HTML ``<tr>`` pairing each series value with its threshold, escaped.
+        An HTML ``<tr>`` pairing each series value with its threshold and the
+        firing trigger, escaped. Sampled rows carry no ``trigger`` and render the
+        :data:`_MISSING` placeholder there; breach rows render the trigger name.
     """
     data = cast("Mapping[str, object]", row["data"])
     return (
@@ -54,6 +59,7 @@ def _divergence_row(row: dict[str, object]) -> str:
         + _cell(data, "live_slippage_ratio_limit_ppm")
         + _cell(data, "live_brier_degradation_ppm")
         + _cell(data, "live_brier_degradation_band_ppm")
+        + _cell(data, "trigger")
         + "</tr>"
     )
 
@@ -66,8 +72,9 @@ def render_live_divergence(rows: list[dict[str, object]]) -> str:
             list renders the shared "no data yet" placeholder.
 
     Returns:
-        An HTML section fragment listing each sample's two series against their
-        thresholds, all values HTML-escaped.
+        An HTML section fragment listing each sampled or breached row's two
+        series against their thresholds plus the firing trigger (the
+        :data:`_MISSING` placeholder for sampled rows), all values HTML-escaped.
     """
     body = [_divergence_row(row) for row in rows]
     return section(_TITLE, body)
