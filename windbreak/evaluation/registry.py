@@ -607,6 +607,10 @@ def _seed_metric_specs() -> list[MetricSpec]:
             window=ObservationWindow.TRADE_TRIGGERING,
             compute=_compute_live_slippage_ratio,
         ),
+        # ``live_brier_degradation`` is ``Track.FORECAST`` (a forecast-quality
+        # Brier delta), whereas its "live-divergence" sibling
+        # ``live_slippage_ratio`` above is ``Track.EXECUTION`` (an
+        # execution-quality cost ratio) -- the two do NOT share a track.
         MetricSpec(
             name="live_brier_degradation",
             track=Track.FORECAST,

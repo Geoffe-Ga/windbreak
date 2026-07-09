@@ -63,6 +63,16 @@ design points):
   no-op, so this test does not have to pick a side on that particular
   ambiguity to be a valid, unambiguous RED pin.
 
+PR #199 review fix (Gate 4 RED): `crosscheck_gates` currently scores
+`live_slippage_ratio` on BOTH paths with no `require_model_version` guard at
+all (unlike `monitor_live_divergence`, which already calls it), so a recorded
+execution-quality fill whose `model_version` disagrees with
+`plan.paper_fill_model_version` is silently scored rather than failing closed.
+The tests in section 5 below pin the fix: `crosscheck_gates` must raise
+`ValueError` before scoring or ledgering anything on a model-version mismatch,
+and must behave exactly as before (no raise) when every record's version
+matches the plan.
+
 Symbols from already-existing modules (`windbreak.evaluation.registry`,
 `windbreak.evaluation.resolution`, `windbreak.evaluation.temporal`,
 `windbreak.evaluation.cohorts`, `windbreak.evaluation.crosscheck`,
@@ -82,6 +92,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
+
+import pytest
 
 from tests.evaluation.test_dual_path import _main_admitted_inputs
 from tests.evaluation.test_live_divergence import _paper_only_inputs
@@ -634,3 +646,131 @@ def test_live_brier_degradation_rolling_window_parity_over_105_live_forecasts() 
     assert python_full == -40_000
     assert sql_full == -40_000
     assert python_full == python_windowed == sql_full == sql_windowed
+
+
+# ---------------------------------------------------------------------------
+# 5. Fail-closed parity: `crosscheck_gates` must reject a model-version
+#    mismatch exactly like `monitor_live_divergence` already does (PR #199
+#    review fix).
+# ---------------------------------------------------------------------------
+
+
+def test_crosscheck_gates_model_version_mismatch_fails_closed(tmp_path: Path) -> None:
+    """A recorded execution-quality fill whose `model_version` disagrees with
+    `plan.paper_fill_model_version` must fail closed: `crosscheck_gates` should
+    raise `ValueError` before scoring or ledgering anything, mirroring
+    `monitor_live_divergence`'s existing `require_model_version` guard.
+
+    Today `crosscheck_gates` has no such guard at all -- it scores
+    `live_slippage_ratio` on both paths regardless of `model_version` -- so
+    this currently returns an ordinary `CrosscheckResult` instead of raising,
+    and this test fails with "DID NOT RAISE".
+    """
+    from windbreak.evaluation.crosscheck import crosscheck_gates
+    from windbreak.evaluation.execution_quality import ExecutionQualityRecord
+
+    mismatched_record = ExecutionQualityRecord(
+        fill_id="F-model-mismatch",
+        market_ticker="MKT-DP-EXEC",
+        side="YES",
+        filled_centis=100,
+        actual_cost_micros=1_000_000,
+        modeled_cost_micros=900_000,
+        model_version="pfm-a-completely-different-version",
+        created_sequence=1,
+    )
+    base = _main_admitted_inputs()
+    inputs = EvaluationInputs(
+        forecasts=base.forecasts,
+        resolutions=base.resolutions,
+        temporal=base.temporal,
+        execution_records=(mismatched_record,),
+    )
+    plan = _built_plan()
+    store = _ledger_store(tmp_path)
+    _calls, hook = _recording_alert_hook()
+    try:
+        with pytest.raises(ValueError, match="model_version"):
+            crosscheck_gates(inputs, plan=plan, store=store, alert=hook)
+
+        # Fail-closed means before anything is ledgered, not merely reported.
+        assert store.read_all() == []
+    finally:
+        store.close()
+
+
+def test_crosscheck_gates_model_version_match_behaves_normally(tmp_path: Path) -> None:
+    """When every execution record's `model_version` matches the plan's
+    `paper_fill_model_version`, `crosscheck_gates` behaves exactly as it does
+    today: no raise, an ordinary `CrosscheckResult`. Guards against the
+    model-version fail-closed fix over-triggering on the well-formed case.
+    """
+    from windbreak.evaluation.crosscheck import CrosscheckStatus, crosscheck_gates
+
+    inputs = _known_answer_inputs()
+    plan = _built_plan()
+    store = _ledger_store(tmp_path)
+    calls, hook = _recording_alert_hook()
+    try:
+        result = crosscheck_gates(inputs, plan=plan, store=store, alert=hook)
+
+        assert result.status is CrosscheckStatus.MATCH
+        assert calls == []
+    finally:
+        store.close()
+
+
+# ---------------------------------------------------------------------------
+# 6. Zero-modeled-cost-sum parity: the SQL path must fail closed too, not
+#    silently degrade to a sentinel (PR #199 review fix, Fix 3's SQL twin).
+# ---------------------------------------------------------------------------
+
+
+def test_live_slippage_ratio_sql_path_fails_closed_on_zero_modeled_sum() -> None:
+    """The SQL path fails closed on the same degenerate zero-modeled-cost sum
+    input Fix 3 pins on the Python side -- but by a DIFFERENT, architecturally
+    uniform mechanism, which this test reconciles rather than fights.
+
+    The two paths fail closed differently, and both are correct:
+
+    - Python (`live_slippage_ratio`) raises a documented `ValueError` on a
+      non-empty record set whose modeled-cost sum is `0`.
+    - SQL (`SqlGateComputer().compute(...)`) does NOT raise: `_hk_ratio`'s
+      `ZeroDivisionError` surfaces to sqlite3 as a `sqlite3.Error`, which
+      `_value_for` uniformly catches and degrades to the fail-loud
+      `SQL_QUERY_FAILED` sentinel (`sql_gates.py`) -- the same convention
+      every UDF failure follows. This is the SQL architecture's single,
+      deliberate failure path; making `_hk_ratio` bypass the sentinel to raise
+      would be fighting that architecture, not fixing a bug.
+
+    Both are fail-closed: neither ever returns a silently-wrong number. So
+    this test asserts the SQL path degrades to `SQL_QUERY_FAILED` (its
+    fail-loud sentinel) while the Python path raises `ValueError` -- a
+    correctness reconciliation of this test's original (mistaken) assumption
+    that both paths would raise the identical exception, NOT a weakening.
+    """
+    from windbreak.evaluation.execution_quality import ExecutionQualityRecord
+    from windbreak.evaluation.sql_gates import SQL_QUERY_FAILED, SqlGateComputer
+
+    zero_modeled_record = ExecutionQualityRecord(
+        fill_id="F-sql-zero-model",
+        market_ticker="MKT-SQL-ZERO",
+        side="YES",
+        filled_centis=100,
+        actual_cost_micros=1_000_000,
+        modeled_cost_micros=0,
+        model_version=_PFM_VERSION,
+        created_sequence=1,
+    )
+    inputs = EvaluationInputs(
+        forecasts=(),
+        resolutions={},
+        temporal=TemporalContext(deployment_sequence=0, resolution_sequences={}),
+        execution_records=(zero_modeled_record,),
+    )
+    plan = _built_plan()
+    admitted, _rejections = gate_evaluation_inputs(inputs)
+
+    sql_values = SqlGateComputer().compute(admitted, plan)
+
+    assert sql_values["live_slippage_ratio"] is SQL_QUERY_FAILED

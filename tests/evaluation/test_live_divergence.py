@@ -28,6 +28,8 @@ Pins issue #58's per-run monitor (SPEC §10.9 / §10.10):
 - A model-version mismatch between a recorded execution-quality fill and the
   plan's `paper_fill_model_version` fails closed (`ValueError`) before
   anything is ledgered.
+- `_exceeds`'s boundary (PR #199 review nit): a series value EXACTLY equal to
+  its threshold does NOT breach -- strict `>`, never `>=`.
 
 ASSUMPTION this file pins (the architecture plan's prose is not a literal
 signature): `fire_trigger` is a plain one-argument callable
@@ -597,5 +599,79 @@ def test_monitor_live_divergence_both_breach_fires_both_triggers(
             DemotionTrigger.ROLLING_BRIER_DEGRADATION,
         }
         assert len(trigger_calls) == 2
+    finally:
+        store.close()
+
+
+# ---------------------------------------------------------------------------
+# 5. `_exceeds` boundary: a series value EXACTLY equal to its threshold must
+#    NOT breach (strict `>`, never `>=`) -- PR #199 review nit.
+# ---------------------------------------------------------------------------
+
+
+def test_monitor_live_divergence_slippage_ratio_exactly_at_limit_does_not_breach(
+    tmp_path: Path,
+) -> None:
+    """A slippage ratio EXACTLY equal to `plan.live_slippage_ratio_limit_ppm`
+    must NOT breach: `_exceeds` compares with a strict `>`, so an at-limit
+    value ledgers only the sampled event, fires no alert, and calls no
+    trigger -- pinning the boundary `_exceeds`'s docstring already claims.
+
+    One execution-quality record with `modeled_cost_micros == 1_000_000` (one
+    whole ppm unit) makes `live_slippage_ratio` -- `ceil(actual * 1e6 /
+    modeled)` -- reduce to `actual_cost_micros` itself with no rounding
+    ambiguity, so setting `actual_cost_micros` to the plan's own confirmed
+    limit pins the ratio at exactly that limit regardless of its value.
+    """
+    from windbreak.evaluation.live_divergence import monitor_live_divergence
+    from windbreak.evaluation.registry import gate_evaluation_inputs
+
+    plan = _built_plan()
+    limit = plan.live_slippage_ratio_limit_ppm
+    forecasts = (_paper_forecast("fc-p1", "MKT-P1", 600_000, created_sequence=10),)
+    resolutions = {"MKT-P1": ResolutionOutcome.YES}
+    temporal = TemporalContext(
+        deployment_sequence=0, resolution_sequences={"MKT-P1": 100}
+    )
+    execution_records = (
+        _execution_record(
+            "F-at-limit",
+            actual_cost_micros=limit,
+            modeled_cost_micros=1_000_000,
+            sequence=1,
+        ),
+    )
+    raw_inputs = EvaluationInputs(
+        forecasts=forecasts,
+        resolutions=resolutions,
+        temporal=temporal,
+        execution_records=execution_records,
+    )
+    inputs, _rejections = gate_evaluation_inputs(raw_inputs)
+    store = _ledger_store(tmp_path)
+    alert_calls, alert_hook = _recording_alert_hook()
+    trigger_calls, fire_trigger = _recording_fire_trigger()
+    try:
+        monitor_live_divergence(
+            inputs,
+            plan=plan,
+            store=store,
+            alert=alert_hook,
+            fire_trigger=fire_trigger,
+            component="evaluation",
+        )
+
+        records = store.read_all()
+        sampled = [r for r in records if r.event_type == "LiveDivergenceSampled"]
+        breached = [r for r in records if r.event_type == "LiveDivergenceBreached"]
+        assert len(sampled) == 1
+        assert breached == []
+
+        envelope = json.loads(sampled[0].payload_json)
+        payload = envelope["data"]
+        assert payload["live_slippage_ratio_ppm"] == limit
+
+        assert alert_calls == []
+        assert trigger_calls == []
     finally:
         store.close()

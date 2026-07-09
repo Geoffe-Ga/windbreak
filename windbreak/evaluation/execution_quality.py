@@ -215,11 +215,22 @@ def live_slippage_ratio(
     Returns:
         The slippage ratio in ppm, or :data:`~windbreak.evaluation.cohorts.UNDEFINED`
         for an empty record set.
+
+    Raises:
+        ValueError: If ``records`` is non-empty but its modeled-cost sum is
+            exactly ``0`` -- the ratio's denominator, leaving the ratio
+            undefined. Fails closed with a clear message rather than letting
+            ``divide``'s bare :class:`ZeroDivisionError` escape, mirroring
+            ``calibration_slope`` / ``calibration_intercept``'s zero-variance
+            guard. (The empty-record set stays the ``UNDEFINED`` sentinel path
+            above.)
     """
     if not records:
         return UNDEFINED
     actual_sum = sum(record.actual_cost_micros for record in records)
     modeled_sum = sum(record.modeled_cost_micros for record in records)
+    if modeled_sum == 0:
+        raise ValueError("modeled cost sum is zero; live slippage ratio is undefined")
     return divide(
         actual_sum * _PPM_SCALE,
         modeled_sum,

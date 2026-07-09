@@ -253,7 +253,9 @@ def _exceeds(value: MetricValue, limit: int) -> bool:
 
     Returns:
         ``True`` only when ``value`` is a real (non-``bool``) ``int`` strictly
-        greater than ``limit``; a sentinel (``UNDEFINED``) never breaches.
+        greater than ``limit``; a sentinel (``UNDEFINED``) never breaches. The
+        comparison is strict ``>``, so a series value exactly equal to its
+        threshold does NOT breach (the limit is the last passing value).
     """
     return isinstance(value, int) and not isinstance(value, bool) and value > limit
 

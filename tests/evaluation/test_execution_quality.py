@@ -26,6 +26,10 @@ Pins issue #58's live-vs-paper slippage series (SPEC §17.4):
   cost-side `OVERSTATE_COST` (ceiling) throughout, over an empty record set it
   returns the existing `cohorts.UNDEFINED` sentinel (empty-but-valid, never an
   error) -- mirroring `traded_vs_skipped_brier_delta`'s empty-cohort handling.
+- PR #199 review fix: a non-empty record set whose modeled-cost sum is
+  exactly `0` must raise a documented `ValueError` (mirroring
+  `calibration_slope`/`calibration_intercept`'s zero-variance guard), not the
+  bare `ZeroDivisionError` `divide()` currently raises unhandled.
 
 ASSUMPTION this file pins (the architecture plan gives `compare_fill_to_model`'s
 signature as `compare_fill_to_model(fill, book_levels, fee_model, *,
@@ -331,6 +335,40 @@ def test_live_slippage_ratio_empty_records_is_undefined() -> None:
     ratio = live_slippage_ratio(())
 
     assert ratio is cohorts.UNDEFINED
+
+
+def test_live_slippage_ratio_zero_modeled_cost_sum_raises_value_error() -> None:
+    """A non-empty record set whose modeled-cost sum is exactly `0` must raise a
+    clear, documented `ValueError` -- mirroring `calibration_slope` /
+    `calibration_intercept`'s zero-variance guard (`test_metrics.py`) -- rather
+    than letting `divide`'s bare `ZeroDivisionError` escape uncaught.
+
+    Today `live_slippage_ratio` has no zero-modeled-cost guard at all: it
+    passes `modeled_sum == 0` straight into `divide(...)`, which raises
+    `ZeroDivisionError` (not `ValueError`), so this currently fails -- the
+    unhandled `ZeroDivisionError` propagates instead of the expected
+    `ValueError`.
+    """
+    from windbreak.evaluation.execution_quality import (
+        ExecutionQualityRecord,
+        live_slippage_ratio,
+    )
+
+    records = (
+        ExecutionQualityRecord(
+            fill_id="F-zero-model",
+            market_ticker="MKT-ZERO",
+            side="YES",
+            filled_centis=100,
+            actual_cost_micros=1_000_000,
+            modeled_cost_micros=0,
+            model_version=_PFM_VERSION,
+            created_sequence=1,
+        ),
+    )
+
+    with pytest.raises(ValueError, match=r"(?i)modeled"):
+        live_slippage_ratio(records)
 
 
 def test_live_slippage_ratio_rolling_window_truncation_is_observable() -> None:
