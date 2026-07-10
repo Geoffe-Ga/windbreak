@@ -29,12 +29,10 @@ import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-import pytest
-
 from windbreak.main import ShutdownState, _install_signal_handlers, run_loop
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    import pytest
 
 
 @dataclass
@@ -93,24 +91,6 @@ class _SignalOnBeatEvent(threading.Event):
             self._state.reason = self._reason
             self.set()
         return self.is_set()
-
-
-@pytest.fixture
-def restore_signal_handlers() -> Iterator[None]:
-    """Save and restore SIGINT/SIGTERM handlers around a test.
-
-    `_install_signal_handlers` mutates process-global signal
-    dispositions; without this fixture a failing assertion could leave
-    later tests (or the pytest process itself) with a hijacked SIGINT
-    handler.
-    """
-    original_sigint = signal.getsignal(signal.SIGINT)
-    original_sigterm = signal.getsignal(signal.SIGTERM)
-    try:
-        yield
-    finally:
-        signal.signal(signal.SIGINT, original_sigint)
-        signal.signal(signal.SIGTERM, original_sigterm)
 
 
 def test_run_loop_emits_seq_1_through_3_then_max_beats_shutdown(
@@ -199,7 +179,6 @@ def test_run_loop_with_preset_stop_event_emits_zero_beats(
 
 def test_run_loop_reports_signal_name_in_shutdown_line(
     caplog: pytest.LogCaptureFixture,
-    restore_signal_handlers: None,
 ) -> None:
     """A signal-triggered shutdown logs the specific signal name.
 
@@ -263,9 +242,7 @@ def test_run_loop_calls_stop_event_wait_with_exact_interval_seconds() -> None:
     assert all(timeout == 2.5 for timeout in fake_event.wait_calls)
 
 
-def test_install_signal_handlers_sigint_sets_event_and_records_reason(
-    restore_signal_handlers: None,
-) -> None:
+def test_install_signal_handlers_sigint_sets_event_and_records_reason() -> None:
     """The installed SIGINT handler sets the event and reason="SIGINT".
 
     Invoked directly as `handler(signum, frame)` -- no real signal is
@@ -282,9 +259,7 @@ def test_install_signal_handlers_sigint_sets_event_and_records_reason(
     assert state.reason == "SIGINT"
 
 
-def test_install_signal_handlers_sigterm_sets_event_and_records_reason(
-    restore_signal_handlers: None,
-) -> None:
+def test_install_signal_handlers_sigterm_sets_event_and_records_reason() -> None:
     """The installed SIGTERM handler sets the event and reason="SIGTERM"."""
     state = _ShutdownState(stop_event=threading.Event())
 

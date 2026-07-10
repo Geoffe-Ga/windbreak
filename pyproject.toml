@@ -63,6 +63,8 @@ addopts = [
     "--cov-report=html",
     "--cov-report=xml",
     "--cov-fail-under=90",
+    "-p",
+    "pytester",
 ]
 markers = [
     "chaos: fault-injection chaos suite over the Order Gateway (SPEC §11.5); also selected standalone by the CI chaos job",
