@@ -69,7 +69,7 @@ See [`plans/SPEC_v3.md`](plans/SPEC_v3.md) for the full specification: threat mo
 Operator-facing documentation lives at the repo root (SPEC §19):
 
 - [`SECURITY.md`](SECURITY.md) — credential boundaries, the preflight checklist, egress allowlist, supply chain.
-- [`RUNBOOK.md`](RUNBOOK.md) — numbered operator procedures: start/stop, kill/re-arm/ack, drills, preflight, rebuild.
+- [`RUNBOOK.md`](RUNBOOK.md) — numbered operator procedures: start/stop, kill/re-arm/ack, drills, preflight, rebuild, anchor/verify.
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — the four-process topology, order-flow path, and the import-boundary rule.
 - [`ACCOUNTING.md`](ACCOUNTING.md) — the fixed-point unit types, conservative rounding, and the floor formula.
 - [`EVALUATION.md`](EVALUATION.md) — the three evaluation tracks, baselines, bootstrap, and pre-registration.

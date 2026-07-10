@@ -8,6 +8,12 @@ predecessor so :meth:`SqliteLedgerStore.verify_chain` can detect any
 single-column corruption. :func:`rebuild` folds a verified ledger into
 derived read models.
 
+Head-hash anchoring (issue #75) closes the one gap ``verify_chain`` cannot:
+:func:`anchor_head` records the chain head to an append-only anchor file and
+:func:`verify_anchors` flags any live chain that a tail rewrite has moved away
+from its anchors (:class:`AnchorMismatchError`), failing closed on a missing or
+malformed anchor file (:class:`AnchorFormatError`).
+
 The Order Gateway / crash-recovery event vocabulary (issue #38-#40) lives here
 too, so a persisted envelope can be reconstructed from :data:`EVENT_TYPES`
 regardless of which package produced it: :class:`OrderTransitionLedgered`,
@@ -27,6 +33,16 @@ Example:
 
 from __future__ import annotations
 
+from windbreak.ledger.anchor import (
+    AnchorFormatError,
+    AnchorMismatchError,
+    AnchorRecord,
+    anchor_command,
+    anchor_head,
+    read_anchors,
+    verify_anchors,
+    verify_command,
+)
 from windbreak.ledger.events import (
     EVENT_TYPES,
     GENESIS_PREV_HASH,
@@ -51,6 +67,7 @@ from windbreak.ledger.events import (
 )
 from windbreak.ledger.rebuild import rebuild, rebuild_command
 from windbreak.ledger.store import (
+    ChainHead,
     ChainIntegrityError,
     LedgerRecord,
     LedgerStore,
@@ -62,6 +79,10 @@ __all__ = [
     "EVENT_TYPES",
     "GENESIS_PREV_HASH",
     "AlertEmitted",
+    "AnchorFormatError",
+    "AnchorMismatchError",
+    "AnchorRecord",
+    "ChainHead",
     "ChainIntegrityError",
     "ConfigLoaded",
     "EquitySampled",
@@ -82,8 +103,13 @@ __all__ = [
     "SelectorDecisionRecorded",
     "SqliteLedgerStore",
     "SubmissionRefused",
+    "anchor_command",
+    "anchor_head",
     "canonical_json",
     "compute_event_hash",
+    "read_anchors",
     "rebuild",
     "rebuild_command",
+    "verify_anchors",
+    "verify_command",
 ]

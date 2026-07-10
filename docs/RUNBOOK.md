@@ -203,6 +203,39 @@ This writes (or overwrites) six files into `--output-dir`:
 chain fails closed with a nonzero exit code and the offending sequence number
 on stderr, rather than silently emitting a plausible-but-wrong projection.
 
+### Anchoring and verifying against tail-rewrite tampering (issue #75)
+
+`verify_chain`/`rebuild` prove the ledger is *internally* consistent, but
+cannot distinguish a legitimately short chain from one whose tail a writer
+with raw database access truncated and re-chained -- both verify cleanly.
+Head-hash anchoring closes that gap: `windbreak anchor` appends the chain's
+current head `(sequence_number, event_hash)` to an append-only, JSON-lines
+anchor file, and `windbreak verify` independently checks the live chain
+against every anchor recorded so far.
+
+```bash
+windbreak anchor --ledger-path /path/to/state/ledger.db --anchor-path /path/to/anchors/ledger.anchors.jsonl
+windbreak verify --ledger-path /path/to/state/ledger.db --anchor-path /path/to/anchors/ledger.anchors.jsonl
+```
+
+Both verify the hash chain first (a corrupted chain fails closed with the
+offending sequence number, exactly like `rebuild`); `windbreak anchor` is a
+silent no-op against an empty ledger, and never anchors a broken chain.
+`windbreak verify` additionally fails closed if the anchor file is missing,
+empty, or holds a malformed line, and reports the first anchored position
+whose live hash no longer matches -- or has vanished entirely -- as a
+tail-rewrite mismatch on stderr.
+
+**Trust boundary.** The anchor file only relocates the trust root; it does
+not eliminate it. The guarantee holds only while the anchor file is
+protected from whoever can write to the ledger database -- a writer with
+access to *both* can truncate the chain, re-chain a forged tail, and append a
+fresh anchor pinning the forged head, and both commands would pass. Put the
+anchor file on a separately-permissioned volume, an append-only/write-once
+medium, or a remote/off-host sink the ledger writer cannot reach; anchoring
+next to the ledger under the same principal only catches accidental
+corruption, not a determined local attacker.
+
 ### Weekly reports
 
 Each PAPER tick calls `windbreak.reports.weekly.maybe_write_weekly`, which
