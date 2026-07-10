@@ -70,3 +70,30 @@ def test_bootstrap_confidence_maps_to_ppm_int(spec16_path: Path) -> None:
     assert cfg.evaluation.bootstrap_confidence_ppm == 950000
     assert isinstance(cfg.evaluation.bootstrap_confidence_ppm, int)
     assert not isinstance(cfg.evaluation.bootstrap_confidence_ppm, bool)
+
+
+def test_default_config_dashboard_port_is_8080() -> None:
+    """`WindbreakConfig().dashboard.port` defaults to 8080 (issue #79).
+
+    Matches the reserved `127.0.0.1:8080` compose publish (SPEC §14: the
+    dashboard's host is never configurable, only its port). `DashboardConfig`
+    does not exist yet, so this fails with `ImportError` at the local import
+    below -- scoped to this one test so every other test in this file keeps
+    collecting and passing.
+    """
+    from windbreak.config.schema import DashboardConfig
+
+    cfg = WindbreakConfig()
+
+    assert isinstance(cfg.dashboard, DashboardConfig)
+    assert cfg.dashboard.port == 8080
+
+
+def test_dashboard_config_is_immutable() -> None:
+    """`DashboardConfig`, like every other config section, is frozen."""
+    from windbreak.config.schema import DashboardConfig
+
+    section = DashboardConfig()
+
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        section.port = 1

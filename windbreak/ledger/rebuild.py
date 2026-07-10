@@ -121,6 +121,27 @@ def _mode_projection(record: LedgerRecord) -> dict[str, object]:
     }
 
 
+def mode_history_read_model(records: list[LedgerRecord]) -> list[dict[str, object]]:
+    """Project every ``ModeHeartbeat`` row, in ledger order, into its read model.
+
+    Wraps the private :func:`_mode_projection` the same way
+    :func:`equity_curve_read_model` wraps :func:`_gateway_projection`, so the
+    dashboard's ledger-backed status source (issue #79) and ``windbreak
+    rebuild`` fold the mode history identically.
+
+    Args:
+        records: The verified ledger records, in sequence order.
+
+    Returns:
+        One ``{seq, created_at, mode, beat}`` entry per ``ModeHeartbeat`` record.
+    """
+    return [
+        _mode_projection(record)
+        for record in records
+        if record.event_type == _MODE_HEARTBEAT
+    ]
+
+
 def _gateway_projection(record: LedgerRecord) -> dict[str, object]:
     """Project a gateway/recovery record into its read-model entry.
 
@@ -311,11 +332,7 @@ def rebuild(ledger_path: Path, output_dir: Path) -> None:
         for record in records
         if record.event_type == _CONFIG_LOADED
     ]
-    mode_history = [
-        _mode_projection(record)
-        for record in records
-        if record.event_type == _MODE_HEARTBEAT
-    ]
+    mode_history = mode_history_read_model(records)
     gateway_events = [
         _gateway_projection(record)
         for record in records

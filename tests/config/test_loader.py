@@ -323,3 +323,48 @@ def test_invalid_utf8_file_raises_config_error(tmp_path: Path) -> None:
 
     with pytest.raises(ConfigError):
         load_config(bad_path)
+
+
+def test_dashboard_port_loads_from_yaml(
+    tmp_path: Path, write_config: Callable[[Path, dict[str, Any]], Path]
+) -> None:
+    """YAML `dashboard: {port: 9090}` loads to `config.dashboard.port == 9090`.
+
+    The `dashboard` schema field does not exist yet, so today this fails
+    closed with `ConfigError: unknown configuration key(s): dashboard` --
+    the top-level `dashboard` section itself is unrecognized -- rather than
+    successfully loading 9090 (issue #79).
+    """
+    config_path = write_config(tmp_path, {"dashboard": {"port": 9090}})
+
+    cfg = load_config(config_path)
+
+    assert cfg.dashboard.port == 9090
+
+
+def test_dashboard_host_key_is_unknown_and_fatal(
+    tmp_path: Path, write_config: Callable[[Path, dict[str, Any]], Path]
+) -> None:
+    """`dashboard: {host: ...}` is an unknown key, naming `dashboard.host`.
+
+    The dashboard's bind host is never configurable (SPEC §14: loopback-only);
+    this unknown-key rejection is the structural guarantee that pins it. Today
+    the loader doesn't even recognize `dashboard` as a valid top-level section,
+    so the raised `ConfigError` names the bare `dashboard` key (not the nested
+    `dashboard.host` path this test expects) -- a legitimate RED mismatch, not
+    a typo (issue #79).
+    """
+    config_path = write_config(tmp_path, {"dashboard": {"host": "0.0.0.0"}})
+
+    with pytest.raises(ConfigError, match=r"dashboard\.host"):
+        load_config(config_path)
+
+
+def test_dashboard_non_int_port_is_a_config_error(
+    tmp_path: Path, write_config: Callable[[Path, dict[str, Any]], Path]
+) -> None:
+    """A non-int `dashboard.port` value is rejected, naming `dashboard.port`."""
+    config_path = write_config(tmp_path, {"dashboard": {"port": "not-an-int"}})
+
+    with pytest.raises(ConfigError, match=r"dashboard\.port"):
+        load_config(config_path)

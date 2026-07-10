@@ -18,7 +18,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from windbreak.alerts import AlertDispatcher, AlertType, LoggingLedgerWriter, cli_token
 from windbreak.config import (
@@ -42,10 +42,12 @@ from windbreak.riskkernel.ack_flow import ACKS_DIRNAME
 from windbreak.riskkernel.kill import KILL_FILENAME, REARM_FILENAME
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    import http.server
+    from collections.abc import Callable, Mapping, Sequence
     from types import FrameType
 
     from windbreak.config import ConfigLoadEvent, WindbreakConfig
+    from windbreak.dashboard.app import DashboardStatus
 
 #: Operating mode reported in every heartbeat line. Matches the RESEARCH state
 #: of the SPEC mode machine; windbreak ships research-only for now.
@@ -61,6 +63,20 @@ PROCESS_CHOICES = ("pipeline", "riskkernel", "order_gateway", "dashboard")
 
 #: Default process represented when ``--process`` is omitted.
 _DEFAULT_PROCESS = "pipeline"
+
+#: Environment variable the loopback dashboard's bearer token is minted from
+#: (issue #79). Never sourced from config: config is ledgered, so a secret held
+#: there would leak into the hash chain; the token lives only in the process
+#: environment.
+DASHBOARD_AUTH_ENV_VAR = "WINDBREAK_DASHBOARD_TOKEN"
+
+#: The ``component`` label stamped on the dashboard process's serve and shutdown
+#: log lines, matching its ``--process dashboard`` token.
+_DASHBOARD_COMPONENT = "dashboard"
+
+#: Bounded join timeout, in seconds, for the dashboard's serving thread on
+#: shutdown, so a wedged thread can never hang the process indefinitely.
+_DASHBOARD_THREAD_JOIN_TIMEOUT_SECONDS = 5.0
 
 #: Seconds between heartbeats when ``--heartbeat-interval`` is omitted.
 _DEFAULT_HEARTBEAT_INTERVAL = 5.0
@@ -938,39 +954,187 @@ def _ledger_config_loads(
         store.close()
 
 
-def _run_heartbeat(args: argparse.Namespace) -> int:
-    """Load the requested config, log it, then drive the heartbeat loop.
+def _load_dashboard_token(environ: Mapping[str, str] | None = None) -> str:
+    """Read the dashboard's bearer token from the environment, fail-closed.
 
-    Structured logging is already installed by :func:`main`, so the config
-    diagnostics emitted here (the ``config loaded`` line, or a ``FATAL``
-    critical on a bad ``--config``) are JSON records like every other log
-    line -- the ``--config`` loader (issue #11) and the JSON logging pipeline
-    (issue #14) composed into one flow. The config is first loaded through an
-    in-memory recorder so a bad ``--config`` fails closed *before* any ledger
-    file is opened; only after the successful load does a supplied
-    ``--ledger-path`` get the captured ``ConfigLoaded`` event(s) persisted to
-    the real hash-chained ledger (issue #74) -- as the first records, before
-    any PAPER-loop events.
+    Reads :data:`DASHBOARD_AUTH_ENV_VAR` from ``environ`` (defaulting to
+    :data:`os.environ`), mirroring
+    :meth:`windbreak.riskkernel.signing.SigningKeyHandle.from_env`: a missing
+    *or* blank value is rejected the same way -- a blank token can never be
+    presented, so it is a misconfiguration, not a usable credential. The token
+    is sourced only from the environment, never from the ledgered config.
 
     Args:
-        args: Parsed ``run`` arguments carrying ``config``, ``process``,
-            ``heartbeat_interval``, ``max_beats``, ``ledger_path``, and
-            ``snapshot_fixture_dir``. The loaded config and the ``--process``
-            component compose here: the config is loaded and logged, its load
-            is ledgered when ``--ledger-path`` is given, then the heartbeat
-            loop runs stamped with that component. When
-            ``--snapshot-fixture-dir`` is given, a per-beat snapshot hook is
-            wired in alongside.
+        environ: The environment mapping to read from. Defaults to
+            :data:`os.environ`.
 
     Returns:
-        The process exit code (0 on success, 1 on a fatal config error).
+        The non-empty bearer token.
+
+    Raises:
+        ValueError: If the variable is absent or an empty string.
+    """
+    source = os.environ if environ is None else environ
+    token = source.get(DASHBOARD_AUTH_ENV_VAR)
+    if not token:
+        raise ValueError(
+            f"missing or blank environment variable {DASHBOARD_AUTH_ENV_VAR}"
+        )
+    return token
+
+
+def _build_dashboard_status_source(
+    ledger_path: Path | None,
+) -> Callable[[], DashboardStatus]:
+    """Build the dashboard's zero-arg status source (issue #79).
+
+    With a ``ledger_path`` the returned source opens the ledger fresh on every
+    call, verifies its hash chain (fail-closed, mirroring
+    :func:`windbreak.dashboard.views.build_ledger_read_models_source`), folds the
+    ``ModeHeartbeat`` rows via
+    :func:`windbreak.ledger.rebuild.mode_history_read_model`, and reports the
+    latest row's mode and timestamp -- or the default RESEARCH / no-heartbeat
+    status when the history is empty. With ``None`` it always yields that
+    default. The dashboard/ledger imports are local so the RESEARCH heartbeat
+    path never imports them.
+
+    Args:
+        ledger_path: Path to the SQLite ledger database, or ``None`` to serve
+            the static RESEARCH / no-heartbeat default.
+
+    Returns:
+        A zero-arg callable suitable for
+        :func:`windbreak.dashboard.app.create_server`'s ``status_source``.
+    """
+    from windbreak.dashboard.app import DashboardStatus
+    from windbreak.ledger.rebuild import mode_history_read_model
+    from windbreak.ledger.store import SqliteLedgerStore
+
+    def _default_source() -> DashboardStatus:
+        """Report the static RESEARCH / no-heartbeat status."""
+        return DashboardStatus(mode=MODE_RESEARCH, last_heartbeat=None)
+
+    if ledger_path is None:
+        return _default_source
+
+    def _ledger_source() -> DashboardStatus:
+        """Fold the verified ledger's mode history into the latest status."""
+        store = SqliteLedgerStore(ledger_path)
+        try:
+            store.verify_chain()
+            records = store.read_all()
+        finally:
+            store.close()
+        rows = mode_history_read_model(records)
+        if not rows:
+            return _default_source()
+        last_row = rows[-1]
+        return DashboardStatus(
+            mode=cast("str", last_row["mode"]),
+            last_heartbeat=cast("str", last_row["created_at"]),
+        )
+
+    return _ledger_source
+
+
+def _build_dashboard_server(
+    args: argparse.Namespace,
+    config: WindbreakConfig,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> http.server.ThreadingHTTPServer:
+    """Build the loopback dashboard server from parsed args and config (#79).
+
+    Mints the bearer token from the environment, wires the ledger-backed status
+    and read-model sources when ``--ledger-path`` is given (else the static
+    defaults), and binds the configured ``dashboard.port`` on the hardcoded
+    loopback host. The dashboard imports are local so the RESEARCH heartbeat
+    path never imports them.
+
+    Args:
+        args: Parsed ``run`` arguments carrying ``ledger_path``.
+        config: The loaded configuration whose ``dashboard.port`` is bound.
+        environ: The environment mapping the token is read from. Defaults to
+            :data:`os.environ`.
+
+    Returns:
+        A loopback-bound :class:`http.server.ThreadingHTTPServer` ready to serve.
+
+    Raises:
+        ValueError: If the token environment variable is absent or blank.
+    """
+    from windbreak.dashboard.app import create_server
+    from windbreak.dashboard.views import build_ledger_read_models_source
+
+    token = _load_dashboard_token(environ)
+    read_models_source = (
+        build_ledger_read_models_source(args.ledger_path)
+        if args.ledger_path is not None
+        else None
+    )
+    return create_server(
+        token=token,
+        status_source=_build_dashboard_status_source(args.ledger_path),
+        port=config.dashboard.port,
+        read_models_source=read_models_source,
+    )
+
+
+def _serve_until_shutdown(
+    server: http.server.ThreadingHTTPServer, state: ShutdownState
+) -> None:
+    """Serve the dashboard on a daemon thread until a shutdown is requested.
+
+    ``serve_forever`` runs on a daemon thread while this call waits on
+    ``state.stop_event``; a signal handler (never the serving thread) sets that
+    event, at which point the server is shut down, its listening socket closed,
+    and the serving thread joined with a bounded timeout so a wedged thread can
+    never hang the process. The shutdown reason is logged exactly like
+    :func:`run_loop`'s shutdown line, stamped with the dashboard component.
+
+    Args:
+        server: The dashboard server to serve and then shut down.
+        state: Shared shutdown state whose ``stop_event`` gates the serve and
+            whose ``reason`` (a signal name, if any) is logged on shutdown.
+    """
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    state.stop_event.wait()
+    reason = state.reason if state.reason is not None else _REASON_SIGNAL
+    server.shutdown()
+    server.server_close()
+    thread.join(timeout=_DASHBOARD_THREAD_JOIN_TIMEOUT_SECONDS)
+    _LOGGER.info(
+        "shutdown reason=%s", reason, extra={"component": _DASHBOARD_COMPONENT}
+    )
+
+
+def _load_and_ledger_config(args: argparse.Namespace) -> WindbreakConfig | None:
+    """Load the requested config, log it, and ledger its load events.
+
+    The config-load front half shared by :func:`_run_heartbeat` and
+    :func:`_run_dashboard`. Structured logging is already installed by
+    :func:`main`, so the diagnostics here are JSON records like every other log
+    line. The config is first loaded through an in-memory recorder so a bad
+    ``--config`` fails closed *before* any ledger file is opened; only after the
+    successful load does a supplied ``--ledger-path`` get the captured
+    ``ConfigLoaded`` event(s) persisted to the real hash-chained ledger (issue
+    #74) -- as the first records, before any PAPER-loop events.
+
+    Args:
+        args: Parsed ``run`` arguments carrying ``config``, ``process``, and
+            ``ledger_path``.
+
+    Returns:
+        The loaded configuration, or ``None`` (after logging a ``FATAL``
+        critical) on a fatal ``--config`` error.
     """
     recorder = InMemoryConfigEventRecorder()
     try:
         config = _load_configured(args, recorder)
     except ConfigError as exc:
         _LOGGER.critical("FATAL: %s", exc)
-        return 1
+        return None
     source = str(args.config) if args.config is not None else _DEFAULTS_SOURCE_LABEL
     _LOGGER.info(
         "config loaded source=%s mode_ceiling=%s hash=%s",
@@ -980,6 +1144,29 @@ def _run_heartbeat(args: argparse.Namespace) -> int:
     )
     if args.ledger_path is not None:
         _ledger_config_loads(args.ledger_path, recorder.events, args.process)
+    return config
+
+
+def _run_heartbeat(args: argparse.Namespace) -> int:
+    """Load the requested config, log it, then drive the heartbeat loop.
+
+    The ``--config`` loader (issue #11) and the JSON logging pipeline (issue
+    #14) compose here via :func:`_load_and_ledger_config`: the config is loaded,
+    logged, and (with ``--ledger-path``) ledgered, then the heartbeat loop runs
+    stamped with the ``--process`` component. When ``--snapshot-fixture-dir`` is
+    given, a per-beat snapshot hook is wired in alongside.
+
+    Args:
+        args: Parsed ``run`` arguments carrying ``config``, ``process``,
+            ``heartbeat_interval``, ``max_beats``, ``ledger_path``, and
+            ``snapshot_fixture_dir``.
+
+    Returns:
+        The process exit code (0 on success, 1 on a fatal config error).
+    """
+    config = _load_and_ledger_config(args)
+    if config is None:
+        return 1
     state = ShutdownState()
     _install_signal_handlers(state)
     on_beat = _resolve_on_beat(args, config)
@@ -994,6 +1181,78 @@ def _run_heartbeat(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_dashboard(args: argparse.Namespace) -> int:
+    """Serve the authenticated loopback dashboard until shutdown (issue #79).
+
+    Reuses :func:`_load_and_ledger_config`'s config-load front half, then builds
+    the dashboard server -- catching a missing/blank token or bad port as a
+    fatal ``ValueError`` -- installs the graceful-shutdown signal handlers, logs
+    the bound loopback address, and serves until SIGINT/SIGTERM. This is the
+    routing divergence from the RESEARCH heartbeat loop that every other
+    ``--process`` choice still runs (issue #15).
+
+    Args:
+        args: Parsed ``run`` arguments carrying ``config``, ``ledger_path``, and
+            ``process`` (always ``dashboard`` when routed here).
+
+    Returns:
+        The process exit code (0 on a clean shutdown, 1 on a fatal config or
+        token/port error).
+    """
+    config = _load_and_ledger_config(args)
+    if config is None:
+        return 1
+    try:
+        server = _build_dashboard_server(args, config)
+    except ValueError as exc:
+        _LOGGER.critical("FATAL: %s", exc)
+        return 1
+    state = ShutdownState()
+    _install_signal_handlers(state)
+    _LOGGER.info(
+        "dashboard serving on 127.0.0.1:%d",
+        server.server_address[1],
+        extra={"component": _DASHBOARD_COMPONENT},
+    )
+    _serve_until_shutdown(server, state)
+    return 0
+
+
+def _run_run_command(args: argparse.Namespace) -> int:
+    """Route the ``run`` command to its dashboard or heartbeat handler.
+
+    The ``dashboard`` process diverges to the loopback dashboard server (issue
+    #79); every other ``--process`` choice runs the RESEARCH heartbeat loop
+    (issue #15).
+
+    Args:
+        args: Parsed ``run`` arguments carrying ``process``.
+
+    Returns:
+        The selected handler's process exit code.
+    """
+    if args.process == "dashboard":
+        return _run_dashboard(args)
+    return _run_heartbeat(args)
+
+
+#: Maps each subcommand token to the handler that runs it. ``run`` fans out to
+#: its own router (dashboard vs. heartbeat); every handler has signature
+#: ``(args) -> int`` and returns the process exit code.
+_COMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
+    "rebuild": rebuild_command,
+    "anchor": anchor_command,
+    "verify": verify_command,
+    "kill": _run_kill,
+    "ack": _run_ack,
+    "rearm": _run_rearm,
+    "alert-test": _run_alert_test,
+    "preflight": _run_preflight,
+    "drill": _run_drill,
+    "run": _run_run_command,
+}
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Parse arguments and run the requested windbreak command.
 
@@ -1005,25 +1264,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     """
     args = build_parser().parse_args(argv)
     configure_logging(level=logging.INFO)
-    if args.command == "rebuild":
-        return rebuild_command(args)
-    if args.command == "anchor":
-        return anchor_command(args)
-    if args.command == "verify":
-        return verify_command(args)
-    if args.command == "kill":
-        return _run_kill(args)
-    if args.command == "ack":
-        return _run_ack(args)
-    if args.command == "rearm":
-        return _run_rearm(args)
-    if args.command == "alert-test":
-        return _run_alert_test(args)
-    if args.command == "preflight":
-        return _run_preflight(args)
-    if args.command == "drill":
-        return _run_drill(args)
-    return _run_heartbeat(args)
+    return _COMMAND_HANDLERS[args.command](args)
 
 
 if __name__ == "__main__":

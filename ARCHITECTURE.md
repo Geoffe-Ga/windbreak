@@ -57,11 +57,15 @@ match its Python package name). Each invocation stamps its token as the
 Deployment section for how docker-compose and systemd run all four as
 genuinely separate services.
 
-**Known gap.** There is no `windbreak run --process dashboard` wiring yet that
-actually boots the HTTP dashboard server described below; today an operator
-starts it directly via the library entry point
-`windbreak.dashboard.app.create_server` (see `docs/RUNBOOK.md` for the exact
-snippet). The `dashboard` process token still just idles with heartbeats.
+`windbreak run --process dashboard` boots the loopback HTTP dashboard server
+described below (issue #79): it reads its bearer token from the
+`WINDBREAK_DASHBOARD_TOKEN` environment variable (never from config, which is
+ledgered and therefore not a place to hold a secret) and binds
+`config.dashboard.port` on the hardcoded loopback host `127.0.0.1` -- the host
+itself is never configurable (SPEC §14). Passing `--ledger-path` backs its
+status and read-model views with the same ledger `windbreak rebuild` projects;
+without it, `/` reports `RESEARCH` / `never` and every view renders its "no
+data yet" placeholder. See `docs/RUNBOOK.md` for the exact invocation.
 
 ## Credential boundaries (SPEC §5.2)
 

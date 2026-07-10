@@ -173,7 +173,17 @@ def test_main_run_default_process_stamps_pipeline_component_in_json(
     assert heartbeat_payload["component"] == "pipeline"
 
 
-@pytest.mark.parametrize("process", PROCESS_CHOICES)
+# Issue #79: `dashboard` is deliberately excluded from this parametrization.
+# `run --process dashboard` no longer runs the bare heartbeat loop -- it now
+# requires WINDBREAK_DASHBOARD_TOKEN and boots an HTTP server (see
+# tests/test_dashboard_process.py), so it can no longer share this
+# heartbeat/shutdown-log assertion with the other three processes.
+_HEARTBEAT_PROCESS_CHOICES = tuple(
+    process for process in PROCESS_CHOICES if process != "dashboard"
+)
+
+
+@pytest.mark.parametrize("process", _HEARTBEAT_PROCESS_CHOICES)
 def test_main_run_with_process_flag_stamps_matching_component_in_json(
     process: str, capsys: pytest.CaptureFixture[str]
 ) -> None:

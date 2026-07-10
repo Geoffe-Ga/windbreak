@@ -26,6 +26,11 @@ component outside the Order Gateway ever holds a trade-capable key.
 | Process C — Order Gateway | trade-only | approval-token **verification** key |
 | Process D — Dashboard | none | dashboard bearer-auth token |
 
+The dashboard's bearer-auth token is sourced only from the
+`WINDBREAK_DASHBOARD_TOKEN` environment variable — never from config (which is
+ledgered) or the ledger itself; a missing or blank value fails the process
+closed.
+
 This boundary is enforced structurally, not just documented: an AST-based
 architectural test scans the whole tree and fails the build if any package
 outside `windbreak.riskkernel` imports the signing-key handle, or if any

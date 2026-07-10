@@ -243,6 +243,24 @@ class AlertsConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class DashboardConfig:
+    """The loopback dashboard surface's operator-tunable settings (issue #79).
+
+    Backs ``windbreak run --process dashboard`` (SPEC §14). Only the TCP
+    ``port`` is configurable: the bind host is *never* a knob -- the dashboard
+    accepts no public inbound traffic and always binds ``127.0.0.1`` -- so a
+    ``dashboard.host`` key is an unknown key and fatal, the structural guarantee
+    that pins loopback-only binding.
+
+    Attributes:
+        port: The loopback TCP port the dashboard serves on. Defaults to
+            ``8080``, matching the reserved ``127.0.0.1:8080`` compose publish.
+    """
+
+    port: int = 8080
+
+
+@dataclass(frozen=True, slots=True)
 class WindbreakConfig:
     """The complete, immutable windbreak configuration (SPEC §16 root).
 
@@ -259,3 +277,4 @@ class WindbreakConfig:
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
     ops: OpsConfig = field(default_factory=OpsConfig)
     alerts: AlertsConfig = field(default_factory=AlertsConfig)
+    dashboard: DashboardConfig = field(default_factory=DashboardConfig)

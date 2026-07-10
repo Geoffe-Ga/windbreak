@@ -155,11 +155,28 @@ before invoking the granter. It is enabled only when both `ack_granter` and
 `pending_acks_source` are passed to `create_server`; the default build exposes
 neither route.
 
-There is no `windbreak run` CLI wiring for the dashboard process yet --
-`create_server` is a library entry point an operator boots directly. To serve
-it against a live PAPER ledger:
+`windbreak run --process dashboard` is the primary operator path (issue #79).
+The bearer token is read only from the `WINDBREAK_DASHBOARD_TOKEN` environment
+variable -- never from config, since config is ledgered and a secret would
+leak into the hash chain -- and a missing or blank value fails closed with a
+`FATAL` log and exit code 1. The listen port comes from `config.dashboard.port`
+(default `8080`); the host is always the loopback `127.0.0.1` and is not
+configurable. Passing `--ledger-path` wires the status line and every
+read-model view to that ledger (the same one `windbreak rebuild` projects);
+omit it and `/` reports `RESEARCH` / `never` with every view rendering its "no
+data yet" placeholder:
+
+```bash
+export WINDBREAK_DASHBOARD_TOKEN=replace-with-a-real-secret
+windbreak run --process dashboard --ledger-path /path/to/state/ledger.db
+```
+
+Embedding the server directly in a library caller -- bypassing the CLI
+entirely -- is also supported via `create_server`:
 
 ```python
+from pathlib import Path
+
 from windbreak.dashboard.app import create_server
 from windbreak.dashboard.views import build_ledger_read_models_source
 
@@ -254,8 +271,9 @@ pass.
   fills yet -- expect vetoes, not fills, in the ledger and dashboard.
 - `windbreak kill`/`windbreak rearm` do not stop or gate the PAPER loop today
   (`kill_integration=None`); use process signals to stop the loop.
-- There is no `windbreak run --process dashboard` wiring yet that actually
-  boots the HTTP dashboard server; operators start it directly via
-  `windbreak.dashboard.app.create_server`.
+- `windbreak run --process dashboard` boots the HTTP dashboard server directly
+  (issue #79); its bearer token comes only from `WINDBREAK_DASHBOARD_TOKEN`
+  and its port only from `config.dashboard.port` -- there is no `--port` or
+  `--token` CLI flag.
 - Weekly reports are structural stubs (`No data yet.` bodies); the real
   report content is a later pass.
