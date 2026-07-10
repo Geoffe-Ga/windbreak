@@ -675,3 +675,96 @@ def test_monitor_live_divergence_slippage_ratio_exactly_at_limit_does_not_breach
         assert trigger_calls == []
     finally:
         store.close()
+
+
+# ---------------------------------------------------------------------------
+# 6. Zero-modeled-cost window: the monitor must always sample, never raise
+#    (PR #199 round-3 review finding).
+# ---------------------------------------------------------------------------
+
+
+def test_monitor_zero_modeled_cost_window_samples_undefined_and_never_raises(
+    tmp_path: Path,
+) -> None:
+    """A windowed execution record set that is non-empty but sums to
+    `modeled_cost_micros == 0` must still be sampled -- never raise -- per this
+    module's documented "always samples, regardless of outcome" contract.
+
+    RED TODAY: `monitor_live_divergence` calls `_sample_divergence`, which
+    calls `specs["live_slippage_ratio"].compute(inputs)` ->
+    `_compute_live_slippage_ratio` (`registry.py`) ->
+    `execution_quality.live_slippage_ratio(records)`. That function raises a
+    bare `ValueError` when `records` is non-empty but its modeled-cost sum is
+    exactly `0` (the round-1 zero-modeled-cost guard,
+    `execution_quality.py::live_slippage_ratio`). Unlike
+    `_compute_live_brier_degradation`, which narrowly catches
+    `cohorts.EmptyCohortError` and degrades to `UNDEFINED`,
+    `_compute_live_slippage_ratio` has NO corresponding catch: the `ValueError`
+    propagates straight out of `_sample_divergence`, out of
+    `monitor_live_divergence`, BEFORE the single `LiveDivergenceSampled` event
+    is ever appended. That contradicts the always-samples guarantee -- a
+    fail-closed gap in a risk-protection monitor. This test currently fails
+    with an uncaught `ValueError: modeled cost sum is zero; live slippage
+    ratio is undefined` instead of observing a lone, undefined-slippage
+    `LiveDivergenceSampled` event.
+
+    The fix (out of this test's scope) makes the registry adapter
+    `_compute_live_slippage_ratio` catch the zero-modeled-cost condition
+    narrowly (a dedicated `ValueError` subclass, mirroring
+    `cohorts.EmptyCohortError`) and degrade to `UNDEFINED`, exactly as
+    `_compute_live_brier_degradation` already does for `EmptyCohortError` --
+    the raw `live_slippage_ratio` function itself keeps raising for direct
+    callers (round-1 behavior preserved).
+    """
+    from windbreak.evaluation.execution_quality import ExecutionQualityRecord
+    from windbreak.evaluation.live_divergence import (
+        LiveDivergenceSampled,
+        monitor_live_divergence,
+    )
+
+    zero_modeled_record = ExecutionQualityRecord(
+        fill_id="F-zero-modeled",
+        market_ticker="MKT-EXEC",
+        side="YES",
+        filled_centis=100,
+        actual_cost_micros=1_000_000,
+        modeled_cost_micros=0,
+        model_version=_PFM_VERSION,
+        created_sequence=1,
+    )
+    inputs = EvaluationInputs(
+        forecasts=(),
+        resolutions={},
+        temporal=TemporalContext(deployment_sequence=0, resolution_sequences={}),
+        execution_records=(zero_modeled_record,),
+    )
+    plan = _built_plan()
+    store = _ledger_store(tmp_path)
+    alert_calls, alert_hook = _recording_alert_hook()
+    trigger_calls, fire_trigger = _recording_fire_trigger()
+    try:
+        monitor_live_divergence(
+            inputs,
+            plan=plan,
+            store=store,
+            alert=alert_hook,
+            fire_trigger=fire_trigger,
+            component="evaluation",
+        )
+
+        records = store.read_all()
+        sampled = [r for r in records if r.event_type == "LiveDivergenceSampled"]
+        breached = [r for r in records if r.event_type == "LiveDivergenceBreached"]
+        assert len(sampled) == 1
+        assert breached == []
+
+        envelope = json.loads(sampled[0].payload_json)
+        payload = envelope["data"]
+        assert payload["live_slippage_ratio_ppm"] == "UNDEFINED"
+
+        assert alert_calls == []
+        assert trigger_calls == []
+
+        assert LiveDivergenceSampled  # symbol exists; imported above
+    finally:
+        store.close()

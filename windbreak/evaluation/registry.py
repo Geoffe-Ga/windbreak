@@ -452,9 +452,19 @@ def _compute_live_slippage_ratio(inputs: EvaluationInputs) -> MetricValue:
         The rolling-window slippage ratio delegated to
         :func:`windbreak.evaluation.execution_quality.live_slippage_ratio`, or the
         :data:`~windbreak.evaluation.cohorts.UNDEFINED` sentinel when no execution
-        record exists (an ordinary early-deployment state).
+        record exists (an ordinary early-deployment state). A non-empty window
+        whose modeled-cost sum is ``0`` is likewise empty-but-valid and degrades
+        to the ``UNDEFINED`` sentinel, so the divergence monitor always samples
+        and never breaches on that degenerate window. The catch is scoped to
+        :class:`~windbreak.evaluation.execution_quality.ZeroModeledCostError`
+        alone, so any other invalid-input ``ValueError`` still propagates.
     """
-    return execution_quality.live_slippage_ratio(_windowed_execution_records(inputs))
+    try:
+        return execution_quality.live_slippage_ratio(
+            _windowed_execution_records(inputs)
+        )
+    except execution_quality.ZeroModeledCostError:
+        return cohorts.UNDEFINED
 
 
 def _compute_live_brier_degradation(inputs: EvaluationInputs) -> MetricValue:

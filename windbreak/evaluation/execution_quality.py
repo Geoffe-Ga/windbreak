@@ -194,6 +194,19 @@ def compare_fill_to_model(
     )
 
 
+class ZeroModeledCostError(ValueError):
+    """Raised when a non-empty window's modeled-cost sum is exactly ``0``.
+
+    That sum is :func:`live_slippage_ratio`'s denominator, so a zero leaves the
+    ratio undefined and the raw fold fails closed rather than dividing by zero.
+    Subclasses :class:`ValueError` so every existing ``ValueError`` handler (and
+    direct callers using ``pytest.raises(ValueError, ...)``) still catches it,
+    while adapters that must degrade this degenerate window to the
+    :data:`~windbreak.evaluation.cohorts.UNDEFINED` sentinel can catch it
+    narrowly without swallowing unrelated invalid-input ``ValueError``s.
+    """
+
+
 def live_slippage_ratio(
     records: Sequence[ExecutionQualityRecord],
 ) -> int | UndefinedBrier:
@@ -217,20 +230,23 @@ def live_slippage_ratio(
         for an empty record set.
 
     Raises:
-        ValueError: If ``records`` is non-empty but its modeled-cost sum is
-            exactly ``0`` -- the ratio's denominator, leaving the ratio
+        ZeroModeledCostError: If ``records`` is non-empty but its modeled-cost
+            sum is exactly ``0`` -- the ratio's denominator, leaving the ratio
             undefined. Fails closed with a clear message rather than letting
             ``divide``'s bare :class:`ZeroDivisionError` escape, mirroring
             ``calibration_slope`` / ``calibration_intercept``'s zero-variance
-            guard. (The empty-record set stays the ``UNDEFINED`` sentinel path
-            above.)
+            guard. Subclasses :class:`ValueError`, so direct callers catching
+            ``ValueError`` still fail closed. (The empty-record set stays the
+            ``UNDEFINED`` sentinel path above.)
     """
     if not records:
         return UNDEFINED
     actual_sum = sum(record.actual_cost_micros for record in records)
     modeled_sum = sum(record.modeled_cost_micros for record in records)
     if modeled_sum == 0:
-        raise ValueError("modeled cost sum is zero; live slippage ratio is undefined")
+        raise ZeroModeledCostError(
+            "modeled cost sum is zero; live slippage ratio is undefined"
+        )
     return divide(
         actual_sum * _PPM_SCALE,
         modeled_sum,
