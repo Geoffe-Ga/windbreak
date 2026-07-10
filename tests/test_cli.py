@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from windbreak.ledger.store import SqliteLedgerStore
 from windbreak.main import build_parser, main
 
 if TYPE_CHECKING:
@@ -338,16 +339,18 @@ def test_main_ack_subcommand_with_a_malformed_id_writes_no_file(
     assert not (tmp_path / "acks").exists()
 
 
-def test_main_run_with_only_ledger_path_flag_never_creates_a_ledger(
+def test_main_run_with_only_ledger_path_flag_ledgers_config_but_no_paper(
     tmp_path: Path,
 ) -> None:
     """Supplying only `--ledger-path` (not the other three PAPER flags) never
-    activates the PAPER loop: no ledger file is ever created, and the
-    RESEARCH heartbeat is unaffected.
+    activates the PAPER loop, but issue #74 wires config loading to the real
+    ledger regardless of PAPER activation: exactly one `ConfigLoaded` row is
+    appended, and none of the PAPER-loop event types appear.
 
     Uses the built-in `WindbreakConfig` default (`mode_ceiling: "paper"`, SPEC
-    §16) with no `--config` at all, so this pins that *flags alone* -- not
-    just the mode ceiling -- gate PAPER activation.
+    §16) with no `--config` at all, so this still pins the REAL invariant that
+    *flags alone* -- not just the mode ceiling -- gate PAPER activation, while
+    reflecting the new config-ledgering behavior `--ledger-path` alone now has.
     """
     ledger_path = tmp_path / "ledger.db"
 
@@ -364,4 +367,17 @@ def test_main_run_with_only_ledger_path_flag_never_creates_a_ledger(
     )
 
     assert exit_code == 0
-    assert not ledger_path.exists()
+    assert ledger_path.exists()
+    store = SqliteLedgerStore(ledger_path)
+    records = store.read_all()
+    store.close()
+    assert len(records) == 1
+    assert records[0].event_type == "ConfigLoaded"
+    assert {record.event_type for record in records}.isdisjoint(
+        {
+            "MarketSnapshotRecorded",
+            "EquitySampled",
+            "SelectorDecisionRecorded",
+            "ForecastCreated",
+        }
+    )

@@ -37,10 +37,15 @@ Three scenarios, per the issue's own test-writing brief:
    wiring `build_paper_deps` assembles -- not a production bypass, since the
    real Gateway still verifies the token's signature and the real exchange
    still fills the order.
-4. `test_tracer_invariant_research_ceiling_produces_zero_paper_events` -- with
+4. `test_tracer_invariant_research_ceiling_ledgers_only_config_loaded` -- with
    `mode_ceiling: research` (even with every PAPER flag supplied), `windbreak
-   run` never wires the PAPER loop at all: no ledger file is ever created,
-   and the RESEARCH heartbeat output is unaffected.
+   run` never wires the PAPER loop: the ledger at `--ledger-path` holds
+   exactly one `ConfigLoaded` record (issue #74's unconditional
+   config-load-appends-`ConfigLoaded` contract) and zero PAPER events, and
+   the RESEARCH heartbeat output is unaffected. The PAPER-gating invariant
+   itself -- RESEARCH ceiling never wires the PAPER loop -- is unchanged from
+   issue #48; only the superseded "no ledger file at all" proxy assertion is
+   corrected to match #74's ledger-on-every-config-load semantics.
 """
 
 from __future__ import annotations
@@ -54,6 +59,7 @@ from tests.integration.conftest import (
     read_event_type_payload_pairs,
 )
 from tests.order_gateway.conftest import issue_matching_token, make_intent
+from windbreak.ledger.store import SqliteLedgerStore
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -320,7 +326,7 @@ def test_fill_leg_via_doubled_approval_seam_reaches_a_terminal_gateway_state(
     assert matching[0]["quantity_centis"] == 50
 
 
-def test_tracer_invariant_research_ceiling_produces_zero_paper_events(
+def test_tracer_invariant_research_ceiling_ledgers_only_config_loaded(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
     books_dir: Path,
@@ -328,8 +334,13 @@ def test_tracer_invariant_research_ceiling_produces_zero_paper_events(
     report_dir: Path,
 ) -> None:
     """`mode_ceiling: research` never wires the PAPER loop, even with every
-    PAPER flag supplied: no ledger file is ever created and the RESEARCH
-    heartbeat output is byte-for-byte unaffected by the four new flags.
+    PAPER flag supplied: the RESEARCH heartbeat output is byte-for-byte
+    unaffected by the four extra flags, and the ledger at `--ledger-path`
+    holds exactly one `ConfigLoaded` record and zero PAPER events. Per issue
+    #74, a successful config load unconditionally appends `ConfigLoaded` to
+    the ledger regardless of whether the PAPER loop activates; the PAPER
+    loop itself still never wires under a RESEARCH ceiling (issue #48's
+    unchanged invariant), so no PAPER event type ever appears alongside it.
     """
     from windbreak.main import main
 
@@ -360,6 +371,14 @@ def test_tracer_invariant_research_ceiling_produces_zero_paper_events(
     captured = capsys.readouterr()
     assert exit_code == 0
     assert "seq=1" in captured.err
-    assert not ledger_path.exists(), (
-        "PAPER loop must never open a ledger under RESEARCH"
+    assert ledger_path.exists(), (
+        "issue #74: a successful config load must ledger ConfigLoaded "
+        "even under a RESEARCH ceiling"
+    )
+    store = SqliteLedgerStore(ledger_path)
+    records = store.read_all()
+    store.close()
+    assert {record.event_type for record in records} == {"ConfigLoaded"}, (
+        "PAPER loop must never wire under RESEARCH: zero PAPER events "
+        "may appear alongside the ledgered ConfigLoaded"
     )
