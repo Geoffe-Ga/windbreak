@@ -5,6 +5,11 @@ Pins the CLI-level contract: `rebuild` requires `--ledger-path` and
 and surfaces its exit code (0 clean, 1 on `ChainIntegrityError` with the
 offending `sequence_number=<n>` on stderr), and the pre-existing `run`
 subcommand's parsing is unaffected by this addition.
+
+Issue #76 adds the missing-ledger-path case: `rebuild_command` must map the
+library's `FileNotFoundError` (see `test_ledger_rebuild.py`) to exit code 1
+with operator-facing guidance on stderr, the same shape as the existing
+`ChainIntegrityError` handling below.
 """
 
 from __future__ import annotations
@@ -115,6 +120,38 @@ def test_main_rebuild_returns_one_on_tampered_ledger_and_reports_sequence_number
 
     assert exit_code == 1
     assert "sequence_number=1" in captured.err
+
+
+def test_main_rebuild_returns_one_on_missing_ledger_path_with_stderr_guidance(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`main` returns 1 and reports the missing path plus guidance (issue #76).
+
+    Today `rebuild()` never checks that `ledger_path` exists, so
+    `SqliteLedgerStore` silently creates an empty database there and `main`
+    returns 0 -- this pins the corrected contract: exit code 1, the missing
+    path echoed on stderr, and a stable "not found" guidance substring, with
+    no ledger file left behind by the failed attempt.
+    """
+    missing_ledger_path = tmp_path / "missing.db"
+    output_dir = tmp_path / "out"
+
+    exit_code = main(
+        [
+            "rebuild",
+            "--ledger-path",
+            str(missing_ledger_path),
+            "--output-dir",
+            str(output_dir),
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert str(missing_ledger_path) in captured.err
+    assert "not found" in captured.err
+    assert not missing_ledger_path.exists()
 
 
 def test_build_parser_run_subcommand_parsing_is_unchanged() -> None:

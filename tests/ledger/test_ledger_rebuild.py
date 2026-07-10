@@ -26,11 +26,21 @@ into `rebuild()` itself: today `rebuild()` never calls either one, so
 (empty-but-valid on an empty ledger) and hold exactly the
 `ExecutionQualityRecorded` / `LiveDivergenceSampled` rows, in ledger order,
 once `rebuild()` is wired up.
+
+Issue #76 pins that `rebuild()` fails loudly on a missing ledger path.
+`SqliteLedgerStore.__init__` opens its connection with `sqlite3.connect`,
+which *creates* the database file if it is absent -- so today `rebuild()` on
+a nonexistent `ledger_path` silently produces an empty, "clean" ledger and
+writes a full set of empty read models instead of erroring. The test below
+pins the corrected contract: `rebuild()` raises `FileNotFoundError` naming
+the missing path, and neither the ledger file nor any read model is created
+as a side effect of the failed attempt.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from typing import TYPE_CHECKING
 
@@ -540,3 +550,26 @@ def test_rebuild_on_tampered_ledger_raises_chain_integrity_error(
 
     with pytest.raises(ChainIntegrityError):
         rebuild(db_path, output_dir)
+
+
+def test_rebuild_on_missing_ledger_path_raises_file_not_found_error(
+    tmp_path: Path,
+) -> None:
+    """rebuild() on a nonexistent ledger_path fails loudly, not silently (issue #76).
+
+    `SqliteLedgerStore.__init__` opens `ledger_path` via `sqlite3.connect`,
+    which creates the file if it does not exist -- so without an explicit
+    existence check, `rebuild()` on a missing path today succeeds, silently
+    fabricating an empty ledger and a full set of empty read models. This
+    pins the corrected contract: a `FileNotFoundError` naming the missing
+    path, with neither the ledger file nor any read model created as a
+    side effect of the failed call.
+    """
+    missing_ledger_path = tmp_path / "missing.db"
+    output_dir = tmp_path / "out"
+
+    with pytest.raises(FileNotFoundError, match=re.escape(str(missing_ledger_path))):
+        rebuild(missing_ledger_path, output_dir)
+
+    assert not missing_ledger_path.exists()
+    assert not (output_dir / "config_versions.json").exists()
