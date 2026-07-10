@@ -165,16 +165,19 @@ from `PATH` rather than a hardcoded install path.
 
 **Dashboard**
 
-The dashboard server (`windbreak.dashboard.app`) binds `127.0.0.1` only — never
-a public interface — and every request must present a static bearer token
-(`Authorization: Bearer <token>`), serving a single read-only status page
-(mode + last heartbeat). At M0 this HTTP surface exists only as a library: the
-`dashboard` process still just idles with heartbeats, and the `127.0.0.1:8080`
-compose publish is a reserved placeholder — nothing binds it yet. The server is
-wired into the process (and its token and status source connected to their real
-backing: config, #11; ledger, #13) once those land. It is a **stub**: real
-views (positions, equity, calibration) and mutations (pause, kill, acknowledge,
-raise floor) arrive with later epics.
+`windbreak run --process dashboard` boots the dashboard server
+(`windbreak.dashboard.app`), which binds `127.0.0.1` only — never a public
+interface, and not configurable — on `config.dashboard.port` (default `8080`,
+matching the `127.0.0.1:8080` compose publish). Every request must present a
+bearer token (`Authorization: Bearer <token>`) read from the
+`WINDBREAK_DASHBOARD_TOKEN` environment variable — never from config, since
+config is ledgered and a secret there would leak into the hash chain; a
+missing or blank token exits the process with code 1. Pass `--ledger-path` to
+back the status line and read-model views (positions, equity, decisions, ...)
+with a live ledger; without it, `/` reports `RESEARCH` / `never` and every
+view renders its "no data yet" placeholder. Mutations (pause, kill,
+acknowledge, raise floor) beyond the existing `POST /ack` arrive with later
+epics.
 
 This is an M0 skeleton: the tracer `windbreak run` (no flags) still just idles
 in `RESEARCH` mode, emitting heartbeats.

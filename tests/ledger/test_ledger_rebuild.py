@@ -573,3 +573,34 @@ def test_rebuild_on_missing_ledger_path_raises_file_not_found_error(
 
     assert not missing_ledger_path.exists()
     assert not (output_dir / "config_versions.json").exists()
+
+
+def test_mode_history_read_model_projects_mode_heartbeats_in_ledger_order(
+    tmp_path: Path, deterministic_clock: Callable[[], datetime]
+) -> None:
+    """`mode_history_read_model` projects every `ModeHeartbeat`, in ledger order.
+
+    Issue #79 wires the dashboard's ledger-backed status source through a new
+    *public* `mode_history_read_model`, wrapping the existing private
+    `_mode_projection` the same way `equity_curve_read_model` etc. already
+    wrap `_gateway_projection`. It does not exist yet -- only `_mode_projection`
+    does -- so this fails with `ImportError` at the local import below, scoped
+    to this one test so the rest of this module keeps collecting and passing.
+    """
+    from windbreak.ledger.rebuild import mode_history_read_model
+
+    db_path = tmp_path / "ledger.db"
+    store = SqliteLedgerStore(db_path, now=deterministic_clock)
+    store.append(ConfigLoaded(component="pipeline", config_hash="hash-1", diff={}))
+    store.append(ModeHeartbeat(component="pipeline", mode="RESEARCH", beat=1))
+    store.append(ModeHeartbeat(component="pipeline", mode="PAPER", beat=2))
+    store.verify_chain()
+    records = store.read_all()
+    store.close()
+
+    rows = mode_history_read_model(records)
+
+    assert [row["seq"] for row in rows] == [2, 3]
+    assert [row["mode"] for row in rows] == ["RESEARCH", "PAPER"]
+    assert [row["beat"] for row in rows] == [1, 2]
+    assert all("created_at" in row for row in rows)
