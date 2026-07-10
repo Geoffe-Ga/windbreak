@@ -122,12 +122,16 @@ class KillRearmDrill(Drill):
         orders_before = len(exchange.get_open_orders())
         writer = InMemoryKernelLedgerWriter()
         sink = _ExchangeDirectiveSink(exchange)
+        # Root the switch at a fresh drill-owned scratch dir so its KILL file
+        # lands there, never at the live protocol path (state_dir/KILL) a running
+        # kernel/KillFileWatcher polls: the drill must be structurally incapable
+        # of killing a live system whatever --state-dir the operator passes.
         switch = KillSwitch(
             ModeStateMachine(mode_ceiling=Mode.LIVE, mode=Mode.LIVE),
             writer,
             _NoopAlertSink(),
             directive_sink=sink,
-            state_dir=context.state_dir,
+            state_dir=context.tmp_dir_factory(),
             clock=context.clock,
         )
         self._run_kill_phase(switch, exchange, positions_before, writer, sink)
@@ -141,7 +145,9 @@ class KillRearmDrill(Drill):
         }
 
     def teardown(self, ctx: object) -> None:
-        """No teardown: the switch writes only into the caller's state dir.
+        """No teardown: the switch writes only into a fresh drill-owned scratch
+        directory (from ``ctx.tmp_dir_factory()``), never the live protocol path
+        ``ctx.state_dir/KILL`` a running kernel/watcher polls.
 
         Args:
             ctx: The :class:`~windbreak.drills.context.DrillContext` (unused).

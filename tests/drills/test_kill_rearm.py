@@ -265,6 +265,39 @@ def test_kill_rearm_drill_passes_on_a_clean_kill_then_rearm_cycle(
     }
 
 
+def test_kill_rearm_drill_writes_its_kill_file_under_the_drill_owned_temp_dir(
+    tmp_path: Path,
+) -> None:
+    """The drill's `KillSwitch` is rooted at `ctx.tmp_dir_factory()`, never at
+    `ctx.state_dir`, so a `KILL` file lands in a drill-owned scratch directory
+    and the operator-supplied `state_dir` is left untouched.
+
+    This is the structural guarantee that `windbreak drill kill-rearm
+    --state-dir <live-ops-dir>` cannot write (and instant-rearm) a genuine
+    `KILL` protocol file against a running system: the drill is incapable of
+    touching `state_dir` by construction, not by convention.
+    """
+    state_dir = tmp_path / "live-ops-state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    scratch = tmp_path / "drill-owned-scratch"
+    scratch.mkdir(parents=True, exist_ok=True)
+    ctx = DrillContext(
+        clock=lambda: FIXED_EPOCH_S,
+        env={},
+        exchange=_seeded_exchange(),
+        state_dir=state_dir,
+        fixture_dir=tmp_path / "fixture",
+        ledger_writer=InMemoryDrillLedgerWriter(),
+        tmp_dir_factory=lambda: scratch,
+    )
+
+    result = KillRearmDrill().run(ctx)
+
+    assert result.passed is True
+    assert not (state_dir / "KILL").exists()
+    assert (scratch / "KILL").exists()
+
+
 # --- Negative / fault-injection: FAILURE branches (issue #59 Gate 1 coverage) --
 
 
