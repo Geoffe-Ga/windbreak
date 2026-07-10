@@ -19,6 +19,87 @@ from pathlib import Path
 # Quality thresholds
 MINIMUM_MUTATION_SCORE = 80
 
+# Paired, fully-literal SQL statements for each query the analyzer runs.
+#
+# Each query comes as two complete constants: a base variant and a
+# ``*_FILTERED`` variant that inlines the ``AND sf.filename LIKE ?`` clause
+# literally. Selecting between them (``_X_FILTERED if filter_file else _X``)
+# replaces the previous f-string construction so bandit can statically prove
+# no untrusted value ever reaches a SQL string (B608): the only difference
+# between the paired constants is a hard-coded, parameterized LIKE clause, and
+# every runtime value is bound via ``?`` placeholders.
+_TOTAL_MUTANTS_SQL = """
+    SELECT COUNT(*)
+    FROM Mutant m, Line l, SourceFile sf
+    WHERE m.line = l.id
+      AND l.sourcefile = sf.id
+"""
+_TOTAL_MUTANTS_SQL_FILTERED = """
+    SELECT COUNT(*)
+    FROM Mutant m, Line l, SourceFile sf
+    WHERE m.line = l.id
+      AND l.sourcefile = sf.id
+      AND sf.filename LIKE ?
+"""
+
+_STATUS_COUNTS_SQL = """
+    SELECT m.status, COUNT(*)
+    FROM Mutant m, Line l, SourceFile sf
+    WHERE m.line = l.id
+      AND l.sourcefile = sf.id
+    GROUP BY m.status
+"""
+_STATUS_COUNTS_SQL_FILTERED = """
+    SELECT m.status, COUNT(*)
+    FROM Mutant m, Line l, SourceFile sf
+    WHERE m.line = l.id
+      AND l.sourcefile = sf.id
+      AND sf.filename LIKE ?
+    GROUP BY m.status
+"""
+
+_SURVIVED_RANKING_SQL = """
+    SELECT sf.filename, COUNT(*) as count
+    FROM Mutant m, Line l, SourceFile sf
+    WHERE m.line = l.id
+      AND l.sourcefile = sf.id
+      AND m.status = "bad_survived"
+    GROUP BY sf.filename
+    ORDER BY count DESC
+    LIMIT ?
+"""
+_SURVIVED_RANKING_SQL_FILTERED = """
+    SELECT sf.filename, COUNT(*) as count
+    FROM Mutant m, Line l, SourceFile sf
+    WHERE m.line = l.id
+      AND l.sourcefile = sf.id
+      AND m.status = "bad_survived"
+      AND sf.filename LIKE ?
+    GROUP BY sf.filename
+    ORDER BY count DESC
+    LIMIT ?
+"""
+
+_SURVIVED_SAMPLE_SQL = """
+    SELECT m.id, sf.filename, l.line_number
+    FROM Mutant m, Line l, SourceFile sf
+    WHERE m.line = l.id
+      AND l.sourcefile = sf.id
+      AND m.status = "bad_survived"
+    ORDER BY sf.filename, l.line_number
+    LIMIT 10
+"""
+_SURVIVED_SAMPLE_SQL_FILTERED = """
+    SELECT m.id, sf.filename, l.line_number
+    FROM Mutant m, Line l, SourceFile sf
+    WHERE m.line = l.id
+      AND l.sourcefile = sf.id
+      AND m.status = "bad_survived"
+      AND sf.filename LIKE ?
+    ORDER BY sf.filename, l.line_number
+    LIMIT 10
+"""
+
 
 def analyze_cache(
     cache_path: Path, top_files: int = 20, filter_file: str | None = None
@@ -38,41 +119,26 @@ def analyze_cache(
     conn = sqlite3.connect(cache_path)
     cursor = conn.cursor()
 
-    # Build file filter condition
-    file_filter_sql = ""
+    # Build file filter condition. `filter_file` selects the filtered SQL
+    # variant and supplies the sole LIKE parameter; the params tuple stays
+    # empty for the unfiltered case.
     file_filter_params: tuple[str, ...] = ()
     if filter_file:
         # Match any path ending with the specified file
-        file_filter_sql = """
-            AND sf.filename LIKE ?
-        """
         file_filter_params = (f"%{filter_file}",)
         print(f"=== Mutmut Cache Analysis (filtered: {filter_file}) ===\n")
     else:
         print("=== Mutmut Cache Analysis ===\n")
 
     # Get total mutants (with optional filter)
-    query = f"""
-        SELECT COUNT(*)
-        FROM Mutant m, Line l, SourceFile sf
-        WHERE m.line = l.id
-          AND l.sourcefile = sf.id
-          {file_filter_sql}
-    """
+    query = _TOTAL_MUTANTS_SQL_FILTERED if filter_file else _TOTAL_MUTANTS_SQL
     cursor.execute(query, file_filter_params)
     total = cursor.fetchone()[0]
     print(f"Total mutants: {total}")
     print()
 
     # Get status counts (with optional filter)
-    query = f"""
-        SELECT m.status, COUNT(*)
-        FROM Mutant m, Line l, SourceFile sf
-        WHERE m.line = l.id
-          AND l.sourcefile = sf.id
-          {file_filter_sql}
-        GROUP BY m.status
-    """
+    query = _STATUS_COUNTS_SQL_FILTERED if filter_file else _STATUS_COUNTS_SQL
     cursor.execute(query, file_filter_params)
     status_counts = dict(cursor.fetchall())
     killed = status_counts.get("ok_killed", 0)
@@ -116,17 +182,7 @@ def analyze_cache(
     # Show files with most survived mutants (with optional filter)
     if survived > 0:
         print(f"=== Files with Most Survived Mutants (Top {top_files}) ===")
-        query = f"""
-            SELECT sf.filename, COUNT(*) as count
-            FROM Mutant m, Line l, SourceFile sf
-            WHERE m.line = l.id
-              AND l.sourcefile = sf.id
-              AND m.status = "bad_survived"
-              {file_filter_sql}
-            GROUP BY sf.filename
-            ORDER BY count DESC
-            LIMIT ?
-        """
+        query = _SURVIVED_RANKING_SQL_FILTERED if filter_file else _SURVIVED_RANKING_SQL
         cursor.execute(query, (*file_filter_params, top_files))
         for filename, count in cursor.fetchall():
             percentage = (count / survived) * 100
@@ -135,16 +191,7 @@ def analyze_cache(
 
         # Show sample of survived mutants (with optional filter)
         print("Sample of survived mutants (first 10):")
-        query = f"""
-            SELECT m.id, sf.filename, l.line_number
-            FROM Mutant m, Line l, SourceFile sf
-            WHERE m.line = l.id
-              AND l.sourcefile = sf.id
-              AND m.status = "bad_survived"
-              {file_filter_sql}
-            ORDER BY sf.filename, l.line_number
-            LIMIT 10
-        """
+        query = _SURVIVED_SAMPLE_SQL_FILTERED if filter_file else _SURVIVED_SAMPLE_SQL
         cursor.execute(query, file_filter_params)
         for mutant_id, filename, line_number in cursor.fetchall():
             print(f"  Mutant {mutant_id}: {filename}:{line_number}")
