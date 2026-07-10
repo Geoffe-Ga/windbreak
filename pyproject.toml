@@ -27,23 +27,6 @@ dependencies = [
 [project.scripts]
 windbreak = "windbreak.main:main"
 
-[project.optional-dependencies]
-dev = [
-    # Versions are pinned by constraints-quality.txt (issue #104); install with
-    # `pip install -e .[dev] -c constraints-quality.txt`
-    "pytest>=7.4.0",
-    "pytest-cov>=4.1.0",
-    "hypothesis>=6.0",
-    "ruff>=0.1.0",
-    "mypy>=1.5.0",
-    "bandit>=1.7.5",
-    "pip-audit>=2.7.0",
-    "radon>=6.0.0",
-    "mutmut>=2.4.0",
-    "pre-commit>=3.4.0",
-    "types-requests>=2.32",
-]
-
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"

@@ -1,4 +1,7 @@
 # Development dependencies
+# This file is the single source of truth for dev-dependency NAMES (issue #80);
+# the pyproject `[project.optional-dependencies].dev` extra was deleted so this
+# list has no duplicate to drift against.
 # Exact versions come from constraints-quality.txt (issue #104), the single
 # version authority for the quality toolchain. `pip install -r requirements-dev.txt`
 # applies the `-c` constraint below automatically — no separate flag needed.

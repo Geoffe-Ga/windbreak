@@ -1,23 +1,26 @@
-"""Failing-first tests pinning the toolchain-alignment contract (issue #104).
+"""Tests pinning the toolchain-alignment contract (issues #104, #80).
 
-These tests encode the target state for issue #104: a single top-level
-`constraints-quality.txt` exact-pin file acts as the version authority for
-every cross-context quality tool, ruff-format is the sole formatter
-authority (black and isort are removed from every gate: pre-commit,
-requirements-dev.txt, and pyproject.toml's `dev` extra), pre-commit hook
-`rev`s track the constraints pins exactly (pre-commit cannot read a
-constraints file, so its `rev`s and `additional_dependencies` must be kept
-in lockstep by hand), and CI installs via `-c constraints-quality.txt` and
-runs `./scripts/check-all.sh` instead of an unpinned `pip install ...`
-line with silently swallowed failures.
+These tests enforce the repository's dependency-and-toolchain governance
+contract, now green:
 
-None of this exists in the repository yet: `constraints-quality.txt` is
-absent, black/isort are still wired into pre-commit, requirements-dev.txt,
-and pyproject.toml, the pre-commit `rev`s are stale relative to nothing (no
-constraints file to compare against), and `.github/workflows/ci.yml` still
-has the legacy unpinned install. Every assertion below therefore fails for
-the reason documented in its own docstring -- that is the expected Gate 1
-RED state.
+- A single top-level `constraints-quality.txt` exact-pin file is the version
+  authority for every cross-context quality tool (issue #104).
+- `ruff format` is the sole formatter authority: black and isort are absent
+  from every remaining gate (pre-commit and requirements-dev.txt).
+- Pre-commit hook `rev`s track the constraints pins exactly (pre-commit
+  cannot read a constraints file, so its `rev`s and `additional_dependencies`
+  are kept in lockstep by hand).
+- CI installs via `-c constraints-quality.txt` and runs
+  `./scripts/check-all.sh` instead of an unpinned `pip install ...` line with
+  silently swallowed failures.
+- pyproject.toml declares no `[project.optional-dependencies].dev` extra:
+  issue #80 removed it as a vestigial, drift-prone duplicate, leaving
+  requirements-dev.txt (constrained by constraints-quality.txt) as the single
+  dev-dependency authority. This file therefore no longer parses a pyproject
+  `dev` extra; it only asserts that extra's absence.
+
+Each assertion documents the specific invariant it guards in its own
+docstring, so a regression re-fails loudly at the exact clause it breaks.
 """
 
 from __future__ import annotations
@@ -149,31 +152,6 @@ def _requirement_names(text: str) -> set[str]:
     names = set()
     for line in _non_comment_lines(text):
         match = _NAME_PREFIX_PATTERN.match(line)
-        if match:
-            names.add(_normalize(match.group(0)))
-    return names
-
-
-def _pyproject_dev_dependencies() -> list[str]:
-    """Return the raw `[project.optional-dependencies].dev` entries.
-
-    Returns:
-        The dependency specifier strings declared for the `dev` extra.
-    """
-    with _PYPROJECT_PATH.open("rb") as handle:
-        data = tomllib.load(handle)
-    return list(data["project"]["optional-dependencies"]["dev"])
-
-
-def _pyproject_dev_names() -> set[str]:
-    """Return normalized package names from the `dev` optional-dependencies.
-
-    Returns:
-        Normalized package names extracted from each specifier string.
-    """
-    names = set()
-    for entry in _pyproject_dev_dependencies():
-        match = _NAME_PREFIX_PATTERN.match(entry.strip())
         if match:
             names.add(_normalize(match.group(0)))
     return names
@@ -327,11 +305,27 @@ def test_black_and_isort_absent_from_requirements_dev() -> None:
     assert not (names & _BANNED_FORMATTERS)
 
 
-def test_black_and_isort_absent_from_pyproject_dev_extra() -> None:
-    """pyproject.toml's `[project.optional-dependencies].dev` has no black/isort."""
-    names = _pyproject_dev_names()
+def test_pyproject_declares_no_dev_extra() -> None:
+    """pyproject.toml's `dev` optional-dependencies extra is removed (#80).
 
-    assert not (names & _BANNED_FORMATTERS)
+    requirements-dev.txt (constrained by constraints-quality.txt) is the
+    single source of truth for dev dependencies. `[project.optional-
+    dependencies].dev` in pyproject.toml is a vestigial, unused, drifted
+    duplicate of that list, so issue #80 deletes it. This checks only that
+    the `dev` key itself is absent -- via `.get("optional-dependencies",
+    {})` with an empty-dict default -- so the assertion stays satisfied
+    whether the whole `optional-dependencies` table is removed or a future,
+    unrelated (non-dev) extra is added later.
+    """
+    with _PYPROJECT_PATH.open("rb") as handle:
+        data = tomllib.load(handle)
+
+    assert "dev" not in data["project"].get("optional-dependencies", {}), (
+        "pyproject.toml still declares [project.optional-dependencies].dev "
+        "-- issue #80 requires requirements-dev.txt to be the single "
+        "source of truth for dev dependencies; delete the pyproject dev "
+        "extra"
+    )
 
 
 def test_requirements_dev_references_constraints_file() -> None:
