@@ -19,7 +19,9 @@ store themselves.
 from __future__ import annotations
 
 from windbreak.dashboard.views.decisions import render_decisions
+from windbreak.dashboard.views.divergence import render_live_divergence
 from windbreak.dashboard.views.equity import render_equity_vs_floor
+from windbreak.dashboard.views.execution import render_execution_quality
 from windbreak.dashboard.views.models import (
     DashboardReadModels,
     build_ledger_read_models_source,
@@ -31,5 +33,7 @@ __all__ = [
     "build_ledger_read_models_source",
     "render_decisions",
     "render_equity_vs_floor",
+    "render_execution_quality",
+    "render_live_divergence",
     "render_positions",
 ]

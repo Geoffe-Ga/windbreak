@@ -1,0 +1,28 @@
+{
+  "description": "Two live fills, sum(actual)=150_000, sum(modeled)=130_000 micros; ceil(150_000 * 1_000_000 / 130_000) = 1_153_847 (not exact -- pins the OVERSTATE_COST/ceil rounding direction on the cost-side ratio).",
+  "fills": [
+    {
+      "fill_id": "FQ-1",
+      "market_ticker": "MKT-EXEC-A",
+      "side": "YES",
+      "filled_centis": 500,
+      "actual_cost_micros": 100000,
+      "modeled_cost_micros": 90000,
+      "model_version": "pfm-known-answer-v1",
+      "created_sequence": 10
+    },
+    {
+      "fill_id": "FQ-2",
+      "market_ticker": "MKT-EXEC-B",
+      "side": "NO",
+      "filled_centis": 300,
+      "actual_cost_micros": 50000,
+      "modeled_cost_micros": 40000,
+      "model_version": "pfm-known-answer-v1",
+      "created_sequence": 11
+    }
+  ],
+  "expected": {
+    "live_slippage_ratio_ppm": 1153847
+  }
+}

@@ -17,6 +17,15 @@ seven Order Gateway / crash-recovery event types (`OrderTransitionLedgered`,
 mirroring `config_versions.json`/`mode_history.json`'s own
 always-written-even-when-empty contract. The pre-existing two read models'
 content is unaffected by gateway events mixed into the same ledger.
+
+Issue #58 (PR #199 review fix) wires two more, already-defined projection
+functions -- `execution_quality_read_model` / `live_divergence_read_model` --
+into `rebuild()` itself: today `rebuild()` never calls either one, so
+`execution_quality.json` / `live_divergence.json` are never written at all
+(not even empty). The tests below pin that both files are always written
+(empty-but-valid on an empty ledger) and hold exactly the
+`ExecutionQualityRecorded` / `LiveDivergenceSampled` rows, in ledger order,
+once `rebuild()` is wired up.
 """
 
 from __future__ import annotations
@@ -27,6 +36,14 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from windbreak.evaluation.execution_quality import (
+    ExecutionQualityRecord,
+    ExecutionQualityRecorded,
+)
+from windbreak.evaluation.live_divergence import (
+    LiveDivergenceBreached,
+    LiveDivergenceSampled,
+)
 from windbreak.ledger.events import (
     AlertEmitted,
     ConfigLoaded,
@@ -78,7 +95,11 @@ def test_rebuild_writes_only_the_documented_read_model_files(
     Every read model is written unconditionally (empty here where no source
     events are present) -- the original three plus the three PAPER-loop read
     models issue #48 adds (`positions.json`, `equity_curve.json`,
-    `selector_decisions.json`).
+    `selector_decisions.json`), plus the two live-divergence read models
+    issue #58 wires up (`execution_quality.json`, `live_divergence.json`,
+    PR #199 review fix). This currently FAILS: `rebuild()` never calls
+    `execution_quality_read_model` / `live_divergence_read_model`, so neither
+    new file is produced at all.
     """
     db_path = tmp_path / "ledger.db"
     output_dir = tmp_path / "out"
@@ -92,7 +113,9 @@ def test_rebuild_writes_only_the_documented_read_model_files(
     assert produced == [
         "config_versions.json",
         "equity_curve.json",
+        "execution_quality.json",
         "gateway_events.json",
+        "live_divergence.json",
         "mode_history.json",
         "positions.json",
         "selector_decisions.json",
@@ -178,7 +201,12 @@ def test_rebuild_read_models_are_canonical_json_with_one_trailing_newline(
 def test_rebuild_on_empty_ledger_produces_valid_empty_read_models(
     tmp_path: Path, deterministic_clock: Callable[[], datetime]
 ) -> None:
-    """An empty ledger still produces three well-formed, empty read models."""
+    """An empty ledger still produces well-formed, empty read models.
+
+    Includes `execution_quality.json` / `live_divergence.json` (issue #58,
+    PR #199 review fix): both currently FAIL with `FileNotFoundError` because
+    `rebuild()` never writes either file today, empty ledger or not.
+    """
     db_path = tmp_path / "ledger.db"
     output_dir = tmp_path / "out"
     store = SqliteLedgerStore(db_path, now=deterministic_clock)
@@ -189,6 +217,8 @@ def test_rebuild_on_empty_ledger_produces_valid_empty_read_models(
     assert json.loads((output_dir / "config_versions.json").read_text()) == []
     assert json.loads((output_dir / "gateway_events.json").read_text()) == []
     assert json.loads((output_dir / "mode_history.json").read_text()) == []
+    assert json.loads((output_dir / "execution_quality.json").read_text()) == []
+    assert json.loads((output_dir / "live_divergence.json").read_text()) == []
 
 
 def test_rebuild_skips_unknown_event_types_without_error(
@@ -350,6 +380,142 @@ def test_rebuild_gateway_events_contains_only_the_seven_gateway_rows_in_order(
     assert [entry["seq"] for entry in config_versions] == [1]
     mode_history = json.loads((output_dir / "mode_history.json").read_text())
     assert [entry["seq"] for entry in mode_history] == [3]
+
+
+def _populate_execution_quality_and_divergence_ledger(store: SqliteLedgerStore) -> None:
+    """Append M0 events interleaved with one execution-quality and one
+    live-divergence event (issue #58, PR #199 review fix).
+
+    Sequence numbers: 1=ConfigLoaded, 2=ExecutionQualityRecorded,
+    3=ModeHeartbeat, 4=LiveDivergenceSampled.
+
+    Args:
+        store: The ledger store to append the fixed sequence into.
+    """
+    store.append(ConfigLoaded(component="pipeline", config_hash="hash-1", diff={}))
+    record = ExecutionQualityRecord(
+        fill_id="F-rebuild-1",
+        market_ticker="MKT-REBUILD",
+        side="YES",
+        filled_centis=100,
+        actual_cost_micros=1_100_000,
+        modeled_cost_micros=1_000_000,
+        model_version="pfm-rebuild-test",
+        created_sequence=1,
+    )
+    store.append(ExecutionQualityRecorded(component="evaluation", record=record))
+    store.append(ModeHeartbeat(component="pipeline", mode="RESEARCH", beat=1))
+    store.append(
+        LiveDivergenceSampled(
+            component="evaluation",
+            sample={
+                "live_slippage_ratio_ppm": 1_100_000,
+                "live_brier_degradation_ppm": "UNDEFINED",
+                "plan_hash": "hash-rebuild-test",
+            },
+        )
+    )
+
+
+def test_rebuild_execution_quality_and_live_divergence_projections_are_wired(
+    tmp_path: Path, deterministic_clock: Callable[[], datetime]
+) -> None:
+    """`rebuild()` also projects `ExecutionQualityRecorded` /
+    `LiveDivergenceSampled` rows into `execution_quality.json` /
+    `live_divergence.json`, in ledger order (issue #58, PR #199 review fix).
+
+    Today `rebuild()` never calls `execution_quality_read_model` /
+    `live_divergence_read_model` even though both are already defined, so
+    reading either file currently raises `FileNotFoundError`.
+    """
+    db_path = tmp_path / "ledger.db"
+    output_dir = tmp_path / "out"
+    store = SqliteLedgerStore(db_path, now=deterministic_clock)
+    _populate_execution_quality_and_divergence_ledger(store)
+    store.close()
+
+    rebuild(db_path, output_dir)
+
+    execution_quality = json.loads((output_dir / "execution_quality.json").read_text())
+    assert [entry["seq"] for entry in execution_quality] == [2]
+    assert execution_quality[0]["event_type"] == "ExecutionQualityRecorded"
+    assert execution_quality[0]["data"]["fill_id"] == "F-rebuild-1"
+    assert execution_quality[0]["data"]["actual_cost_micros"] == 1_100_000
+    assert execution_quality[0]["data"]["modeled_cost_micros"] == 1_000_000
+    assert all("created_at" in entry for entry in execution_quality)
+
+    live_divergence = json.loads((output_dir / "live_divergence.json").read_text())
+    assert [entry["seq"] for entry in live_divergence] == [4]
+    assert live_divergence[0]["event_type"] == "LiveDivergenceSampled"
+    assert live_divergence[0]["data"]["live_slippage_ratio_ppm"] == 1_100_000
+    assert live_divergence[0]["data"]["plan_hash"] == "hash-rebuild-test"
+    assert all("created_at" in entry for entry in live_divergence)
+
+    # The pre-existing read models are unaffected by the two new event types
+    # mixed into the same ledger.
+    config_versions = json.loads((output_dir / "config_versions.json").read_text())
+    assert [entry["seq"] for entry in config_versions] == [1]
+    mode_history = json.loads((output_dir / "mode_history.json").read_text())
+    assert [entry["seq"] for entry in mode_history] == [3]
+
+
+def _populate_live_divergence_ledger_with_breach(store: SqliteLedgerStore) -> None:
+    """Append one `LiveDivergenceSampled` row immediately followed by one
+    `LiveDivergenceBreached` row for the same run (Gate 4 round-2 review fix,
+    Fix 2: `LiveDivergenceBreached` must appear in the dashboard divergence
+    projection).
+
+    Sequence numbers: 1=LiveDivergenceSampled, 2=LiveDivergenceBreached.
+
+    Args:
+        store: The ledger store to append the fixed sequence into.
+    """
+    sample = {
+        "live_slippage_ratio_ppm": 1_600_000,
+        "live_brier_degradation_ppm": 60_000,
+        "plan_hash": "hash-breach-test",
+    }
+    store.append(LiveDivergenceSampled(component="evaluation", sample=sample))
+    store.append(
+        LiveDivergenceBreached(
+            component="evaluation",
+            sample=sample,
+            trigger="LIVE_PAPER_SLIPPAGE_DIVERGENCE",
+        )
+    )
+
+
+def test_rebuild_live_divergence_projection_includes_breached_rows(
+    tmp_path: Path, deterministic_clock: Callable[[], datetime]
+) -> None:
+    """`live_divergence.json` holds BOTH `LiveDivergenceSampled` AND
+    `LiveDivergenceBreached` rows, in ledger order, and the breach row's
+    `data` carries its firing `trigger` (Gate 4 round-2 review fix, Fix 2).
+
+    `LiveDivergenceBreached` is the durable, operator-facing audit trail for
+    the SPEC S10.10 automatic-demotion gate. Today
+    `live_divergence_read_model` filters on the `LiveDivergenceSampled` event
+    type alone (`_LIVE_DIVERGENCE_SAMPLED`), so the `LiveDivergenceBreached`
+    row is silently dropped from the read model entirely -- this fails on
+    `assert [entry["seq"] for entry in live_divergence] == [1, 2]` (today it
+    is `[1]`, missing the seq-2 breach row).
+    """
+    db_path = tmp_path / "ledger.db"
+    output_dir = tmp_path / "out"
+    store = SqliteLedgerStore(db_path, now=deterministic_clock)
+    _populate_live_divergence_ledger_with_breach(store)
+    store.close()
+
+    rebuild(db_path, output_dir)
+
+    live_divergence = json.loads((output_dir / "live_divergence.json").read_text())
+
+    assert [entry["seq"] for entry in live_divergence] == [1, 2]
+    assert live_divergence[0]["event_type"] == "LiveDivergenceSampled"
+    assert live_divergence[1]["event_type"] == "LiveDivergenceBreached"
+    assert live_divergence[1]["data"]["trigger"] == "LIVE_PAPER_SLIPPAGE_DIVERGENCE"
+    assert live_divergence[1]["data"]["live_slippage_ratio_ppm"] == 1_600_000
+    assert all("created_at" in entry for entry in live_divergence)
 
 
 def test_rebuild_on_tampered_ledger_raises_chain_integrity_error(

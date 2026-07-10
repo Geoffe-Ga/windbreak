@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from windbreak.alerts.registry import AlertSeverity
 from windbreak.evaluation.cohorts import UndefinedBrier
+from windbreak.evaluation.execution_quality import require_model_version
 from windbreak.evaluation.registry import (
     NotImplementedSentinel,
     gate_evaluation_inputs,
@@ -387,9 +388,18 @@ def crosscheck_gates(
         A :class:`CrosscheckResult` carrying the per-metric comparisons and the
         overall status; ``MISMATCH`` (with one ledgered event and one alert) on
         any disagreement, else ``MATCH``.
+
+    Raises:
+        ValueError: If any admitted execution record's ``model_version``
+            disagrees with ``plan.paper_fill_model_version`` -- the run fails
+            closed before any scoring or ledgering, so SPEC §17.4's fail-closed
+            model-version guarantee holds on the crosscheck path exactly as it
+            does in
+            :func:`~windbreak.evaluation.live_divergence.monitor_live_divergence`.
     """
     computer = sql_path if sql_path is not None else SqlGateComputer()
     admitted, _ = gate_evaluation_inputs(inputs)
+    require_model_version(admitted.execution_records, plan.paper_fill_model_version)
     sql_values = computer.compute(admitted, plan)
     specs = registered_metrics()
     comparisons = _build_comparisons(inputs, plan, specs, sql_values, tolerance)

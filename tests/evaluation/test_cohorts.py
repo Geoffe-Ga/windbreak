@@ -70,6 +70,7 @@ def _forecast(
     eligible: bool = True,
     abstention: str | None = None,
     created_sequence: int = 1,
+    live: bool = False,
 ) -> FixtureForecast:
     """Build one `FixtureForecast` with the fields these cohort tests vary.
 
@@ -91,6 +92,8 @@ def _forecast(
         eligible: Whether the forecast passed live-eligibility gates.
         abstention: The abstention reason, or `None` if traded.
         created_sequence: The forecast's creation sequence on the ledger.
+        live: Whether this forecast is on the LIVE track (vs PAPER); defaults
+            to `False` so every pre-existing call site is unaffected.
 
     Returns:
         The constructed `FixtureForecast`.
@@ -104,6 +107,7 @@ def _forecast(
         traded=traded,
         baseline_executable_price_pips=baseline_pips,
         created_sequence=created_sequence,
+        live=live,
     )
 
 
@@ -676,3 +680,101 @@ def test_registry_adapter_propagates_non_empty_cohort_value_error(
         registry._compute_traded_vs_skipped_brier_delta(
             EvaluationInputs(forecasts=(), resolutions={})
         )
+
+
+# ---------------------------------------------------------------------------
+# 7. live_brier_degradation: a multi-forecast-per-market LIVE input scores the
+#    re-forecast market ONCE (its LATEST_BEFORE_CLOSE record), proving the
+#    per-market collapse independent of the SQL crosscheck (Gate 4 round-2
+#    review fix, Fix 1). Mirrors `tests/evaluation/test_live_dual_path.py`'s
+#    `test_live_brier_degradation_collapses_re_forecast_market_before_scoring`,
+#    but exercises `cohorts.live_brier_degradation` directly (no SQL, no
+#    registry adapter) so a regression here is unambiguously the Python
+#    reference's own collapse, not a crosscheck artifact.
+# ---------------------------------------------------------------------------
+
+
+def test_live_brier_degradation_scores_a_re_forecast_market_once() -> None:
+    """A LIVE market forecast TWICE contributes ONE observation -- its
+    `LATEST_BEFORE_CLOSE` record -- to `live_brier_degradation`, not one
+    observation per raw forecast.
+
+    Hand computation, per-market collapse applied (the CORRECT answer):
+
+    LIVE cohort, 2 markets after collapse:
+    - `RF` is forecast TWICE: seq=1 p=200_000 and seq=2 p=900_000 (the
+      LATEST). Only the seq=2 record survives `LATEST_BEFORE_CLOSE`.
+      Outcome YES (1_000_000): term = (900_000-1_000_000)^2 =
+      10_000_000_000.
+    - `L2` (seq=3, p=500_000), outcome NO (0): term = (500_000-0)^2 =
+      250_000_000_000.
+    Collapsed LIVE sum = 260_000_000_000, n=2; mean =
+    `ceil(260_000_000_000 / (2 * 1_000_000)) = 130_000` ppm exactly.
+
+    PAPER cohort, 1 market: `P1` (p=700_000), outcome YES: term =
+    (700_000-1_000_000)^2 = 90_000_000_000; n=1; mean =
+    `ceil(90_000_000_000 / 1_000_000) = 90_000` ppm exactly.
+
+    `live_brier_degradation` (collapsed, correct) = 130_000 - 90_000 =
+    `40_000` ppm exactly.
+
+    Today (RED): `live_brier_degradation` feeds `_resolved_track_forecasts`'s
+    raw, uncollapsed per-track forecasts straight into `_rolling_window` and
+    `mean_brier` with no `windows.resolve_window` collapse, so the seq=1
+    `RF` record is counted as a THIRD, separate LIVE observation instead of
+    being superseded by the seq=2 record: sum = 640_000_000_000 (seq=1,
+    uncollapsed term) + 10_000_000_000 (seq=2) + 250_000_000_000 (`L2`) =
+    900_000_000_000; n=3; mean =
+    `ceil(900_000_000_000 / (3 * 1_000_000)) = 300_000`; degradation =
+    300_000 - 90_000 = 210_000 != the pinned `40_000` below.
+    """
+    from windbreak.evaluation.cohorts import live_brier_degradation
+
+    live_forecasts = (
+        _forecast(
+            forecast_id="rf-seq1",
+            market_ticker="RF",
+            probability_ppm=200_000,
+            baseline_pips=2_000,
+            created_sequence=1,
+            live=True,
+        ),
+        _forecast(
+            forecast_id="rf-seq2",
+            market_ticker="RF",
+            probability_ppm=900_000,
+            baseline_pips=9_000,
+            created_sequence=2,
+            live=True,
+        ),
+        _forecast(
+            forecast_id="l2-seq3",
+            market_ticker="L2",
+            probability_ppm=500_000,
+            baseline_pips=5_000,
+            created_sequence=3,
+            live=True,
+        ),
+    )
+    paper_forecasts = (
+        _forecast(
+            forecast_id="p1-seq4",
+            market_ticker="P1",
+            probability_ppm=700_000,
+            baseline_pips=7_000,
+            created_sequence=4,
+            live=False,
+        ),
+    )
+    inputs = EvaluationInputs(
+        forecasts=live_forecasts + paper_forecasts,
+        resolutions={
+            "RF": ResolutionOutcome.YES,
+            "L2": ResolutionOutcome.NO,
+            "P1": ResolutionOutcome.YES,
+        },
+    )
+
+    degradation = live_brier_degradation(inputs, window=_WINDOW, window_size=100)
+
+    assert degradation == 40_000

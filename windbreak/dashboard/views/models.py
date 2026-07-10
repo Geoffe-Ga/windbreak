@@ -12,7 +12,7 @@ view of the ledger.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -33,11 +33,19 @@ class DashboardReadModels:
         equity_curve: Every equity-sample row, in ledger order.
         decisions: The interleaved selector/intent decision rows, in ledger
             order.
+        execution_quality: Every ``ExecutionQualityRecorded`` row, in ledger
+            order (issue #58); defaults to empty so a pre-#58 construction stays
+            valid.
+        live_divergence: Every ``LiveDivergenceSampled`` and
+            ``LiveDivergenceBreached`` row, in ledger order (issue #58); breach
+            rows carry the firing trigger. Defaults to empty.
     """
 
     positions: list[ReadModelRow]
     equity_curve: list[ReadModelRow]
     decisions: list[ReadModelRow]
+    execution_quality: list[ReadModelRow] = field(default_factory=list)
+    live_divergence: list[ReadModelRow] = field(default_factory=list)
 
 
 def build_ledger_read_models_source(
@@ -61,6 +69,8 @@ def build_ledger_read_models_source(
     """
     from windbreak.ledger.rebuild import (
         equity_curve_read_model,
+        execution_quality_read_model,
+        live_divergence_read_model,
         positions_read_model,
         selector_decisions_read_model,
     )
@@ -78,6 +88,8 @@ def build_ledger_read_models_source(
             positions=positions_read_model(records),
             equity_curve=equity_curve_read_model(records),
             decisions=selector_decisions_read_model(records),
+            execution_quality=execution_quality_read_model(records),
+            live_divergence=live_divergence_read_model(records),
         )
 
     return _source

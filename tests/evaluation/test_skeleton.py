@@ -115,11 +115,14 @@ def test_run_evaluation_returns_exactly_three_uniquely_named_tracks() -> None:
 
 def test_every_registered_metric_appears_exactly_once_and_renders() -> None:
     """Every name in `registered_metrics()` appears exactly once across all
-    tracks, has a value that is either an `int` or the `NOT_IMPLEMENTED`
-    sentinel, and shows up verbatim in `render_text()`.
+    tracks, has a value that is either an `int`, the `NOT_IMPLEMENTED` sentinel,
+    or the `UNDEFINED` sentinel (the #58 live-divergence metrics are undefined on
+    this all-PAPER, no-execution-record fixture), and shows up verbatim in
+    `render_text()`.
     """
     from windbreak.evaluation import (
         NOT_IMPLEMENTED,
+        UNDEFINED,
         registered_metrics,
         run_evaluation,
     )
@@ -135,7 +138,11 @@ def test_every_registered_metric_appears_exactly_once_and_renders() -> None:
     assert len(rendered_names) == len(set(rendered_names))
 
     for result in all_results:
-        assert isinstance(result.value, int) or result.value is NOT_IMPLEMENTED
+        assert (
+            isinstance(result.value, int)
+            or result.value is NOT_IMPLEMENTED
+            or result.value is UNDEFINED
+        )
         assert result.name in text
 
 
@@ -261,18 +268,19 @@ def test_evaluation_report_post_init_rejects_missing_or_duplicate_tracks() -> No
 # ---------------------------------------------------------------------------
 
 
-def test_registered_metrics_has_the_nine_seed_specs_with_correct_shape() -> None:
-    """Each of the nine seed `MetricSpec`s carries a real `Track`, a real
+def test_registered_metrics_has_the_eleven_seed_specs_with_correct_shape() -> None:
+    """Each of the eleven seed `MetricSpec`s carries a real `Track`, a real
     `ObservationWindow`, and a callable `compute`; the headline metric's
     window is `LATEST_BEFORE_CLOSE`.
 
     Issue #51 registers five additional real forecast-track metrics
     (`log_score`, `expected_calibration_error`, `calibration_slope`,
     `calibration_intercept`, `sharpness`) alongside the original four seed
-    slots, growing the registry from four specs to nine. Issue #53 turns
-    `traded_vs_skipped_brier_delta` into a real computation too (delegating
-    to `windbreak.evaluation.cohorts`) and moves its window from
-    `TRADE_TRIGGERING` to `LATEST_BEFORE_CLOSE`; only
+    slots. Issue #53 turns `traded_vs_skipped_brier_delta` into a real
+    computation too (delegating to `windbreak.evaluation.cohorts`) and moves
+    its window from `TRADE_TRIGGERING` to `LATEST_BEFORE_CLOSE`. Issue #58 adds
+    the two live-divergence metrics (`live_slippage_ratio`,
+    `live_brier_degradation`), growing the registry to eleven specs; only
     `fill_vs_model_slippage` remains unimplemented.
     """
     from windbreak.evaluation import (
@@ -294,6 +302,8 @@ def test_registered_metrics_has_the_nine_seed_specs_with_correct_shape() -> None
         "calibration_slope",
         "calibration_intercept",
         "sharpness",
+        "live_slippage_ratio",
+        "live_brier_degradation",
     }
     assert set(metrics.keys()) == expected_names
 

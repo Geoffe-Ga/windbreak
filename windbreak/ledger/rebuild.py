@@ -1,10 +1,13 @@
 """Fold the ledger into derived read models (SPEC S5.1, issue #13).
 
 ``rebuild`` is a pure projection over a verified ledger: it verifies the
-hash chain, then folds the records in sequence order into three byte-stable
+hash chain, then folds the records in sequence order into eight byte-stable
 read-model files -- ``config_versions.json`` (the ``ConfigLoaded`` rows),
-``mode_history.json`` (the ``ModeHeartbeat`` rows), and ``gateway_events.json``
-(the chronological Order Gateway / crash-recovery events, issue #40).
+``mode_history.json`` (the ``ModeHeartbeat`` rows), ``gateway_events.json``
+(the chronological Order Gateway / crash-recovery events, issue #40), the
+three PAPER-loop projections ``positions.json`` / ``equity_curve.json`` /
+``selector_decisions.json`` (issue #48), and the two live-divergence
+projections ``execution_quality.json`` / ``live_divergence.json`` (issue #58).
 ``AlertEmitted`` and any unrecognized event types are skipped. Because
 verification runs first, a corrupt ledger raises :class:`ChainIntegrityError`
 instead of producing a plausible-but-wrong projection.
@@ -198,6 +201,66 @@ def selector_decisions_read_model(
     ]
 
 
+#: Read-model filename holding the per-fill execution-quality comparison
+#: projection (issue #58).
+_EXECUTION_QUALITY_FILENAME = "execution_quality.json"
+
+#: Read-model filename holding the per-run live-divergence sample projection
+#: (issue #58).
+_LIVE_DIVERGENCE_FILENAME = "live_divergence.json"
+
+#: The live-divergence ledger event types projected into their read models
+#: (issue #58): the per-fill execution-quality comparison and the per-run
+#: divergence sample.
+_EXECUTION_QUALITY_RECORDED = "ExecutionQualityRecorded"
+_LIVE_DIVERGENCE_SAMPLED = "LiveDivergenceSampled"
+_LIVE_DIVERGENCE_BREACHED = "LiveDivergenceBreached"
+
+
+def execution_quality_read_model(
+    records: list[LedgerRecord],
+) -> list[dict[str, object]]:
+    """Project every ``ExecutionQualityRecorded`` row, in ledger order (issue #58).
+
+    Args:
+        records: The verified ledger records, in sequence order.
+
+    Returns:
+        One ``{seq, created_at, event_type, data}`` entry per execution-quality
+        comparison.
+    """
+    return [
+        _gateway_projection(record)
+        for record in records
+        if record.event_type == _EXECUTION_QUALITY_RECORDED
+    ]
+
+
+def live_divergence_read_model(
+    records: list[LedgerRecord],
+) -> list[dict[str, object]]:
+    """Project the live-divergence audit trail, in ledger order (issue #58).
+
+    Folds both ``LiveDivergenceSampled`` (every monitor run) and
+    ``LiveDivergenceBreached`` (one per firing SPEC S10.10 automatic-demotion
+    trigger) rows, preserving ledger order, so an operator sees each sample
+    alongside any breach it triggered. A breach row's ``data`` carries the
+    sampled snapshot plus the firing ``trigger`` name.
+
+    Args:
+        records: The verified ledger records, in sequence order.
+
+    Returns:
+        One ``{seq, created_at, event_type, data}`` entry per sampled or
+        breached divergence row.
+    """
+    return [
+        _gateway_projection(record)
+        for record in records
+        if record.event_type in {_LIVE_DIVERGENCE_SAMPLED, _LIVE_DIVERGENCE_BREACHED}
+    ]
+
+
 def _write_read_model(path: Path, rows: list[dict[str, object]]) -> None:
     """Write a read model as canonical JSON bytes with one trailing newline.
 
@@ -210,7 +273,14 @@ def _write_read_model(path: Path, rows: list[dict[str, object]]) -> None:
 
 
 def rebuild(ledger_path: Path, output_dir: Path) -> None:
-    """Verify the ledger and fold it into the two read-model files.
+    """Verify the ledger and fold it into the eight read-model files.
+
+    Writes ``config_versions.json``, ``mode_history.json``,
+    ``gateway_events.json``, the three PAPER-loop projections
+    (``positions.json``, ``equity_curve.json``, ``selector_decisions.json``,
+    issue #48), and the two live-divergence projections
+    (``execution_quality.json``, ``live_divergence.json``, issue #58); each is
+    written unconditionally, empty where its source events are absent.
 
     Args:
         ledger_path: Path to the SQLite ledger database.
@@ -259,6 +329,14 @@ def rebuild(ledger_path: Path, output_dir: Path) -> None:
     _write_read_model(
         output_dir.joinpath(_SELECTOR_DECISIONS_FILENAME),
         selector_decisions_read_model(records),
+    )
+    _write_read_model(
+        output_dir.joinpath(_EXECUTION_QUALITY_FILENAME),
+        execution_quality_read_model(records),
+    )
+    _write_read_model(
+        output_dir.joinpath(_LIVE_DIVERGENCE_FILENAME),
+        live_divergence_read_model(records),
     )
 
 

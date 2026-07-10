@@ -54,6 +54,7 @@ from windbreak.evaluation.resolution import ResolutionOutcome
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from windbreak.evaluation.execution_quality import ExecutionQualityRecord
     from windbreak.evaluation.preregistration import GatePlan
     from windbreak.evaluation.registry import EvaluationInputs, FixtureForecast
 
@@ -82,6 +83,12 @@ _LOG_SCORE_DENOMINATOR = (1 << _LOG2_FRACTION_BITS) * (_LN2_DECIMAL_SCALE // _PP
 #: The registry name of the execution-track stub, reproduced as
 #: :data:`~windbreak.evaluation.registry.NOT_IMPLEMENTED` on both paths.
 _FILL_VS_MODEL_SLIPPAGE = "fill_vs_model_slippage"
+
+#: The live-divergence metrics whose SQL query binds the rolling-window size as a
+#: single ``?`` parameter (``LIMIT ?``); every other metric takes no parameters.
+_ROLLING_WINDOW_METRICS: frozenset[str] = frozenset(
+    {"live_slippage_ratio", "live_brier_degradation"}
+)
 
 
 class SqlGateFailure(enum.Enum):
@@ -387,6 +394,55 @@ def _hk_delta(
     return skipped_mean - traded_mean
 
 
+def _hk_ratio(actual_sum: int | None, modeled_sum: int | None) -> int | None:
+    """SQLite UDF: cost-side live-vs-paper slippage ratio, in ppm.
+
+    Args:
+        actual_sum: Sum of ``actual_cost_micros`` over the window (``None`` for
+            an empty record set).
+        modeled_sum: Sum of ``modeled_cost_micros`` over the window (``None`` for
+            an empty record set).
+
+    Returns:
+        ``ceil(actual_sum * PPM_SCALE / modeled_sum)``, or ``None`` (rendered as
+        the ``UNDEFINED`` sentinel) when the window holds no records -- mirroring
+        the Python path's empty-record-set handling.
+    """
+    if actual_sum is None or modeled_sum is None:
+        return None
+    return _local_ceil_div(actual_sum * _PPM_SCALE, modeled_sum)
+
+
+def _hk_degradation(
+    live_sum: int | None,
+    live_count: int,
+    paper_sum: int | None,
+    paper_count: int,
+) -> int | None:
+    """SQLite UDF: ``mean_brier(LIVE_window) - mean_brier(PAPER)``, in ppm.
+
+    Args:
+        live_sum: Sum of the windowed LIVE cohort's Brier terms, in ppm^2
+            (``None`` for an empty cohort).
+        live_count: Number of resolved LIVE forecasts in the window.
+        paper_sum: Sum of the PAPER cohort's Brier terms, in ppm^2 (``None`` for
+            an empty cohort).
+        paper_count: Number of resolved PAPER forecasts.
+
+    Returns:
+        The signed degradation in ppm, or ``None`` (rendered as ``UNDEFINED``)
+        when either cohort has no resolved records -- mirroring the Python path's
+        ``EmptyCohortError`` degradation. Both means ceil (``OVERSTATE_COST``),
+        the same direction as :func:`windbreak.evaluation.metrics.mean_brier`, so
+        the two paths agree exactly.
+    """
+    if live_count == 0 or paper_count == 0:
+        return None
+    live_mean = _local_ceil_div(live_sum or 0, live_count * _PPM_SCALE)
+    paper_mean = _local_ceil_div(paper_sum or 0, paper_count * _PPM_SCALE)
+    return live_mean - paper_mean
+
+
 def _register_udfs(conn: sqlite3.Connection) -> None:
     """Register every gate-metric UDF on a fresh connection.
 
@@ -403,15 +459,21 @@ def _register_udfs(conn: sqlite3.Connection) -> None:
     conn.create_function("hk_intercept", 5, _hk_intercept, deterministic=True)
     conn.create_function("hk_sharpness", 3, _hk_sharpness, deterministic=True)
     conn.create_function("hk_delta", 4, _hk_delta, deterministic=True)
+    conn.create_function("hk_ratio", 2, _hk_ratio, deterministic=True)
+    conn.create_function("hk_degradation", 4, _hk_degradation, deterministic=True)
 
 
 #: DDL for the projected ``forecasts`` table (one row per admitted forecast).
+#: Issue #58 projects two more columns: ``live`` (the LIVE/PAPER track flag) and
+#: ``created_sequence`` (the rolling-window ordering key).
 _CREATE_FORECASTS_SQL = (
     "CREATE TABLE forecasts ("
     "market_ticker TEXT NOT NULL, "
     "probability_ppm INTEGER NOT NULL, "
     "baseline_ppm INTEGER NOT NULL, "
-    "traded INTEGER NOT NULL"
+    "traded INTEGER NOT NULL, "
+    "live INTEGER NOT NULL, "
+    "created_sequence INTEGER"
     ")"
 )
 
@@ -422,10 +484,21 @@ _CREATE_RESOLUTIONS_SQL = (
     ")"
 )
 
+#: DDL for the projected ``execution_records`` table (one row per live fill),
+#: feeding the ``live_slippage_ratio`` reproduction (issue #58).
+_CREATE_EXECUTION_RECORDS_SQL = (
+    "CREATE TABLE execution_records ("
+    "actual_cost_micros INTEGER NOT NULL, "
+    "modeled_cost_micros INTEGER NOT NULL, "
+    "created_sequence INTEGER NOT NULL"
+    ")"
+)
+
 #: Parametrized insert for one projected forecast row.
 _INSERT_FORECAST_SQL = (
-    "INSERT INTO forecasts (market_ticker, probability_ppm, baseline_ppm, traded) "
-    "VALUES (?, ?, ?, ?)"
+    "INSERT INTO forecasts "
+    "(market_ticker, probability_ppm, baseline_ppm, traded, live, created_sequence) "
+    "VALUES (?, ?, ?, ?, ?, ?)"
 )
 
 #: Parametrized insert for one projected resolution row.
@@ -433,22 +506,49 @@ _INSERT_RESOLUTION_SQL = (
     "INSERT INTO resolutions (market_ticker, outcome_ppm) VALUES (?, ?)"
 )
 
+#: Parametrized insert for one projected execution-quality row.
+_INSERT_EXECUTION_RECORD_SQL = (
+    "INSERT INTO execution_records "
+    "(actual_cost_micros, modeled_cost_micros, created_sequence) VALUES (?, ?, ?)"
+)
 
-def _forecast_row(forecast: FixtureForecast) -> tuple[str, int, int, int]:
+
+def _forecast_row(
+    forecast: FixtureForecast,
+) -> tuple[str, int, int, int, int, int | None]:
     """Project one forecast into its ``forecasts`` table row.
 
     Args:
         forecast: The admitted forecast to project.
 
     Returns:
-        The ``(market_ticker, probability_ppm, baseline_ppm, traded)`` row, with
-        ``baseline_ppm`` lifted from pips and ``traded`` as ``0``/``1``.
+        The ``(market_ticker, probability_ppm, baseline_ppm, traded, live,
+        created_sequence)`` row, with ``baseline_ppm`` lifted from pips and
+        ``traded``/``live`` as ``0``/``1``.
     """
     return (
         forecast.market_ticker,
         forecast.probability_ppm.value,
         forecast.baseline_executable_price_pips * _BASELINE_PPM_PER_PIP,
         1 if forecast.traded else 0,
+        1 if forecast.live else 0,
+        forecast.created_sequence,
+    )
+
+
+def _execution_record_row(record: ExecutionQualityRecord) -> tuple[int, int, int]:
+    """Project one execution-quality record into its table row.
+
+    Args:
+        record: The admitted execution-quality record to project.
+
+    Returns:
+        The ``(actual_cost_micros, modeled_cost_micros, created_sequence)`` row.
+    """
+    return (
+        record.actual_cost_micros,
+        record.modeled_cost_micros,
+        record.created_sequence,
     )
 
 
@@ -485,13 +585,18 @@ def create_gate_database(inputs: EvaluationInputs) -> sqlite3.Connection:
     _register_udfs(conn)
     conn.execute(_CREATE_FORECASTS_SQL)
     conn.execute(_CREATE_RESOLUTIONS_SQL)
+    conn.execute(_CREATE_EXECUTION_RECORDS_SQL)
     forecast_rows = [_forecast_row(forecast) for forecast in inputs.forecasts]
     resolution_rows = [
         _resolution_row(ticker, outcome)
         for ticker, outcome in inputs.resolutions.items()
     ]
+    execution_rows = [
+        _execution_record_row(record) for record in inputs.execution_records
+    ]
     conn.executemany(_INSERT_FORECAST_SQL, forecast_rows)
     conn.executemany(_INSERT_RESOLUTION_SQL, resolution_rows)
+    conn.executemany(_INSERT_EXECUTION_RECORD_SQL, execution_rows)
     return conn
 
 
@@ -600,7 +705,75 @@ SELECT hk_delta(
    JOIN resolutions AS r ON f.market_ticker = r.market_ticker
    WHERE f.traded = 1))
 """,
+    "live_slippage_ratio": """
+SELECT hk_ratio(SUM(actual_cost_micros), SUM(modeled_cost_micros))
+FROM (
+  SELECT actual_cost_micros, modeled_cost_micros
+  FROM execution_records
+  ORDER BY created_sequence DESC
+  LIMIT ?
+)
+""",
+    "live_brier_degradation": """
+WITH live_latest AS (
+  SELECT f.probability_ppm AS probability_ppm, r.outcome_ppm AS outcome_ppm,
+         f.created_sequence AS created_sequence
+  FROM forecasts AS f
+  JOIN resolutions AS r ON f.market_ticker = r.market_ticker
+  WHERE f.live = 1
+    AND f.created_sequence = (
+      SELECT MAX(f2.created_sequence) FROM forecasts AS f2
+      JOIN resolutions AS r2 ON f2.market_ticker = r2.market_ticker
+      WHERE f2.market_ticker = f.market_ticker AND f2.live = 1)
+),
+live_windowed AS (
+  SELECT probability_ppm, outcome_ppm FROM live_latest
+  ORDER BY created_sequence DESC
+  LIMIT ?
+),
+paper_latest AS (
+  SELECT f.probability_ppm AS probability_ppm, r.outcome_ppm AS outcome_ppm
+  FROM forecasts AS f
+  JOIN resolutions AS r ON f.market_ticker = r.market_ticker
+  WHERE f.live = 0
+    AND f.created_sequence = (
+      SELECT MAX(f2.created_sequence) FROM forecasts AS f2
+      JOIN resolutions AS r2 ON f2.market_ticker = r2.market_ticker
+      WHERE f2.market_ticker = f.market_ticker AND f2.live = 0)
+),
+paper_resolved AS (
+  SELECT probability_ppm, outcome_ppm FROM paper_latest
+)
+SELECT hk_degradation(
+  (SELECT SUM((probability_ppm - outcome_ppm) * (probability_ppm - outcome_ppm))
+   FROM live_windowed),
+  (SELECT COUNT(*) FROM live_windowed),
+  (SELECT SUM((probability_ppm - outcome_ppm) * (probability_ppm - outcome_ppm))
+   FROM paper_resolved),
+  (SELECT COUNT(*) FROM paper_resolved))
+""",
 }
+
+
+def _query_parameters(name: str, plan: GatePlan) -> tuple[int, ...]:
+    """Return the sqlite3 ``?`` bindings a metric's query needs.
+
+    Only the live-divergence metrics parametrize their query -- each binds
+    ``plan.live_rolling_window_size`` into a ``LIMIT ?`` so the rolling window is
+    never string-spliced into SQL (keeping bandit B608 clean). Every other
+    metric's query is a static literal and takes no parameters.
+
+    Args:
+        name: The registered metric name whose query is about to run.
+        plan: The gate plan supplying the rolling-window size.
+
+    Returns:
+        A single-element ``(window_size,)`` tuple for a rolling-window metric,
+        else an empty tuple.
+    """
+    if name in _ROLLING_WINDOW_METRICS:
+        return (plan.live_rolling_window_size,)
+    return ()
 
 
 class SqlGateComputer:
@@ -640,18 +813,22 @@ class SqlGateComputer:
         conn = create_gate_database(inputs)
         try:
             return {
-                name: self._value_for(conn, name)
+                name: self._value_for(conn, name, plan)
                 for name, _window in plan.metric_windows
             }
         finally:
             conn.close()
 
-    def _value_for(self, conn: sqlite3.Connection, name: str) -> SqlMetricValue:
+    def _value_for(
+        self, conn: sqlite3.Connection, name: str, plan: GatePlan
+    ) -> SqlMetricValue:
         """Compute one metric's value, degrading a raised query to a sentinel.
 
         Args:
             conn: The open gate database.
             name: The registered metric name to compute.
+            plan: The gate plan, supplying the rolling-window ``LIMIT ?`` binding
+                for the live-divergence metrics.
 
         Returns:
             The metric's SQL value;
@@ -668,7 +845,7 @@ class SqlGateComputer:
         if query is None:
             return SQL_QUERY_FAILED
         try:
-            scalar = conn.execute(query).fetchone()[0]
+            scalar = conn.execute(query, _query_parameters(name, plan)).fetchone()[0]
         except sqlite3.Error:
             return SQL_QUERY_FAILED
         if scalar is None:

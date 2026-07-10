@@ -20,6 +20,19 @@ _YAML_KEY = "yaml_key"
 #: Metadata tag naming the loader converter applied to a field's raw value.
 _CONVERT = "convert"
 
+#: Number of most-recent resolved LIVE forecasts / execution records the
+#: live-divergence gates score over, keyed off ``created_sequence`` descending
+#: (issue #58, SPEC §10.9/§10.10). A count, not a ppm.
+_DEFAULT_LIVE_ROLLING_WINDOW_SIZE = 100
+
+#: Ceiling on the live-vs-paper cost slippage ratio, in parts-per-million;
+#: 1_500_000 ppm == 1.5x the modeled cost (issue #58's worked example).
+_DEFAULT_LIVE_SLIPPAGE_RATIO_LIMIT_PPM = 1_500_000
+
+#: Allowed LIVE-over-PAPER rolling Brier degradation band, in parts-per-million,
+#: before the divergence monitor demotes (issue #58).
+_DEFAULT_LIVE_BRIER_DEGRADATION_BAND_PPM = 50_000
+
 
 @dataclass(frozen=True, slots=True)
 class ModelRef:
@@ -179,6 +192,18 @@ class EvaluationConfig:
             parts-per-million (an integer), not a probability float; SPEC
             §16's ``bootstrap_confidence: 0.95`` maps here to ``950000`` via
             the loader's converter, preserving the integer-units invariant.
+        live_rolling_window_size: Number of most-recent resolved LIVE forecasts /
+            execution records the live-divergence gates score over (a count).
+            Pinned to :data:`~windbreak.evaluation.registry.LIVE_ROLLING_WINDOW_SIZE`,
+            the constant the Python reference path truncates to, and validated
+            fail-closed at :func:`~windbreak.evaluation.preregistration.build_gate_plan`
+            (a divergent value raises) so both dual-paths agree exactly. Changing
+            it is a code change to that constant, which re-registers the gate plan
+            (§13.6 clock reset), not a freely operator-tunable knob.
+        live_slippage_ratio_limit_ppm: Ceiling on the live-vs-paper cost slippage
+            ratio, in ppm (``1_500_000`` == 1.5x the modeled cost).
+        live_brier_degradation_band_ppm: Allowed LIVE-over-PAPER rolling Brier
+            degradation, in ppm, before the divergence monitor demotes.
     """
 
     min_resolved_for_calibration: int = 150
@@ -190,6 +215,9 @@ class EvaluationConfig:
         metadata={_YAML_KEY: "bootstrap_confidence", _CONVERT: "confidence_to_ppm"},
     )
     observation_window: str = "latest_before_close"
+    live_rolling_window_size: int = _DEFAULT_LIVE_ROLLING_WINDOW_SIZE
+    live_slippage_ratio_limit_ppm: int = _DEFAULT_LIVE_SLIPPAGE_RATIO_LIMIT_PPM
+    live_brier_degradation_band_ppm: int = _DEFAULT_LIVE_BRIER_DEGRADATION_BAND_PPM
 
 
 @dataclass(frozen=True, slots=True)

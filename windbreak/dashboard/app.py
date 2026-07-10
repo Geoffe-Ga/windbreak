@@ -27,6 +27,8 @@ from typing import TYPE_CHECKING, cast
 from windbreak.dashboard.views import (
     render_decisions,
     render_equity_vs_floor,
+    render_execution_quality,
+    render_live_divergence,
     render_positions,
 )
 
@@ -50,6 +52,11 @@ _ROOT_PATH = "/"
 _POSITIONS_PATH = "/positions"
 _EQUITY_PATH = "/equity"
 _DECISIONS_PATH = "/decisions"
+
+#: The live execution-quality / divergence view paths (issue #58), each gated
+#: behind the same bearer auth as ``/`` and rendered from the read-models source.
+_EXECUTION_PATH = "/execution"
+_DIVERGENCE_PATH = "/divergence"
 
 #: The human-acknowledgement surface paths (issue #57): ``POST /ack`` grants a
 #: named pending acknowledgement, ``GET /acks`` renders the pending ones. Both
@@ -170,11 +177,18 @@ class _ViewSpec:
     render: Callable[[list[dict[str, object]]], str]
 
 
-#: The three PAPER-loop read-model views, keyed by their route path (issue #48).
+#: The read-model views, keyed by their route path: the three PAPER-loop views
+#: (issue #48) plus the two live-divergence views (issue #58).
 _VIEWS: dict[str, _ViewSpec] = {
     _POSITIONS_PATH: _ViewSpec("positions", "positions", render_positions),
     _EQUITY_PATH: _ViewSpec("equity", "equity_curve", render_equity_vs_floor),
     _DECISIONS_PATH: _ViewSpec("decisions", "decisions", render_decisions),
+    _EXECUTION_PATH: _ViewSpec(
+        "execution", "execution_quality", render_execution_quality
+    ),
+    _DIVERGENCE_PATH: _ViewSpec(
+        "divergence", "live_divergence", render_live_divergence
+    ),
 }
 
 
@@ -253,9 +267,11 @@ class _DashboardHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         """Route ``GET`` requests: 404 off-route, 401 unauthenticated, else 200.
 
-        The status page (``/``) and the three PAPER-loop read-model views
-        (``/positions``/``/equity``/``/decisions``, issue #48) share the same
-        timing-safe bearer gate; every other path is a 404 regardless of auth.
+        The status page (``/``) and every read-model view in :data:`_VIEWS`
+        (the PAPER-loop ``/positions``/``/equity``/``/decisions``, issue #48,
+        plus the live-divergence ``/execution``/``/divergence``, issue #58) share
+        the same timing-safe bearer gate; every other path is a 404 regardless of
+        auth.
 
         Named ``do_GET`` because :class:`http.server.BaseHTTPRequestHandler`
         dispatches by ``"do_" + command``; the name is fixed by that contract,

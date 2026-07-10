@@ -43,6 +43,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import windbreak.evaluation.cohorts as cohorts
+import windbreak.evaluation.execution_quality as execution_quality
 import windbreak.evaluation.metrics as metrics
 from windbreak.evaluation.temporal import enforce_temporal_integrity
 from windbreak.evaluation.windows import (
@@ -55,9 +56,22 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
     from typing import Final
 
+    from windbreak.evaluation.execution_quality import ExecutionQualityRecord
     from windbreak.evaluation.resolution import ResolutionOutcome
     from windbreak.evaluation.temporal import RejectionEvent, TemporalContext
     from windbreak.numeric.types import ProbabilityPpm
+
+#: The rolling-window size the live-divergence metrics truncate their most-recent
+#: cohort to, keyed off ``created_sequence`` descending. This constant is the
+#: single source of truth for the window: the SQL reproduction binds the plan's
+#: ``live_rolling_window_size`` into its ``LIMIT``, and
+#: :func:`~windbreak.evaluation.preregistration.build_gate_plan` validates
+#: fail-closed that ``EvaluationConfig.live_rolling_window_size`` equals this
+#: constant, so the Python reference and the SQL reproduction always score the
+#: identical window (#58). Changing the window is a code change to this constant,
+#: which re-registers the pre-registered gate plan (§13.6 clock reset) -- it is
+#: not a freely operator-tunable config knob.
+LIVE_ROLLING_WINDOW_SIZE: int = 100
 
 #: Inclusive lower bound of a valid ``probability_ppm`` (0.0 as parts-per-million).
 _PROBABILITY_PPM_MIN = 0
@@ -126,6 +140,9 @@ class FixtureForecast:
         created_sequence: The forecast's creation sequence on the append-only
             ledger, or ``None`` when it carried no recorded provenance (which
             the temporal gate treats as fail-closed pre-deployment, #52).
+        live: Whether this forecast is on the LIVE track (vs the PAPER track).
+            Defaults to ``False`` so every pre-#58 construction stays valid; the
+            live-divergence metrics partition on this flag (#58).
     """
 
     forecast_id: str
@@ -137,6 +154,7 @@ class FixtureForecast:
     baseline_executable_price_pips: int
     correlation_group_id: str | None = None
     created_sequence: int | None = None
+    live: bool = False
 
     def __post_init__(self) -> None:
         """Validate the numeric invariants of the forecast row.
@@ -182,11 +200,17 @@ class EvaluationInputs:
         temporal: The temporal context the run's forecasts are gated against
             (#52), or ``None`` for a run that carries no temporal coordinates
             (e.g. a renderer or stub unit test over empty inputs).
+        execution_records: The live-fill execution-quality records the
+            ``live_slippage_ratio`` metric folds (#58). Defaults to ``()`` so
+            every pre-#58 construction stays valid; unlike forecasts, fills are
+            not forecast-gated, so the temporal gate carries them through
+            unchanged.
     """
 
     forecasts: tuple[FixtureForecast, ...]
     resolutions: Mapping[str, ResolutionOutcome]
     temporal: TemporalContext | None = None
+    execution_records: tuple[ExecutionQualityRecord, ...] = ()
 
 
 def gate_evaluation_inputs(
@@ -217,6 +241,7 @@ def gate_evaluation_inputs(
         forecasts=result.admitted_forecasts,
         resolutions=inputs.resolutions,
         temporal=inputs.temporal,
+        execution_records=inputs.execution_records,
     )
     return admitted, result.rejections
 
@@ -254,6 +279,7 @@ def _windowed(inputs: EvaluationInputs, window: ObservationWindow) -> Evaluation
         forecasts=selected.forecasts,
         resolutions=inputs.resolutions,
         temporal=inputs.temporal,
+        execution_records=inputs.execution_records,
     )
 
 
@@ -394,6 +420,77 @@ def _compute_fill_vs_model_slippage(inputs: EvaluationInputs) -> MetricValue:
     return NOT_IMPLEMENTED
 
 
+def _windowed_execution_records(
+    inputs: EvaluationInputs,
+) -> tuple[ExecutionQualityRecord, ...]:
+    """Return the most-recent execution records within the rolling window.
+
+    Args:
+        inputs: The evaluation inputs carrying the execution-quality records.
+
+    Returns:
+        The :data:`LIVE_ROLLING_WINDOW_SIZE` records with the highest
+        ``created_sequence`` (descending), so the ratio scores only the current
+        window -- matching the SQL path's ``ORDER BY created_sequence DESC
+        LIMIT`` truncation.
+    """
+    ordered = sorted(
+        inputs.execution_records,
+        key=lambda record: record.created_sequence,
+        reverse=True,
+    )
+    return tuple(ordered[:LIVE_ROLLING_WINDOW_SIZE])
+
+
+def _compute_live_slippage_ratio(inputs: EvaluationInputs) -> MetricValue:
+    """Compute the execution-track live-vs-paper slippage ratio, in ppm (#58).
+
+    Args:
+        inputs: The evaluation inputs to score.
+
+    Returns:
+        The rolling-window slippage ratio delegated to
+        :func:`windbreak.evaluation.execution_quality.live_slippage_ratio`, or the
+        :data:`~windbreak.evaluation.cohorts.UNDEFINED` sentinel when no execution
+        record exists (an ordinary early-deployment state). A non-empty window
+        whose modeled-cost sum is ``0`` is likewise empty-but-valid and degrades
+        to the ``UNDEFINED`` sentinel, so the divergence monitor always samples
+        and never breaches on that degenerate window. The catch is scoped to
+        :class:`~windbreak.evaluation.execution_quality.ZeroModeledCostError`
+        alone, so any other invalid-input ``ValueError`` still propagates.
+    """
+    try:
+        return execution_quality.live_slippage_ratio(
+            _windowed_execution_records(inputs)
+        )
+    except execution_quality.ZeroModeledCostError:
+        return cohorts.UNDEFINED
+
+
+def _compute_live_brier_degradation(inputs: EvaluationInputs) -> MetricValue:
+    """Compute the LIVE-vs-PAPER rolling Brier degradation, in ppm (#58).
+
+    Args:
+        inputs: The evaluation inputs to score.
+
+    Returns:
+        ``mean_brier(LIVE_window) - mean_brier(PAPER)`` delegated to
+        :func:`windbreak.evaluation.cohorts.live_brier_degradation`; a positive
+        value flags the LIVE track scoring worse than the PAPER baseline. If
+        either cohort has no resolved records -- an ordinary early-deployment
+        state -- the :data:`~windbreak.evaluation.cohorts.UNDEFINED` sentinel is
+        returned rather than letting the empty-cohort case crash the report. The
+        catch is scoped to :class:`~windbreak.evaluation.cohorts.EmptyCohortError`
+        alone, so any other invalid-input ``ValueError`` still propagates.
+    """
+    try:
+        return cohorts.live_brier_degradation(
+            inputs, window=_FORECAST_WINDOW, window_size=LIVE_ROLLING_WINDOW_SIZE
+        )
+    except cohorts.EmptyCohortError:
+        return cohorts.UNDEFINED
+
+
 @dataclass(frozen=True, slots=True)
 class MetricSpec:
     """The static definition of one evaluation metric.
@@ -453,10 +550,11 @@ def _seed_metric_specs() -> list[MetricSpec]:
     ``expected_calibration_error``, ``calibration_slope``,
     ``calibration_intercept``, ``sharpness``); issue #53 makes
     ``traded_vs_skipped_brier_delta`` real too. Only ``fill_vs_model_slippage``
-    remains a stub.
+    remains a stub. Issue #58 adds the two live-divergence metrics
+    (``live_slippage_ratio``, ``live_brier_degradation``).
 
     Returns:
-        The nine metric specifications, spanning all three :class:`Track`s.
+        The eleven metric specifications, spanning all three :class:`Track`s.
     """
     return [
         MetricSpec(
@@ -512,6 +610,22 @@ def _seed_metric_specs() -> list[MetricSpec]:
             track=Track.EXECUTION,
             window=ObservationWindow.TRADE_TRIGGERING,
             compute=_compute_fill_vs_model_slippage,
+        ),
+        MetricSpec(
+            name="live_slippage_ratio",
+            track=Track.EXECUTION,
+            window=ObservationWindow.TRADE_TRIGGERING,
+            compute=_compute_live_slippage_ratio,
+        ),
+        # ``live_brier_degradation`` is ``Track.FORECAST`` (a forecast-quality
+        # Brier delta), whereas its "live-divergence" sibling
+        # ``live_slippage_ratio`` above is ``Track.EXECUTION`` (an
+        # execution-quality cost ratio) -- the two do NOT share a track.
+        MetricSpec(
+            name="live_brier_degradation",
+            track=Track.FORECAST,
+            window=ObservationWindow.LATEST_BEFORE_CLOSE,
+            compute=_compute_live_brier_degradation,
         ),
     ]
 

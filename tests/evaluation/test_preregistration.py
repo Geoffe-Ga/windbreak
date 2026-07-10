@@ -75,6 +75,9 @@ _KNOWN_ANSWER_JSON = (
     '{"baseline_scheme":"executable_price_at_baseline_snapshot",'
     '"bootstrap_confidence_ppm":1,"brier_skill_required_ppm":1,'
     '"clustering_scheme":"event_correlation_group",'
+    '"live_brier_degradation_band_ppm":50000,'
+    '"live_rolling_window_size":100,'
+    '"live_slippage_ratio_limit_ppm":1500000,'
     '"metric_windows":[["brier","latest_before_close"]],'
     '"min_resolved_for_calibration":1,'
     '"observation_window":"latest_before_close",'
@@ -166,7 +169,7 @@ def _constant_clock(epoch: int) -> Callable[[], int]:
 # ---------------------------------------------------------------------------
 
 
-def test_build_gate_plan_derives_all_nine_registry_metric_windows() -> None:
+def test_build_gate_plan_derives_all_eleven_registry_metric_windows() -> None:
     """`build_gate_plan` derives `metric_windows` from the live registry.
 
     Every metric in `windbreak.evaluation.registry.registered_metrics()` maps
@@ -196,6 +199,8 @@ def test_build_gate_plan_derives_all_nine_registry_metric_windows() -> None:
         ("calibration_slope", "latest_before_close"),
         ("expected_calibration_error", "latest_before_close"),
         ("fill_vs_model_slippage", "trade_triggering"),
+        ("live_brier_degradation", "latest_before_close"),
+        ("live_slippage_ratio", "trade_triggering"),
         ("log_score", "latest_before_close"),
         ("sharpness", "latest_before_close"),
         ("traded_vs_skipped_brier_delta", "latest_before_close"),
@@ -205,7 +210,7 @@ def test_build_gate_plan_derives_all_nine_registry_metric_windows() -> None:
     plan = build_gate_plan(EvaluationConfig(), paper_fill_model_version="pfm-v1")
 
     assert plan.metric_windows == expected_literal
-    assert len(plan.metric_windows) == 9
+    assert len(plan.metric_windows) == 11
     assert plan.min_resolved_for_calibration == 150
     assert plan.promotion_min_resolved == 300
     assert plan.promotion_min_independent_event_groups == 100
@@ -283,7 +288,9 @@ def test_gate_plan_canonical_json_and_hash_pin_known_answer() -> None:
 
     Fields: a single `("brier", "latest_before_close")` metric window, every
     threshold set to `1`, `observation_window="latest_before_close"`, the two
-    default scheme constants, and `paper_fill_model_version="pfm-v1"`.
+    default scheme constants, and `paper_fill_model_version="pfm-v1"`. The three
+    issue-#58 live-threshold fields are left unset, so they carry their defaulted
+    values (`100`, `1_500_000`, `50_000`) in the canonical JSON.
     `canonical_json_str` must equal `_KNOWN_ANSWER_JSON` byte-for-byte (sorted
     keys, no whitespace); `plan_hash` must be exactly the 64-lowercase-hex
     SHA-256 digest of that literal (see module docstring for why this is
@@ -322,11 +329,14 @@ def test_gate_plan_canonical_json_and_hash_pin_known_answer() -> None:
 def test_gate_plan_single_field_mutation_always_changes_plan_hash() -> None:
     """ACCEPTANCE #2a: every field, mutated alone, changes `plan_hash`.
 
-    Covers every `GatePlan` field: each of the five int thresholds (+1), the
+    Covers every `GatePlan` field: each of the eight int thresholds (+1), the
     `observation_window` string, both scheme strings,
     `paper_fill_model_version`, and one `metric_windows` entry's window
     value -- each mutated alone off a shared baseline built by
-    `build_gate_plan`.
+    `build_gate_plan`. The baseline is built via `build_gate_plan`, but each
+    variant is produced with `dataclasses.replace`, which bypasses that
+    function's window-pinning guard, so mutating `live_rolling_window_size`
+    to prove it is content-addressed is safe here.
     """
     from windbreak.evaluation.preregistration import build_gate_plan
 
@@ -356,6 +366,19 @@ def test_gate_plan_single_field_mutation_always_changes_plan_hash() -> None:
         ),
         "bootstrap_confidence_ppm": dataclasses.replace(
             baseline, bootstrap_confidence_ppm=baseline.bootstrap_confidence_ppm + 1
+        ),
+        "live_rolling_window_size": dataclasses.replace(
+            baseline, live_rolling_window_size=baseline.live_rolling_window_size + 1
+        ),
+        "live_slippage_ratio_limit_ppm": dataclasses.replace(
+            baseline,
+            live_slippage_ratio_limit_ppm=baseline.live_slippage_ratio_limit_ppm + 1,
+        ),
+        "live_brier_degradation_band_ppm": dataclasses.replace(
+            baseline,
+            live_brier_degradation_band_ppm=(
+                baseline.live_brier_degradation_band_ppm + 1
+            ),
         ),
         "observation_window": dataclasses.replace(
             baseline, observation_window="daily_snapshots"
