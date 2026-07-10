@@ -24,13 +24,14 @@ from windbreak.alerts import AlertDispatcher, AlertType, LoggingLedgerWriter, cl
 from windbreak.config import (
     ConfigError,
     InMemoryConfigEventRecorder,
+    LedgerConfigEventRecorder,
     config_hash,
     load_config,
     load_default_config,
 )
 from windbreak.drills.catalog import DRILL_NAMES
 from windbreak.drills.context import bind_paper_context, bind_production_context
-from windbreak.ledger import rebuild_command
+from windbreak.ledger import SqliteLedgerStore, rebuild_command
 from windbreak.logging_setup import configure_logging
 from windbreak.riskkernel.ack_flow import ACKS_DIRNAME
 from windbreak.riskkernel.kill import KILL_FILENAME, REARM_FILENAME
@@ -39,7 +40,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
     from types import FrameType
 
-    from windbreak.config import WindbreakConfig
+    from windbreak.config import ConfigLoadEvent, WindbreakConfig
 
 #: Operating mode reported in every heartbeat line. Matches the RESEARCH state
 #: of the SPEC mode machine; windbreak ships research-only for now.
@@ -229,7 +230,11 @@ def _add_paper_loop_arguments(run_parser: argparse.ArgumentParser) -> None:
         "--ledger-path",
         type=Path,
         default=None,
-        help="Path to the PAPER loop's hash-chained ledger database.",
+        help=(
+            "Path to the operational hash-chained ledger database. Every "
+            "successful config load records a ConfigLoaded event here; the "
+            "PAPER loop, when activated, appends its events to the same file."
+        ),
     )
     run_parser.add_argument(
         "--report-dir",
@@ -849,6 +854,32 @@ def _resolve_on_beat(
     return None
 
 
+def _ledger_config_loads(
+    ledger_path: Path, events: list[ConfigLoadEvent], component: str
+) -> None:
+    """Append each captured config-load event to the hash-chained ledger.
+
+    Opens the ledger at ``ledger_path`` only after the config has already
+    loaded cleanly through the in-memory recorder, so a fatal ``--config``
+    error stays fail-closed and never creates a database file. The store is
+    closed before returning, so a later PAPER loop can reopen the same file.
+
+    Args:
+        ledger_path: Filesystem path to the hash-chained ledger database.
+        events: The config-load events captured during this run, in order.
+        component: The process label stamped on each ``ConfigLoaded`` event.
+    """
+    store = SqliteLedgerStore(ledger_path)
+    try:
+        recorder = LedgerConfigEventRecorder(store, component=component)
+        for event in events:
+            recorder.record_config_loaded(
+                config_hash=event.config_hash, diff=event.diff, source=event.source
+            )
+    finally:
+        store.close()
+
+
 def _run_heartbeat(args: argparse.Namespace) -> int:
     """Load the requested config, log it, then drive the heartbeat loop.
 
@@ -856,15 +887,22 @@ def _run_heartbeat(args: argparse.Namespace) -> int:
     diagnostics emitted here (the ``config loaded`` line, or a ``FATAL``
     critical on a bad ``--config``) are JSON records like every other log
     line -- the ``--config`` loader (issue #11) and the JSON logging pipeline
-    (issue #14) composed into one flow.
+    (issue #14) composed into one flow. The config is first loaded through an
+    in-memory recorder so a bad ``--config`` fails closed *before* any ledger
+    file is opened; only after the successful load does a supplied
+    ``--ledger-path`` get the captured ``ConfigLoaded`` event(s) persisted to
+    the real hash-chained ledger (issue #74) -- as the first records, before
+    any PAPER-loop events.
 
     Args:
         args: Parsed ``run`` arguments carrying ``config``, ``process``,
-            ``heartbeat_interval``, ``max_beats``, and ``snapshot_fixture_dir``.
-            The loaded config and the ``--process`` component compose here: the
-            config is loaded and logged, then the heartbeat loop runs stamped
-            with that component. When ``--snapshot-fixture-dir`` is given, a
-            per-beat snapshot hook is wired in alongside.
+            ``heartbeat_interval``, ``max_beats``, ``ledger_path``, and
+            ``snapshot_fixture_dir``. The loaded config and the ``--process``
+            component compose here: the config is loaded and logged, its load
+            is ledgered when ``--ledger-path`` is given, then the heartbeat
+            loop runs stamped with that component. When
+            ``--snapshot-fixture-dir`` is given, a per-beat snapshot hook is
+            wired in alongside.
 
     Returns:
         The process exit code (0 on success, 1 on a fatal config error).
@@ -882,6 +920,8 @@ def _run_heartbeat(args: argparse.Namespace) -> int:
         config.mode_ceiling,
         config_hash(config),
     )
+    if args.ledger_path is not None:
+        _ledger_config_loads(args.ledger_path, recorder.events, args.process)
     state = ShutdownState()
     _install_signal_handlers(state)
     on_beat = _resolve_on_beat(args, config)

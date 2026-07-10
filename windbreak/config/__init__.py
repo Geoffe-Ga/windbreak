@@ -10,6 +10,10 @@ build on this typed foundation in later issues.
 
 from __future__ import annotations
 
+from windbreak.config.ledger_recorder import (
+    LedgerConfigEventRecorder,
+    diff_payload,
+)
 from windbreak.config.loader import (
     ConfigError,
     confidence_to_ppm,
@@ -61,6 +65,7 @@ __all__ = [
     "ForecastConfig",
     "HorizonDays",
     "InMemoryConfigEventRecorder",
+    "LedgerConfigEventRecorder",
     "ModelRef",
     "OpsConfig",
     "RiskConfig",
@@ -70,6 +75,7 @@ __all__ = [
     "confidence_to_ppm",
     "config_hash",
     "diff_configs",
+    "diff_payload",
     "flatten",
     "format_diff",
     "load_config",

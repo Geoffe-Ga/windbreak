@@ -3,8 +3,9 @@
 Loading a configuration is an auditable event: each load carries the
 resulting config hash, the diff against defaults, and its source. This
 module defines the :class:`ConfigEventRecorder` boundary the loader calls,
-plus an in-memory implementation for tests and early wiring. Backing this
-boundary with the real ledger is deferred to a later issue.
+plus an in-memory implementation for tests and early wiring. This boundary is
+backed by the real hash-chained ledger in
+:mod:`windbreak.config.ledger_recorder` (issue #74).
 """
 
 from __future__ import annotations
