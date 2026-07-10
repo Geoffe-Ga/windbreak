@@ -64,6 +64,19 @@ Order flow has exactly one path: market snapshot → screen → (triage) → for
 
 See [`plans/SPEC_v3.md`](plans/SPEC_v3.md) for the full specification: threat model, canonical data model, evaluation methodology, configuration reference, testing strategy, and milestone plan.
 
+## Documentation
+
+Operator-facing documentation lives at the repo root (SPEC §19):
+
+- [`SECURITY.md`](SECURITY.md) — credential boundaries, the preflight checklist, egress allowlist, supply chain.
+- [`RUNBOOK.md`](RUNBOOK.md) — numbered operator procedures: start/stop, kill/re-arm/ack, drills, preflight, rebuild.
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — the four-process topology, order-flow path, and the import-boundary rule.
+- [`ACCOUNTING.md`](ACCOUNTING.md) — the fixed-point unit types, conservative rounding, and the floor formula.
+- [`EVALUATION.md`](EVALUATION.md) — the three evaluation tracks, baselines, bootstrap, and pre-registration.
+- [`LEGAL_AND_COMPLIANCE.md`](LEGAL_AND_COMPLIANCE.md) — jurisdiction/product eligibility, out-of-scope categories, record export.
+- [`OPERATOR_WARNINGS.md`](OPERATOR_WARNINGS.md) — the residual risks this software cannot remove.
+- [`docs/RUNBOOK.md`](docs/RUNBOOK.md) — the always-on PAPER loop's day-to-day mechanics (activation, dashboard views, weekly reports).
+
 ## Development
 
 Scaffolded with [Start Green Stay Green](https://github.com/Geoffe-Ga/start_green_stay_green): quality gates, CI/CD, AI subagents, and the Ralph autonomous fleet loop are pre-configured.
@@ -109,7 +122,8 @@ plans/               # SPEC_v3.md and planning documents
 prompts/             # Maintenance-scan prompts
 .github/workflows/   # CI, AI code review, maintenance scans, metrics dashboard
 .claude/             # CLAUDE.md docs, skills, and subagent profiles
-docs/                # Live metrics dashboard (GitHub Pages)
+docs/                # Live metrics dashboard (GitHub Pages) + docs/RUNBOOK.md
+                     # (operator docs proper live at repo root -- see Documentation above)
 ```
 
 ### Deployment
