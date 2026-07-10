@@ -1,4 +1,4 @@
-"""Tests for `windbreak.ledger.store.SqliteLedgerStore` (issue #13).
+"""Tests for `windbreak.ledger.store.SqliteLedgerStore` (issue #13, #75).
 
 Pins the on-disk contract from SPEC §12: monotonically increasing
 sequence numbers starting at 1, hash chaining from a fixed genesis
@@ -10,17 +10,29 @@ The `compute_event_hash` known-answer test is the mutation-killer for
 the hashing formula itself: it independently recomputes the SHA-256
 digest in the test body using the exact §12 concatenation and asserts
 byte-for-byte equality with the production function's output.
+
+The `head()` tests (issue #75) pin the read used by anchor-head
+computation: the current chain head as a `ChainHead(sequence_number,
+event_hash)`, or `None` for an empty ledger.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import sqlite3
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
+import pytest
+
 from windbreak.ledger.events import GENESIS_PREV_HASH, ConfigLoaded, ModeHeartbeat
-from windbreak.ledger.store import LedgerRecord, SqliteLedgerStore, compute_event_hash
+from windbreak.ledger.store import (
+    ChainHead,
+    LedgerRecord,
+    SqliteLedgerStore,
+    compute_event_hash,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -232,3 +244,73 @@ def test_append_without_injected_clock_uses_default_clock_for_created_at(
     microseconds_digits = fractional_and_offset.split("+", 1)[0]
     assert len(microseconds_digits) == 6
     assert microseconds_digits.isdigit()
+
+
+def test_head_returns_none_for_empty_ledger(
+    ledger_store_factory: Callable[..., SqliteLedgerStore],
+) -> None:
+    """head() on a ledger with zero appended rows returns None."""
+    store = ledger_store_factory()
+
+    assert store.head() is None
+
+
+def test_head_returns_chain_head_matching_the_last_appended_row(
+    ledger_store_factory: Callable[..., SqliteLedgerStore],
+) -> None:
+    """head() returns a ChainHead pinned to the Nth appended row's seq/hash.
+
+    Builds a 5-row chain and asserts head() equals `ChainHead(5,
+    <the 5th row's event_hash>)` exactly -- a mutant that returns the wrong
+    row (e.g. the first, or an off-by-one) is caught by dataclass equality.
+    """
+    store = ledger_store_factory()
+    for beat in range(1, 6):
+        store.append(ModeHeartbeat(component="pipeline", mode="RESEARCH", beat=beat))
+
+    head = store.head()
+    last_record = store.read_all()[-1]
+
+    assert head == ChainHead(sequence_number=5, event_hash=last_record.event_hash)
+
+
+def test_head_matches_the_last_read_all_row_exactly(
+    ledger_store_factory: Callable[..., SqliteLedgerStore],
+) -> None:
+    """head()'s fields equal the last read_all() row's sequence_number/event_hash."""
+    store = ledger_store_factory()
+    store.append(ConfigLoaded(component="pipeline", config_hash="abc", diff={}))
+    store.append(ModeHeartbeat(component="pipeline", mode="RESEARCH", beat=1))
+
+    records = store.read_all()
+    head = store.head()
+
+    assert head is not None
+    assert head.sequence_number == records[-1].sequence_number
+    assert head.event_hash == records[-1].event_hash
+
+
+def test_head_reflects_the_new_head_after_a_further_append(
+    ledger_store_factory: Callable[..., SqliteLedgerStore],
+) -> None:
+    """head() called again after a further append reports the new head, not the old."""
+    store = ledger_store_factory()
+    store.append(ConfigLoaded(component="pipeline", config_hash="abc", diff={}))
+    first_head = store.head()
+
+    store.append(ModeHeartbeat(component="pipeline", mode="RESEARCH", beat=1))
+    second_head = store.head()
+
+    assert first_head is not None
+    assert first_head == ChainHead(sequence_number=1, event_hash=first_head.event_hash)
+    assert second_head is not None
+    assert second_head.sequence_number == 2
+    assert second_head.event_hash != first_head.event_hash
+
+
+def test_chain_head_is_frozen() -> None:
+    """ChainHead is an immutable dataclass: assigning to a field raises."""
+    head = ChainHead(sequence_number=1, event_hash="a" * 64)
+
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        head.sequence_number = 2  # type: ignore[misc]

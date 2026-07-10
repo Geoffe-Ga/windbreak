@@ -31,7 +31,12 @@ from windbreak.config import (
 )
 from windbreak.drills.catalog import DRILL_NAMES
 from windbreak.drills.context import bind_paper_context, bind_production_context
-from windbreak.ledger import SqliteLedgerStore, rebuild_command
+from windbreak.ledger import (
+    SqliteLedgerStore,
+    anchor_command,
+    rebuild_command,
+    verify_command,
+)
 from windbreak.logging_setup import configure_logging
 from windbreak.riskkernel.ack_flow import ACKS_DIRNAME
 from windbreak.riskkernel.kill import KILL_FILENAME, REARM_FILENAME
@@ -264,6 +269,46 @@ def _add_rebuild_arguments(rebuild_parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_anchor_arguments(anchor_parser: argparse.ArgumentParser) -> None:
+    """Register the ``anchor`` subcommand's options on its subparser.
+
+    Args:
+        anchor_parser: The ``anchor`` subparser to populate with options.
+    """
+    anchor_parser.add_argument(
+        "--ledger-path",
+        type=Path,
+        required=True,
+        help="Path to the SQLite ledger database.",
+    )
+    anchor_parser.add_argument(
+        "--anchor-path",
+        type=Path,
+        required=True,
+        help="Path to the append-only JSON-lines anchor file.",
+    )
+
+
+def _add_verify_arguments(verify_parser: argparse.ArgumentParser) -> None:
+    """Register the ``verify`` subcommand's options on its subparser.
+
+    Args:
+        verify_parser: The ``verify`` subparser to populate with options.
+    """
+    verify_parser.add_argument(
+        "--ledger-path",
+        type=Path,
+        required=True,
+        help="Path to the SQLite ledger database.",
+    )
+    verify_parser.add_argument(
+        "--anchor-path",
+        type=Path,
+        required=True,
+        help="Path to the append-only JSON-lines anchor file.",
+    )
+
+
 def _add_kill_arguments(kill_parser: argparse.ArgumentParser) -> None:
     """Register the ``kill`` subcommand's options on its subparser.
 
@@ -386,10 +431,13 @@ def build_parser() -> argparse.ArgumentParser:
         A parser with a required ``run`` subcommand exposing
         ``--heartbeat-interval``, ``--max-beats``, ``--process``,
         ``--snapshot-fixture-dir``, and ``--config``; a ``rebuild`` subcommand
-        exposing ``--ledger-path`` and ``--output-dir``; ``kill`` and ``rearm``
-        subcommands exposing ``--state-dir``; an ``ack`` subcommand exposing
-        ``--approval-id`` and ``--state-dir``; and a developer-only
-        ``alert-test`` subcommand hidden from ``--help``.
+        exposing ``--ledger-path`` and ``--output-dir``; ``anchor`` and
+        ``verify`` subcommands exposing ``--ledger-path`` and ``--anchor-path``
+        (append the ledger head to, and check the live chain against, the
+        anchor file); ``kill`` and ``rearm`` subcommands exposing
+        ``--state-dir``; an ``ack`` subcommand exposing ``--approval-id`` and
+        ``--state-dir``; and a developer-only ``alert-test`` subcommand hidden
+        from ``--help``.
     """
     parser = argparse.ArgumentParser(
         prog="windbreak",
@@ -405,6 +453,16 @@ def build_parser() -> argparse.ArgumentParser:
     _add_rebuild_arguments(
         subparsers.add_parser(
             "rebuild", help="Rebuild derived read models from the ledger."
+        )
+    )
+    _add_anchor_arguments(
+        subparsers.add_parser(
+            "anchor", help="Append the ledger's head hash to the anchor file."
+        )
+    )
+    _add_verify_arguments(
+        subparsers.add_parser(
+            "verify", help="Verify the ledger's live chain against its anchors."
         )
     )
     _add_kill_arguments(
@@ -949,6 +1007,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     configure_logging(level=logging.INFO)
     if args.command == "rebuild":
         return rebuild_command(args)
+    if args.command == "anchor":
+        return anchor_command(args)
+    if args.command == "verify":
+        return verify_command(args)
     if args.command == "kill":
         return _run_kill(args)
     if args.command == "ack":

@@ -128,6 +128,19 @@ class LedgerRecord:
     event_hash: str
 
 
+@dataclass(frozen=True)
+class ChainHead:
+    """The current head (last row) of the ledger's hash chain.
+
+    Attributes:
+        sequence_number: The head row's 1-based position in the chain.
+        event_hash: The head row's chained SHA-256 ``event_hash``.
+    """
+
+    sequence_number: int
+    event_hash: str
+
+
 class ChainIntegrityError(Exception):
     """Raised when the ledger's hash chain fails verification.
 
@@ -252,6 +265,22 @@ class SqliteLedgerStore:
             self._verify_row(record, expected_seq, expected_prev_hash)
             expected_prev_hash = record.event_hash
             expected_seq += 1
+
+    def head(self) -> ChainHead | None:
+        """Return the current chain head, or ``None`` for an empty ledger.
+
+        Reads the highest-sequence row via the same ``_SELECT_LAST_SQL`` the
+        append path uses to find its predecessor, so the head reported here is
+        exactly the row the next append would chain onto.
+
+        Returns:
+            A :class:`ChainHead` pinned to the last row's ``sequence_number``
+            and ``event_hash``, or ``None`` when no rows have been appended.
+        """
+        row = self._conn.execute(_SELECT_LAST_SQL).fetchone()
+        if row is None:
+            return None
+        return ChainHead(sequence_number=int(row[0]), event_hash=str(row[1]))
 
     def _verify_row(
         self, record: LedgerRecord, expected_seq: int, expected_prev_hash: str

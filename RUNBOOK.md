@@ -72,7 +72,7 @@ proves *restoring from* a ledger backup is safe, but there is no scheduled
 process that *produces* an encrypted backup of the live ledger today, so
 "restore from backup" as an end-to-end operator procedure has no producer half
 yet. Tracked in issue #201, which also covers the missing audit-bundle and
-tax-record export CLI (see procedure 9).
+tax-record export CLI (see procedure 10).
 
 ## 4. Rotate keys
 
@@ -145,7 +145,40 @@ closed with a nonzero exit code and the offending sequence number on stderr,
 rather than silently emitting a plausible-but-wrong projection. See
 `docs/RUNBOOK.md` for the six files it writes.
 
-## 9. SPEC §19 procedures with no CLI yet
+## 9. Anchor and verify the ledger against tail-rewrite tampering (issue #75)
+
+`rebuild` (procedure 8) and the drills' own `verify_chain` calls prove a
+ledger is *internally* consistent, but neither can tell a legitimately short
+chain from one whose tail was truncated and re-chained by a writer with raw
+database access — both verify cleanly. Anchoring closes that gap. Anchor the
+current chain head to an append-only, JSON-lines anchor file:
+
+```bash
+windbreak anchor --ledger-path <path> --anchor-path <path>
+```
+
+Later, verify the live chain against every anchor recorded so far:
+
+```bash
+windbreak verify --ledger-path <path> --anchor-path <path>
+```
+
+Both verify the chain first, so a corrupted chain fails closed with a
+nonzero exit code and the offending sequence number on stderr, same as
+`rebuild`. `verify` additionally fails closed on a missing or malformed
+anchor file, and reports the first anchored position whose live hash no
+longer matches (or has vanished) as a tail-rewrite mismatch. `anchor` is a
+silent no-op on an empty ledger — there is nothing to anchor yet.
+
+**Operator note — the anchor file is a separate trust root, not a stronger
+lock on the same one.** Anchoring only detects a tail rewrite if the anchor
+file is protected from whoever can reach the ledger database; an attacker (or
+process) with write access to **both** can forge a matching pair. Write the
+anchor file to a separately-permissioned volume, an append-only/write-once
+medium, or a remote/off-host sink the ledger writer cannot rewrite — never
+alongside the ledger database under the same principal.
+
+## 10. SPEC §19 procedures with no CLI yet
 
 The following SPEC §19 runbook items are not yet automatable end-to-end.
 Each is described honestly below rather than invented as a fake command.
