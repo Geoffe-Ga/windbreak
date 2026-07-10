@@ -14,6 +14,24 @@ byte-for-byte equality with the production function's output.
 The `head()` tests (issue #75) pin the read used by anchor-head
 computation: the current chain head as a `ChainHead(sequence_number,
 event_hash)`, or `None` for an empty ledger.
+
+The rollback tests (issue #76) pin `append`'s transactional contract: a
+failure injected between `BEGIN IMMEDIATE` and `COMMIT` (via a monkeypatched
+`compute_event_hash`) must propagate to the caller *and* leave the
+transaction released, so the ledger is byte-for-byte unchanged and the next
+append continues the chain normally. Today `append` has no
+try/ROLLBACK, so the injected failure leaves the SQLite connection sitting
+inside an un-released `BEGIN IMMEDIATE`; the very next `append` call fails
+with `sqlite3.OperationalError: cannot start a transaction within a
+transaction` instead of succeeding -- that is the FAILING-for-the-right-reason
+symptom these tests pin.
+
+The commit-time rollback test (issue #76 hardening) drives the harder
+*post-INSERT* case: it lets the SELECT-last read, `compute_event_hash`, and
+the `INSERT` all run for real, then forces `COMMIT` *itself* to fail, pinning
+that `append` still ROLLBACKs -- rather than COMMITs -- the already-inserted
+row. A mutant swapping `append`'s except-clause `ROLLBACK` for `COMMIT` would
+persist that row and so fail this test's snapshot-equality assertion.
 """
 
 from __future__ import annotations
@@ -37,6 +55,7 @@ from windbreak.ledger.store import (
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
+    from typing import Any, NoReturn
 
 
 def test_append_returns_monotonically_increasing_sequence_numbers(
@@ -314,3 +333,197 @@ def test_chain_head_is_frozen() -> None:
 
     with pytest.raises(dataclasses.FrozenInstanceError):
         head.sequence_number = 2  # type: ignore[misc]
+
+
+def _raise_mid_append_failure(
+    sequence_number: int,
+    event_type: str,
+    created_at: str,
+    payload_json: str,
+    prev_hash: str,
+) -> NoReturn:
+    """Simulate a failure between `BEGIN IMMEDIATE` and `COMMIT` (issue #76).
+
+    Matches `compute_event_hash`'s exact signature so it can replace the
+    function wholesale via `monkeypatch.setattr`, firing at the same point
+    `append` calls it: after the SELECT-last read, before the INSERT.
+
+    Args:
+        sequence_number: Unused; present only to mirror the replaced
+            function's signature.
+        event_type: Unused; see `sequence_number`.
+        created_at: Unused; see `sequence_number`.
+        payload_json: Unused; see `sequence_number`.
+        prev_hash: Unused; see `sequence_number`.
+
+    Raises:
+        RuntimeError: Always, with a fixed injected-failure message.
+    """
+    raise RuntimeError("injected mid-append failure")
+
+
+def test_append_rolls_back_and_recovers_after_mid_transaction_failure(
+    ledger_store_factory: Callable[..., SqliteLedgerStore],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failure between BEGIN and COMMIT propagates, rolls back, and heals.
+
+    Appends one good event, snapshots the ledger, then injects a failure
+    (via a monkeypatched `compute_event_hash`) inside the second append's
+    open transaction. The failure must propagate as `RuntimeError` rather
+    than being swallowed, the ledger must be byte-for-byte unchanged by the
+    failed append, and -- critically -- a further append afterwards must
+    succeed and continue the chain at sequence 2. Without an explicit
+    ROLLBACK, the failed append leaves the connection's `BEGIN IMMEDIATE`
+    open, so this final append instead raises `sqlite3.OperationalError:
+    cannot start a transaction within a transaction`.
+    """
+    store = ledger_store_factory()
+    store.append(ConfigLoaded(component="pipeline", config_hash="abc", diff={}))
+    snapshot_before_failure = store.read_all()
+    monkeypatch.setattr(
+        "windbreak.ledger.store.compute_event_hash", _raise_mid_append_failure
+    )
+
+    with pytest.raises(RuntimeError, match="injected mid-append failure"):
+        store.append(ModeHeartbeat(component="pipeline", mode="RESEARCH", beat=1))
+
+    monkeypatch.undo()
+    recovery_sequence = store.append(
+        ModeHeartbeat(component="pipeline", mode="RESEARCH", beat=2)
+    )
+
+    assert recovery_sequence == 2
+    records = store.read_all()
+    assert len(records) == 2
+    assert records[:-1] == snapshot_before_failure
+    store.verify_chain()
+
+
+def test_append_rolls_back_after_mid_transaction_failure_on_empty_ledger(
+    ledger_store_factory: Callable[..., SqliteLedgerStore],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failure on the very first append (the `last is None` branch) also heals.
+
+    Injects the same mid-transaction failure on an empty ledger's first
+    append, then undoes the patch and appends again: the recovered append
+    must land at sequence 1 with the genesis `prev_hash`, exactly as if the
+    failed attempt had never happened.
+    """
+    store = ledger_store_factory()
+    monkeypatch.setattr(
+        "windbreak.ledger.store.compute_event_hash", _raise_mid_append_failure
+    )
+
+    with pytest.raises(RuntimeError, match="injected mid-append failure"):
+        store.append(ConfigLoaded(component="pipeline", config_hash="abc", diff={}))
+
+    monkeypatch.undo()
+    recovery_sequence = store.append(
+        ConfigLoaded(component="pipeline", config_hash="abc", diff={})
+    )
+
+    assert recovery_sequence == 1
+    records = store.read_all()
+    assert len(records) == 1
+    assert records[0].prev_hash == GENESIS_PREV_HASH
+
+
+class _CommitFailingConnection:
+    """A `sqlite3` connection proxy that fails one `COMMIT` on demand (issue #76).
+
+    Wraps a real :class:`sqlite3.Connection`, delegating `execute` and `close`
+    verbatim, except that once :attr:`armed` is set the *next* `COMMIT`
+    statement raises :class:`RuntimeError` (and disarms itself). Because
+    `BEGIN IMMEDIATE`, the SELECT-last read, `compute_event_hash`, and the
+    `INSERT` all still run for real, the injected failure lands *after* a row
+    has been inserted into the open transaction -- the post-INSERT
+    (commit-time) fault a `ROLLBACK`->`COMMIT` mutant of `append`'s
+    except-clause would otherwise survive.
+
+    Attributes:
+        armed: When `True`, the next `COMMIT` execute raises instead of
+            committing; the proxy clears it so later commits proceed.
+    """
+
+    def __init__(self, real: sqlite3.Connection) -> None:
+        """Wrap `real` with the one-shot COMMIT fault disarmed.
+
+        Args:
+            real: The genuine SQLite connection every call delegates to.
+        """
+        self._real = real
+        self.armed = False
+
+    def execute(self, sql: str, *args: Any) -> sqlite3.Cursor:
+        """Delegate to the real connection, failing one armed `COMMIT`.
+
+        Args:
+            sql: The SQL statement to execute.
+            *args: Optional bound parameters, forwarded verbatim.
+
+        Returns:
+            The real connection's cursor for every delegated statement.
+
+        Raises:
+            RuntimeError: On the first `COMMIT` seen while armed, simulating a
+                commit-time failure after a successful INSERT; the proxy
+                disarms itself so the recovery append can commit normally.
+        """
+        if self.armed and sql.strip().upper().startswith("COMMIT"):
+            self.armed = False
+            raise RuntimeError("injected commit failure")
+        return self._real.execute(sql, *args)
+
+    def close(self) -> None:
+        """Close the wrapped real connection."""
+        self._real.close()
+
+
+def test_append_rolls_back_when_commit_itself_fails_after_insert(
+    ledger_store_factory: Callable[..., SqliteLedgerStore],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A COMMIT-time failure (post-INSERT) still ROLLBACKs the inserted row.
+
+    Pins the load-bearing append-only property at the point the two
+    `compute_event_hash`-based rollback tests cannot reach. Those inject the
+    failure *before* the INSERT, so no row is ever written and a mutant
+    swapping `append`'s except-clause `ROLLBACK` for `COMMIT` would still pass
+    them. This test instead lets the SELECT-last read, hashing, and `INSERT`
+    all run for real, then forces `COMMIT` *itself* to fail via a one-shot
+    connection proxy. The injected `RuntimeError` must propagate, and
+    `append`'s `ROLLBACK` must undo the already-inserted row -- so `read_all`
+    is byte-for-byte the pre-failure snapshot, the connection heals (a further
+    append commits at sequence 2), and `verify_chain` sees a contiguous 1..2
+    chain. A `ROLLBACK`->`COMMIT` mutant would instead persist the failed row,
+    failing the snapshot-equality assertion -- which is what kills it.
+    """
+    real_connect = sqlite3.connect
+    created_proxies: list[_CommitFailingConnection] = []
+
+    def fake_connect(*args: Any, **kwargs: Any) -> _CommitFailingConnection:
+        proxy = _CommitFailingConnection(real_connect(*args, **kwargs))
+        created_proxies.append(proxy)
+        return proxy
+
+    monkeypatch.setattr(sqlite3, "connect", fake_connect)
+
+    store = ledger_store_factory()
+    store.append(ConfigLoaded(component="pipeline", config_hash="abc", diff={}))
+    snapshot_before_failure = store.read_all()
+
+    created_proxies[-1].armed = True
+    with pytest.raises(RuntimeError, match="injected commit failure"):
+        store.append(ModeHeartbeat(component="pipeline", mode="RESEARCH", beat=1))
+
+    assert store.read_all() == snapshot_before_failure
+
+    recovery_sequence = store.append(
+        ModeHeartbeat(component="pipeline", mode="RESEARCH", beat=2)
+    )
+
+    assert recovery_sequence == 2
+    assert [record.sequence_number for record in store.read_all()] == [1, 2]
+    store.verify_chain()

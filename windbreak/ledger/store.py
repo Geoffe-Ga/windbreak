@@ -212,34 +212,46 @@ class SqliteLedgerStore:
 
         Returns:
             The sequence number assigned to the new record.
+
+        Raises:
+            Exception: Any failure mid-append (e.g. from hashing or the INSERT)
+                rolls back the ``BEGIN IMMEDIATE`` transaction — releasing the
+                write lock and leaving the ledger unchanged — and re-raises the
+                original exception unchanged.
         """
         created_at = self._now().isoformat(timespec="microseconds")
         payload_json = event.envelope_json
+        # ``BEGIN IMMEDIATE`` stays outside the ``try`` so that a failure to
+        # acquire the write lock leaves no half-open transaction to roll back.
         self._conn.execute("BEGIN IMMEDIATE")
-        last = self._conn.execute(_SELECT_LAST_SQL).fetchone()
-        if last is None:
-            sequence_number = 1
-            prev_hash = GENESIS_PREV_HASH
-        else:
-            sequence_number = int(last[0]) + 1
-            prev_hash = str(last[1])
-        event_hash = compute_event_hash(
-            sequence_number, event.event_type, created_at, payload_json, prev_hash
-        )
-        self._conn.execute(
-            _INSERT_SQL,
-            (
-                sequence_number,
-                event.event_type,
-                created_at,
-                event.component,
-                payload_json,
-                event.payload_schema_version,
-                prev_hash,
-                event_hash,
-            ),
-        )
-        self._conn.execute("COMMIT")
+        try:
+            last = self._conn.execute(_SELECT_LAST_SQL).fetchone()
+            if last is None:
+                sequence_number = 1
+                prev_hash = GENESIS_PREV_HASH
+            else:
+                sequence_number = int(last[0]) + 1
+                prev_hash = str(last[1])
+            event_hash = compute_event_hash(
+                sequence_number, event.event_type, created_at, payload_json, prev_hash
+            )
+            self._conn.execute(
+                _INSERT_SQL,
+                (
+                    sequence_number,
+                    event.event_type,
+                    created_at,
+                    event.component,
+                    payload_json,
+                    event.payload_schema_version,
+                    prev_hash,
+                    event_hash,
+                ),
+            )
+            self._conn.execute("COMMIT")
+        except Exception:
+            self._conn.execute("ROLLBACK")
+            raise
         return sequence_number
 
     def read_all(self) -> list[LedgerRecord]:

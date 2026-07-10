@@ -13,8 +13,9 @@ verification runs first, a corrupt ledger raises :class:`ChainIntegrityError`
 instead of producing a plausible-but-wrong projection.
 
 ``rebuild_command`` adapts ``rebuild`` to the ``windbreak rebuild`` CLI,
-returning 0 on success and 1 (with the offending ``sequence_number`` on
-stderr) when the chain fails verification.
+returning 0 on success and 1 when the chain fails verification or the ledger
+path does not exist -- printing the offending ``sequence_number`` or the
+missing-path guidance to stderr, respectively.
 """
 
 from __future__ import annotations
@@ -288,8 +289,16 @@ def rebuild(ledger_path: Path, output_dir: Path) -> None:
             absent.
 
     Raises:
+        FileNotFoundError: If ``ledger_path`` does not point at an existing
+            file; rebuild reads an existing ledger and never creates one.
         ChainIntegrityError: If the ledger's hash chain fails verification.
     """
+    if not ledger_path.is_file():
+        raise FileNotFoundError(
+            f"ledger not found at {ledger_path}: rebuild reads an existing "
+            "ledger and will not create one. Check --ledger-path, or run the "
+            "pipeline first to produce a ledger."
+        )
     store = SqliteLedgerStore(ledger_path)
     try:
         store.verify_chain()
@@ -348,12 +357,13 @@ def rebuild_command(args: Namespace) -> int:
             ``output_dir`` paths.
 
     Returns:
-        0 on a clean rebuild; 1 if the chain fails verification (with the
-        offending ``sequence_number`` printed to stderr).
+        0 on a clean rebuild; 1 if the chain fails verification or the ledger
+        path does not exist (with the offending ``sequence_number`` or the
+        missing-path guidance printed to stderr).
     """
     try:
         rebuild(args.ledger_path, args.output_dir)
-    except ChainIntegrityError as error:
+    except (ChainIntegrityError, FileNotFoundError) as error:
         print(str(error), file=sys.stderr)
         return 1
     return 0
