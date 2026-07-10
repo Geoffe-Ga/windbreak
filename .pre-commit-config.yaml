@@ -7,7 +7,9 @@ repos:
   rev: v4.5.0
   hooks:
   - id: trailing-whitespace
+    exclude: ^scripts/ralph/state\.json$
   - id: end-of-file-fixer
+    exclude: ^scripts/ralph/state\.json$
   - id: check-yaml
   - id: check-toml
   - id: check-json
@@ -23,6 +25,7 @@ repos:
   - id: detect-private-key
   - id: fix-byte-order-marker
   - id: mixed-line-ending
+    exclude: ^scripts/ralph/state\.json$
     args:
     - --fix=lf
   - id: no-commit-to-branch
@@ -40,9 +43,12 @@ repos:
   rev: v1.19.1
   hooks:
   - id: mypy
-    files: ^windbreak/
+    files: ^(windbreak|scripts)/.*\.py$
+    pass_filenames: false
     args:
     - --strict
+    - windbreak/
+    - scripts/
     additional_dependencies:
     - types-PyYAML==6.0.12.20250915
     - types-requests==2.33.0.20260518
