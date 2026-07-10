@@ -867,6 +867,41 @@ class PositionsSnapshotRecorded(Event):
         _derive_typed_event(self, payload)
 
 
+@dataclass(frozen=True)
+class DrillCompleted(Event):
+    """Records the graded outcome of one operational drill (issue #59).
+
+    The single event ``windbreak.drills.framework.run_drill`` appends to the
+    operational ledger for every graded drill result, win or lose, so the
+    "CI runs every drill" guarantee is auditable. Like every other concrete
+    event its ``event_type`` is the literal class name ``"DrillCompleted"``
+    (never a shouty-snake-case variant), derived via :func:`_derive_typed_event`.
+
+    Attributes:
+        drill: The drill's registry name (e.g. ``"kill-rearm"``).
+        passed: Whether the drill's graded result passed.
+        evidence: The drill's JSON-serializable evidence payload; it never
+            carries secret material (drills that touch credentials report only
+            variable names, booleans, and fingerprints).
+    """
+
+    drill: str
+    passed: bool
+    evidence: dict[str, object]
+    event_type: str = field(init=False)
+    payload_schema_version: int = field(init=False)
+    payload: dict[str, object] = field(init=False)
+
+    def __post_init__(self) -> None:
+        """Assemble the payload and derive the base ``Event`` fields."""
+        payload: dict[str, object] = {
+            "drill": self.drill,
+            "passed": self.passed,
+            "evidence": self.evidence,
+        }
+        _derive_typed_event(self, payload)
+
+
 #: Maps each event_type string to its class, so a persisted envelope can be
 #: reconstructed as ``EVENT_TYPES[event_type](component=..., **data)``.
 EVENT_TYPES: dict[str, type[Event]] = {
@@ -894,4 +929,5 @@ EVENT_TYPES: dict[str, type[Event]] = {
     "SelectorDecisionRecorded": SelectorDecisionRecorded,
     "EquitySampled": EquitySampled,
     "PositionsSnapshotRecorded": PositionsSnapshotRecorded,
+    "DrillCompleted": DrillCompleted,
 }

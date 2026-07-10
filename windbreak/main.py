@@ -15,6 +15,7 @@ import os
 import re
 import signal
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -27,6 +28,8 @@ from windbreak.config import (
     load_config,
     load_default_config,
 )
+from windbreak.drills.catalog import DRILL_NAMES
+from windbreak.drills.context import bind_paper_context, bind_production_context
 from windbreak.ledger import rebuild_command
 from windbreak.logging_setup import configure_logging
 from windbreak.riskkernel.ack_flow import ACKS_DIRNAME
@@ -62,6 +65,10 @@ _DEFAULT_ALERT_MESSAGE = "test alert"
 #: The environment variable a leaked trade key would surface in; the preflight
 #: leak check (SPEC S5.2) fails closed if it is visible to this process.
 _TRADE_KEY_ENV_VAR = "WINDBREAK_TRADE_KEY"
+
+#: Default fixture/state directories for the ``drill`` verb when unspecified.
+_DEFAULT_DRILL_FIXTURE_DIR = Path("drills/fixtures")
+_DEFAULT_DRILL_STATE_DIR = Path("drills/state")
 
 #: Maps each alert's CLI token back to its :class:`AlertType` member.
 _TOKEN_TO_ALERT_TYPE = {cli_token(alert_type): alert_type for alert_type in AlertType}
@@ -332,6 +339,41 @@ def _add_preflight_arguments(preflight_parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_drill_arguments(drill_parser: argparse.ArgumentParser) -> None:
+    """Register the ``drill`` subcommand's options on its subparser.
+
+    Args:
+        drill_parser: The ``drill`` subparser to populate with options.
+    """
+    drill_parser.add_argument(
+        "name",
+        choices=sorted(DRILL_NAMES),
+        help="Which operational drill to run.",
+    )
+    drill_parser.add_argument(
+        "--production",
+        action="store_true",
+        help=(
+            "Rebind only the exchange adapter for a manual production run "
+            "(requires a non-empty exchange credential in the environment; "
+            "rebinds a fresh stub exchange until a live adapter lands). "
+            "Default: paper."
+        ),
+    )
+    drill_parser.add_argument(
+        "--fixture-dir",
+        type=Path,
+        default=_DEFAULT_DRILL_FIXTURE_DIR,
+        help="Directory of drill fixtures (default: %(default)s).",
+    )
+    drill_parser.add_argument(
+        "--state-dir",
+        type=Path,
+        default=_DEFAULT_DRILL_STATE_DIR,
+        help="Directory for drill protocol/scratch files (default: %(default)s).",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the ``windbreak`` command-line argument parser.
 
@@ -381,6 +423,12 @@ def build_parser() -> argparse.ArgumentParser:
         subparsers.add_parser(
             "preflight",
             help="Run the production-readiness preflight checklist.",
+        )
+    )
+    _add_drill_arguments(
+        subparsers.add_parser(
+            "drill",
+            help="Run an operational drill (rehearse a safety mechanism).",
         )
     )
     alert_parser = subparsers.add_parser("alert-test")
@@ -550,6 +598,56 @@ def _run_preflight(args: argparse.Namespace) -> int:
     )
     print(report_to_json(report) if args.json else render_table(report))
     return report.exit_code
+
+
+def _epoch_now() -> int:
+    """Return the current wall clock as whole epoch seconds (SPEC S6.1).
+
+    Casts :func:`time.time` to an ``int`` so the drill clock is float-free; this
+    is the CLI's one reading of the wall clock, injected into the drill context
+    so the drills themselves never call :func:`time.time`.
+
+    Returns:
+        The current time, in whole epoch seconds.
+    """
+    return int(time.time())
+
+
+def _run_drill(args: argparse.Namespace) -> int:
+    """Run one operational drill and map its verdict to an exit code (issue #59).
+
+    Builds the deterministic paper context from the injected wall clock and the
+    real process environment (the CLI's one reading of each), rebinding only the
+    exchange adapter when ``--production`` is set, then runs the named drill and
+    ledgers exactly one ``DrillCompleted``. The heavy registry/framework imports
+    are local so the RESEARCH heartbeat path never imports them.
+
+    Args:
+        args: Parsed ``drill`` arguments carrying ``name``, ``production``,
+            ``fixture_dir``, and ``state_dir``.
+
+    Returns:
+        ``0`` iff the drill passed, else ``1``.
+    """
+    from windbreak.drills.framework import run_drill
+    from windbreak.drills.registry import DRILLS
+    from windbreak.riskkernel.process import LoggingKernelLedgerWriter
+
+    writer = LoggingKernelLedgerWriter()
+    paper_ctx = bind_paper_context(
+        fixture_dir=args.fixture_dir,
+        state_dir=args.state_dir,
+        ledger_writer=writer,
+        clock=_epoch_now,
+        env=os.environ,
+    )
+    ctx = (
+        bind_production_context(paper_ctx, env=os.environ)
+        if args.production
+        else paper_ctx
+    )
+    result = run_drill(DRILLS[args.name](), ctx, writer)
+    return 0 if result.passed else 1
 
 
 def _run_alert_test(args: argparse.Namespace) -> int:
@@ -821,6 +919,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_alert_test(args)
     if args.command == "preflight":
         return _run_preflight(args)
+    if args.command == "drill":
+        return _run_drill(args)
     return _run_heartbeat(args)
 
 

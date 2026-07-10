@@ -60,6 +60,7 @@ from windbreak.ledger.events import (
     CancelAllDirective,
     ConfigLoaded,
     DemotionTriggerFired,
+    DrillCompleted,
     EquitySampled,
     Event,
     ForecastCreated,
@@ -269,6 +270,7 @@ def test_event_types_registry_maps_type_name_to_class() -> None:
         "SelectorDecisionRecorded": SelectorDecisionRecorded,
         "EquitySampled": EquitySampled,
         "PositionsSnapshotRecorded": PositionsSnapshotRecorded,
+        "DrillCompleted": DrillCompleted,
     } == EVENT_TYPES
 
 
