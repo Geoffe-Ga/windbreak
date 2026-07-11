@@ -126,8 +126,35 @@ ignore = []
 [tool.ruff.lint.pep8-naming]
 # ``http.server.BaseHTTPRequestHandler`` dispatches to ``do_<COMMAND>`` methods
 # by name, so ``do_GET``/``do_POST`` are mandated by the stdlib contract, not a
-# style choice.
-extend-ignore-names = ["do_GET", "do_POST"]
+# style choice. Likewise ``ast.NodeVisitor`` dispatches to ``visit_<NodeType>``
+# methods by name, so the capitalised node-type suffixes below are stdlib
+# dispatch method names (used by scripts/lint_no_floats.py's FLOAT-003 pass) --
+# enumerated exactly rather than globbed.
+extend-ignore-names = [
+    "do_GET",
+    "do_POST",
+    "visit_BinOp",
+    "visit_AugAssign",
+    "visit_Assign",
+    "visit_AnnAssign",
+    "visit_For",
+    "visit_AsyncFor",
+    "visit_FunctionDef",
+    "visit_AsyncFunctionDef",
+    "visit_ClassDef",
+    "visit_ListComp",
+    "visit_SetComp",
+    "visit_DictComp",
+    "visit_GeneratorExp",
+    "visit_Lambda",
+    "visit_With",
+    "visit_AsyncWith",
+    "visit_NamedExpr",
+    "visit_ExceptHandler",
+    "visit_MatchAs",
+    "visit_MatchStar",
+    "visit_MatchMapping",
+]
 
 [tool.bandit]
 exclude_dirs = ["tests", "venv", "virtualenv"]

@@ -199,6 +199,444 @@ def test_does_not_flag_augmented_floor_division(lint_module: types.ModuleType) -
     assert violations == []
 
 
+# --- FLOAT-003 Path-join suppression --------------------------------------------
+#
+# `pathlib.Path.__truediv__` overloads `/` for path joins (`output_dir / "x"`);
+# that is not "true division" in SPEC S17.3's sense and must not trip
+# FLOAT-003. The suppression is conservative and scope-aware: it only silences
+# a `/` (or `/=`) when at least one operand is *provably* Path-typed -- a
+# direct `Path(...)` / `pathlib.Path(...)` call, a bare/qualified `Path`
+# parameter annotation, or a name most recently assigned from one of those
+# within the same scope. Everything else -- including a name whose Path-typing
+# was overwritten by a later rebinding -- still fails closed as FLOAT-003
+# (issue #81, PR #73 follow-up).
+
+
+def test_does_not_flag_direct_path_call_join(lint_module: types.ModuleType) -> None:
+    """`Path("a") / "b"` is a path join, not true division."""
+    source = 'from pathlib import Path\nq = Path("a") / "b"\n'
+
+    violations = lint_module.collect_violations(source, "example.py")
+
+    assert violations == []
+
+
+def test_does_not_flag_qualified_pathlib_path_call_join(
+    lint_module: types.ModuleType,
+) -> None:
+    """`pathlib.Path("a") / "b"` (qualified attribute call) is a path join."""
+    source = 'import pathlib\nq = pathlib.Path("a") / "b"\n'
+
+    violations = lint_module.collect_violations(source, "example.py")
+
+    assert violations == []
+
+
+def test_does_not_flag_join_via_module_scope_path_name(
+    lint_module: types.ModuleType,
+) -> None:
+    """A name bound from `Path(...)` at module scope stays suppressed on join."""
+    source = 'from pathlib import Path\np = Path("a")\nq = p / "b"\n'
+
+    violations = lint_module.collect_violations(source, "example.py")
+
+    assert violations == []
+
+
+def test_does_not_flag_join_via_function_scope_path_name(
+    lint_module: types.ModuleType,
+) -> None:
+    """A name bound from `Path(...)` inside a function body is suppressed too."""
+    source = (
+        "from pathlib import Path\n"
+        "def f() -> None:\n"
+        '    p = Path("a")\n'
+        '    q = p / "b"\n'
+    )
+
+    violations = lint_module.collect_violations(source, "example.py")
+
+    assert violations == []
+
+
+def test_does_not_flag_join_via_bare_path_param_annotation(
+    lint_module: types.ModuleType,
+) -> None:
+    """PR #73's acceptance pattern: a bare `Path`-annotated parameter joined."""
+    source = (
+        "from pathlib import Path\n"
+        "def save(output_dir: Path) -> None:\n"
+        '    target = output_dir / "name"\n'
+    )
+
+    violations = lint_module.collect_violations(source, "example.py")
+
+    assert violations == []
+
+
+def test_does_not_flag_join_via_qualified_path_param_annotation(
+    lint_module: types.ModuleType,
+) -> None:
+    """The same acceptance pattern with a qualified `pathlib.Path` annotation."""
+    source = (
+        "import pathlib\n"
+        "def save(output_dir: pathlib.Path) -> None:\n"
+        '    target = output_dir / "name"\n'
+    )
+
+    violations = lint_module.collect_violations(source, "example.py")
+
+    assert violations == []
+
+
+def test_does_not_flag_chained_path_join(lint_module: types.ModuleType) -> None:
+    """A chained join `output_dir / "a" / "b"` suppresses both nested Div nodes."""
+    source = (
+        "from pathlib import Path\n"
+        "def save(output_dir: Path) -> None:\n"
+        '    target = output_dir / "a" / "b"\n'
+    )
+
+    violations = lint_module.collect_violations(source, "example.py")
+
+    assert violations == []
+
+
+def test_does_not_flag_augmented_join_on_path_name(
+    lint_module: types.ModuleType,
+) -> None:
+    """`p /= "sub"` on a Path-typed name is a join, not augmented division."""
+    source = 'from pathlib import Path\np = Path("a")\np /= "sub"\n'
+
+    violations = lint_module.collect_violations(source, "example.py")
+
+    assert violations == []
+
+
+def test_does_not_flag_right_operand_path_join(lint_module: types.ModuleType) -> None:
+    """`"a" / Path("b")` is a join via `Path.__rtruediv__`, not true division."""
+    source = 'from pathlib import Path\nq = "a" / Path("b")\n'
+
+    violations = lint_module.collect_violations(source, "example.py")
+
+    assert violations == []
+
+
+def test_still_flags_numeric_true_division(lint_module: types.ModuleType) -> None:
+    """Genuine numeric division (`4 / 2`) still raises exactly one FLOAT-003."""
+    source = "b = 4 / 2\n"
+
+    violations = lint_module.collect_violations(source, "example.py")
+
+    assert len(violations) == 1
+    assert violations[0].line == 1
+    assert violations[0].code == "FLOAT-003"
+
+
+def test_still_flags_numeric_augmented_division(
+    lint_module: types.ModuleType,
+) -> None:
+    """`a /= 2` on a plain int name still raises FLOAT-003."""
+    source = "a = 4\na /= 2\n"
+
+    violations = lint_module.collect_violations(source, "example.py")
+
+    assert len(violations) == 1
+    assert violations[0].line == 2
+    assert violations[0].code == "FLOAT-003"
+
+
+def test_still_flags_unknown_names_with_no_path_signal(
+    lint_module: types.ModuleType,
+) -> None:
+    """`x / y` with no Path provenance for either name still fails closed."""
+    source = "x / y\n"
+
+    violations = lint_module.collect_violations(source, "example.py")
+
+    assert len(violations) == 1
+    assert violations[0].line == 1
+    assert violations[0].code == "FLOAT-003"
+
+
+def test_still_flags_after_rebinding_removes_path_typing(
+    lint_module: types.ModuleType,
+) -> None:
+    """Rebinding a Path name to a non-Path value de-registers it for FLOAT-003."""
+    source = 'from pathlib import Path\np = Path("a")\np = 5\nz = p / 2\n'
+
+    violations = lint_module.collect_violations(source, "example.py")
+
+    assert len(violations) == 1
+    assert violations[0].line == 4
+    assert violations[0].code == "FLOAT-003"
+
+
+def test_suppression_is_per_expression_not_per_scope(
+    lint_module: types.ModuleType,
+) -> None:
+    """A Path join and a genuine numeric division in the same function differ."""
+    source = (
+        "from pathlib import Path\n"
+        "def f(d: Path) -> int:\n"
+        '    x = d / "a"\n'
+        "    return 6 / 2\n"
+    )
+
+    violations = lint_module.collect_violations(source, "example.py")
+
+    assert len(violations) == 1
+    assert violations[0].line == 4
+    assert violations[0].code == "FLOAT-003"
+
+
+def test_float_001_unaffected_by_path_join_in_same_source(
+    lint_module: types.ModuleType,
+) -> None:
+    """FLOAT-001 still fires on a float literal alongside a suppressed join."""
+    source = (
+        "from pathlib import Path\n"
+        "def save(output_dir: Path) -> None:\n"
+        '    target = output_dir / "n"\n'
+        "x = 1.5\n"
+    )
+
+    violations = lint_module.collect_violations(source, "example.py")
+
+    assert len(violations) == 1
+    assert violations[0].line == 4
+    assert violations[0].code == "FLOAT-001"
+    assert all(v.code != "FLOAT-003" for v in violations)
+
+
+# --- FLOAT-003 fail-closed regressions (issue #81) ------------------------------
+#
+# Self-review of PR #73's Path-join suppression found it fails *open*: real
+# numeric division escapes FLOAT-003 in several shadowing/rebinding shapes
+# because (a) `_name_is_path` searches every enclosing scope regardless of
+# shadowing, and (b) Path-typing is only de-registered on a single-Name `=`
+# assignment, leaving stale Path-typing after other binding forms (for-loop
+# targets, comprehension targets, tuple unpacking) or scope leaks (class
+# bodies). Issue #81 requires fail-*closed*: when unsure, keep flagging. These
+# tests pin that every one of these shapes still raises FLOAT-003.
+
+
+def test_flags_division_when_int_param_shadows_module_path_name(
+    lint_module: types.ModuleType,
+) -> None:
+    """An int parameter named after a module-scope Path name still divides."""
+    source = (
+        "from pathlib import Path\n"
+        'root = Path("a")\n'
+        "def scale(root: int) -> int:\n"
+        "    return root / 2\n"
+    )
+
+    violations = lint_module.collect_violations(source, "example.py")
+
+    assert len(violations) == 1
+    assert violations[0].line == 4
+    assert violations[0].code == "FLOAT-003"
+
+
+def test_flags_division_when_local_int_shadows_module_path_name(
+    lint_module: types.ModuleType,
+) -> None:
+    """A local int rebind of a module-scope Path name still divides."""
+    source = (
+        "from pathlib import Path\n"
+        'p = Path("a")\n'
+        "def f() -> int:\n"
+        "    p = 6\n"
+        "    return p / 2\n"
+    )
+
+    violations = lint_module.collect_violations(source, "example.py")
+
+    assert len(violations) == 1
+    assert violations[0].line == 5
+    assert violations[0].code == "FLOAT-003"
+
+
+def test_flags_division_on_for_loop_target_rebinding_path_name(
+    lint_module: types.ModuleType,
+) -> None:
+    """A for-loop target that rebinds a Path name to a non-Path still divides."""
+    source = (
+        'from pathlib import Path\np = Path("a")\nfor p in range(3):\n    z = p / 2\n'
+    )
+
+    violations = lint_module.collect_violations(source, "example.py")
+
+    assert len(violations) == 1
+    assert violations[0].line == 4
+    assert violations[0].code == "FLOAT-003"
+
+
+def test_flags_division_on_comprehension_target_shadowing_path_name(
+    lint_module: types.ModuleType,
+) -> None:
+    """A comprehension target shadowing an outer Path name still divides."""
+    source = (
+        'from pathlib import Path\np = Path("a")\nresult = [p / 2 for p in range(3)]\n'
+    )
+
+    violations = lint_module.collect_violations(source, "example.py")
+
+    assert len(violations) == 1
+    assert violations[0].line == 3
+    assert violations[0].code == "FLOAT-003"
+
+
+def test_flags_division_after_tuple_unpack_rebinds_path_name(
+    lint_module: types.ModuleType,
+) -> None:
+    """A tuple-unpack rebind of a Path name still divides."""
+    source = 'from pathlib import Path\np = Path("a")\np, q = 5, 6\nz = p / 2\n'
+
+    violations = lint_module.collect_violations(source, "example.py")
+
+    assert len(violations) == 1
+    assert violations[0].line == 4
+    assert violations[0].code == "FLOAT-003"
+
+
+def test_flags_division_on_class_attr_path_not_leaking_to_module(
+    lint_module: types.ModuleType,
+) -> None:
+    """A class-body Path attribute must not leak Path-typing to module scope."""
+    source = 'from pathlib import Path\nclass C:\n    d = Path("a")\nz = d / 2\n'
+
+    violations = lint_module.collect_violations(source, "example.py")
+
+    assert len(violations) == 1
+    assert violations[0].line == 4
+    assert violations[0].code == "FLOAT-003"
+
+
+def test_flags_division_when_lambda_param_shadows_path_name(
+    lint_module: types.ModuleType,
+) -> None:
+    """A lambda parameter shadowing an outer Path name still divides."""
+    source = 'from pathlib import Path\nroot = Path("a")\nf = lambda root: root / 2\n'
+
+    violations = lint_module.collect_violations(source, "example.py")
+
+    floats = [v for v in violations if v.code == "FLOAT-003"]
+    assert len(floats) == 1
+    assert floats[0].line == 3
+
+
+def test_flags_division_when_with_as_target_shadows_path_name(
+    lint_module: types.ModuleType,
+) -> None:
+    """A `with ... as` target rebinding a Path name still divides."""
+    source = (
+        'from pathlib import Path\np = Path("a")\nwith open("x") as p:\n    z = p / 2\n'
+    )
+
+    violations = lint_module.collect_violations(source, "example.py")
+
+    floats = [v for v in violations if v.code == "FLOAT-003"]
+    assert len(floats) == 1
+    assert floats[0].line == 4
+
+
+def test_flags_division_when_async_with_as_target_shadows_path_name(
+    lint_module: types.ModuleType,
+) -> None:
+    """An `async with ... as` target rebinding a Path name still divides."""
+    source = (
+        "from pathlib import Path\n\n\n"
+        "async def run() -> None:\n"
+        '    p = Path("a")\n'
+        "    async with ctx() as p:\n"
+        "        z = p / 2\n"
+    )
+
+    violations = lint_module.collect_violations(source, "example.py")
+
+    floats = [v for v in violations if v.code == "FLOAT-003"]
+    assert len(floats) == 1
+    assert floats[0].line == 7
+
+
+def test_flags_division_when_walrus_rebinds_path_name(
+    lint_module: types.ModuleType,
+) -> None:
+    """A walrus assignment rebinding a Path name to an int still divides."""
+    source = 'from pathlib import Path\np = Path("a")\nvalue = (p := 5)\nz = p / 2\n'
+
+    violations = lint_module.collect_violations(source, "example.py")
+
+    floats = [v for v in violations if v.code == "FLOAT-003"]
+    assert len(floats) == 1
+    assert floats[0].line == 4
+
+
+def test_flags_division_when_except_as_target_shadows_path_name(
+    lint_module: types.ModuleType,
+) -> None:
+    """An `except ... as` handler name rebinding a Path name still divides."""
+    source = (
+        'from pathlib import Path\np = Path("a")\ntry:\n    pass\n'
+        "except Exception as p:\n    z = p / 2\n"
+    )
+
+    violations = lint_module.collect_violations(source, "example.py")
+
+    floats = [v for v in violations if v.code == "FLOAT-003"]
+    assert len(floats) == 1
+    assert floats[0].line == 6
+
+
+def test_flags_division_when_starred_target_rebinds_path_name(
+    lint_module: types.ModuleType,
+) -> None:
+    """A starred unpack target rebinding a Path name still divides."""
+    source = (
+        'from pathlib import Path\np = Path("a")\nfirst, *p = [1, 2, 3]\nz = p / 2\n'
+    )
+
+    violations = lint_module.collect_violations(source, "example.py")
+
+    floats = [v for v in violations if v.code == "FLOAT-003"]
+    assert len(floats) == 1
+    assert floats[0].line == 4
+
+
+def test_flags_division_when_match_capture_shadows_path_name(
+    lint_module: types.ModuleType,
+) -> None:
+    """A `match`/`case` capture pattern rebinding a Path name still divides."""
+    source = (
+        'from pathlib import Path\np = Path("a")\nmatch object():\n'
+        "    case p:\n        z = p / 2\n"
+    )
+
+    violations = lint_module.collect_violations(source, "example.py")
+
+    floats = [v for v in violations if v.code == "FLOAT-003"]
+    assert len(floats) == 1
+    assert floats[0].line == 5
+
+
+def test_does_not_flag_join_via_walrus_bound_path_name(
+    lint_module: types.ModuleType,
+) -> None:
+    """A walrus-bound Path name stays suppressed on join, then and later.
+
+    Pins the intended (not-yet-implemented) behaviour: once the implementer
+    registers walrus (`:=`) Path bindings, both the walrus expression itself
+    and any later reference to the bound name join rather than divide.
+    """
+    source = 'from pathlib import Path\ny = (p := Path("a")) / "b"\nz = p / "c"\n'
+
+    violations = lint_module.collect_violations(source, "example.py")
+
+    assert not any(v.code == "FLOAT-003" for v in violations)
+
+
 # --- Detection: float(...) casts -----------------------------------------------
 
 
