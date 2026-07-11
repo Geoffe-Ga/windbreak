@@ -403,6 +403,7 @@ def _binary_market(ticker: str, event_ticker: str, **overrides: Any) -> dict[str
         "close_time": "2024-12-18T19:00:00Z",
         "expected_expiration_time": None,
         "tick_size": 1,
+        "volume_24h": 7500,
     }
     market.update(overrides)
     return market

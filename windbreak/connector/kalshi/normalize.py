@@ -10,7 +10,10 @@ with zero float intermediaries: this module sits on the money path guarded by
 cents-to-pips and contract-to-centis conversion here is an exact multiplication
 by :data:`PRICE_PIPS_PER_CENT` / :data:`CENTIS_PER_CONTRACT` (1 cent = 100
 pips, 1 contract = 100 centis): none loses precision, so SPEC S6.1's
-conservative-rounding direction never has to be chosen in this module.
+conservative-rounding direction never has to be chosen in this module. The 24h
+volume likewise converts by exact multiplication -- traded contract count times
+:data:`MICROS_PER_CONTRACT_NOTIONAL` -- into settlement-notional micro-dollars,
+a windbreak extension to the literal SPEC S6.2 market schema.
 
 The product gate is an *allowlist*: :func:`gate_product` normalizes only
 ``"binary"`` markets, refusing every other (or absent) ``market_type`` so a
@@ -50,6 +53,12 @@ DEFAULT_PRICE_TICK_PIPS: Final = 100
 
 #: Minimum order size, in contract-centis, applied to every Kalshi market.
 MIN_ORDER_CONTRACT_CENTIS: Final = 100
+
+#: Micro-dollars of settlement notional per traded contract. A fully
+#: collateralized binary settles at exactly $1 = 1,000,000 micros, so a traded
+#: contract count times this notional is an exact, price-independent 24h volume
+#: in micro-dollars -- no float and no price ever enters the conversion.
+MICROS_PER_CONTRACT_NOTIONAL: Final = 1_000_000
 
 #: The full YES+NO price of a binary contract, in cents (a resolved dollar):
 #: a NO price of ``c`` cents implies a YES price of ``100 - c`` cents.
@@ -208,6 +217,14 @@ def normalize_market(
     :meth:`NormalizedMarket.__post_init__` remains the loud backstop for any
     invariant this function does not pre-check.
 
+    The ``volume_24h`` count (whole traded contracts) becomes
+    ``volume_24h_micros`` -- settlement-notional micro-dollars -- by exact
+    multiplication by :data:`MICROS_PER_CONTRACT_NOTIONAL`; this is a windbreak
+    extension beyond the literal SPEC S6.2 schema. It is indexed directly (no
+    ``.get`` default), so a payload missing ``volume_24h`` raises and degrades
+    via the adapter's ``MARKET_MALFORMED`` path rather than silently reading as
+    zero volume.
+
     Args:
         raw_market: The raw Kalshi market payload (a ``/markets`` list entry).
         raw_event: The market's parent event payload, or None when standalone.
@@ -235,6 +252,7 @@ def normalize_market(
         mutually_exclusive_group_id=group_id,
         jurisdiction_status=_JURISDICTION_UNKNOWN,
         raw_exchange_payload_hash=payload_hash(raw_market),
+        volume_24h_micros=int(market["volume_24h"]) * MICROS_PER_CONTRACT_NOTIONAL,
     )
 
 

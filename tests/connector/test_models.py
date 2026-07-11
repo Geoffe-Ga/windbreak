@@ -1,4 +1,4 @@
-"""Tests for windbreak.connector.models (issue #16): the SPEC S6.2 frozen models.
+"""Tests for windbreak.connector.models (issues #16, #106): SPEC S6.2 models.
 
 Pins `NormalizedMarket.__post_init__` validation (market_type, jurisdiction
 enum, tick/min-order integrality and positivity, non-empty payload hash),
@@ -7,6 +7,14 @@ datetimes rendered as ISO-8601 `Z` strings). `windbreak/connector/` does not
 exist yet, so importing `windbreak.connector.models` fails collection with
 `ModuleNotFoundError: No module named 'windbreak.connector'` -- the expected
 Gate 1 RED state for issue #16.
+
+Issue #106 adds `volume_24h_micros: int`, a plain non-negative int (NOT a
+`MoneyMicros`) validated by a new `_require_nonnegative_unit_int` guard: bool
+and non-int values still raise `TypeError`, negative raises `ValueError`, but
+-- unlike the strictly-positive tick/min-order guard -- zero is legal. Until
+that field and guard exist, every `_market()` call in this module raises
+`TypeError: __init__() got an unexpected keyword argument 'volume_24h_micros'`
+-- the expected Gate 1 RED state for issue #106.
 """
 
 from __future__ import annotations
@@ -35,6 +43,7 @@ _VALID_KWARGS: dict[str, object] = {
     "mutually_exclusive_group_id": None,
     "jurisdiction_status": "eligible",
     "raw_exchange_payload_hash": "sha256:abc123",
+    "volume_24h_micros": 1000000,
 }
 
 
@@ -84,6 +93,38 @@ def test_non_positive_tick_or_min_order_raises_value_error(
 def test_empty_payload_hash_raises_value_error() -> None:
     with pytest.raises(ValueError, match="raw_exchange_payload_hash"):
         _market(raw_exchange_payload_hash="")
+
+
+# --- volume_24h_micros (issue #106): a non-negative int, zero legal ---------
+
+
+def test_zero_volume_24h_micros_is_accepted() -> None:
+    """Unlike the strictly-positive tick/min-order guard, zero volume is legal."""
+    market = _market(volume_24h_micros=0)
+
+    assert market.volume_24h_micros == 0
+
+
+def test_positive_volume_24h_micros_is_accepted() -> None:
+    market = _market(volume_24h_micros=5_000_000_000)
+
+    assert market.volume_24h_micros == 5_000_000_000
+
+
+def test_negative_volume_24h_micros_raises_value_error() -> None:
+    with pytest.raises(ValueError, match="volume_24h_micros"):
+        _market(volume_24h_micros=-1)
+
+
+def test_bool_volume_24h_micros_raises_type_error() -> None:
+    """A stray `bool` (an `int` subclass) must never masquerade as a volume."""
+    with pytest.raises(TypeError):
+        _market(volume_24h_micros=True)
+
+
+def test_non_int_volume_24h_micros_raises_type_error() -> None:
+    with pytest.raises(TypeError):
+        _market(volume_24h_micros="1000000")
 
 
 def test_market_is_frozen() -> None:
@@ -149,3 +190,12 @@ def test_market_to_payload_contains_no_float_leaf() -> None:
     payload = market_to_payload(market)
 
     _assert_no_float_leaf(payload)
+
+
+def test_market_to_payload_preserves_volume_24h_micros_as_int_leaf() -> None:
+    market = _market(volume_24h_micros=42)
+
+    payload = market_to_payload(market)
+
+    assert payload["volume_24h_micros"] == 42
+    assert type(payload["volume_24h_micros"]) is int

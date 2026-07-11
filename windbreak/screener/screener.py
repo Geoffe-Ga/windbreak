@@ -23,11 +23,13 @@ from windbreak.connector.snapshot import (
     ConnectorEvent,
     utc_now_iso,
 )
+from windbreak.numeric import ContractCentis, MoneyMicros
 from windbreak.screener.filters import (
     CATEGORY_BLOCKLIST,
     HORIZON_DAYS,
     MIN_DEPTH,
     MIN_VOLUME_24H,
+    BookStats,
     category_filter,
     horizon_filter,
     min_depth_filter,
@@ -39,15 +41,36 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from windbreak.config import ScreenerConfig
-    from windbreak.connector.models import NormalizedMarket
+    from windbreak.connector.models import NormalizedMarket, OrderBookSnapshot
     from windbreak.connector.snapshot import EventLedgerWriter
-    from windbreak.screener.filters import BookStats, FilterResult
+    from windbreak.screener.filters import FilterResult
 
 #: Event type recorded once per acknowledged legally-risky category.
 LEGAL_RISK_ACK_EVENT: Final = "LEGAL_RISK_ACK"
 
 #: The order the four filters run in and that ``blocked_by`` respects.
 _CANONICAL_ORDER: Final = (CATEGORY_BLOCKLIST, MIN_VOLUME_24H, MIN_DEPTH, HORIZON_DAYS)
+
+
+def _two_sided_min_depth(order_book: OrderBookSnapshot) -> int:
+    """Return a book's depth as the smaller of its two resting-side sums.
+
+    Depth is measured as ``min(sum(yes_bids), sum(yes_asks))`` in
+    contract-centis, using exact integer sums of each level's quantity. The
+    conservative min-of-both-sides choice reflects that a tradeable market must
+    have resting liquidity to *both* enter and exit: a one-sided or empty book
+    measures ``0`` on its thin side and is duly blocked by the depth floor,
+    never flattered by the fat side alone.
+
+    Args:
+        order_book: The market's YES order-book snapshot.
+
+    Returns:
+        The two-sided minimum depth, in contract-centis.
+    """
+    bid_depth = sum(level.quantity.value for level in order_book.yes_bids)
+    ask_depth = sum(level.quantity.value for level in order_book.yes_asks)
+    return min(bid_depth, ask_depth)
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,6 +176,31 @@ class Screener:
             blocked_by=blocked_by,
             filters=results,
         )
+
+    def screen_book(
+        self, market: NormalizedMarket, order_book: OrderBookSnapshot
+    ) -> ScreenResult:
+        """Screen a market against its live order book, ledgering one decision.
+
+        Assembles the :class:`~windbreak.screener.filters.BookStats` the filters
+        need directly from honest sources: the 24h volume off the market's own
+        ``volume_24h_micros`` field, and the depth as the conservative
+        two-sided minimum of the book's resting liquidity (see
+        :func:`_two_sided_min_depth`). It then delegates to :meth:`screen`, so
+        exactly one ``SCREEN_DECISION`` event is ledgered.
+
+        Args:
+            market: The market to screen.
+            order_book: The market's YES order-book snapshot.
+
+        Returns:
+            The aggregate screening result.
+        """
+        stats = BookStats(
+            volume_24h_micros=MoneyMicros(market.volume_24h_micros),
+            depth_contract_centis=ContractCentis(_two_sided_min_depth(order_book)),
+        )
+        return self.screen(market, stats)
 
     def _run_filters(
         self, market: NormalizedMarket, stats: BookStats, *, now: datetime

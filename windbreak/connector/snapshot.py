@@ -2,12 +2,15 @@
 
 :class:`MarketSnapshotTask` walks every market a connector offers and records,
 per market, a ``MARKET_SNAPSHOT`` event (the market projected via
-:func:`~windbreak.connector.models.market_to_payload`) and a ``SCREEN_DECISION``
-event (the screener's eligible/blocked verdict). Events flow through the
-:class:`EventLedgerWriter` protocol -- a dependency-injection seam with no
-``windbreak.ledger`` dependency, mirroring
-:class:`windbreak.alerts.dispatch.LedgerWriter`. A broken writer is isolated:
-its failure is logged and swallowed so one bad record can never abort a run.
+:func:`~windbreak.connector.models.market_to_payload`), then hands the market
+and its order book to the injected screener via ``screen_book``. The screener --
+not this task -- is the single ``SCREEN_DECISION`` emitter, writing to the same
+shared ledger writer. Events flow through the :class:`EventLedgerWriter`
+protocol -- a dependency-injection seam with no ``windbreak.ledger`` dependency,
+mirroring :class:`windbreak.alerts.dispatch.LedgerWriter`. A broken writer is
+isolated: its failure (whether raised by a snapshot write or by the screener's
+own decision write) is logged and swallowed so one bad record can never abort a
+run.
 """
 
 from __future__ import annotations
@@ -23,8 +26,8 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from windbreak.connector.interface import MarketConnector
-    from windbreak.connector.models import NormalizedMarket
-    from windbreak.screener import ScreenDecision
+    from windbreak.connector.models import NormalizedMarket, OrderBookSnapshot
+    from windbreak.screener import ScreenResult
 
 #: Event type recorded for each market's normalized snapshot.
 MARKET_SNAPSHOT_EVENT: Final = "MARKET_SNAPSHOT"
@@ -79,14 +82,17 @@ class EventLedgerWriter(Protocol):
 class MarketScreener(Protocol):
     """The minimal screening contract :class:`MarketSnapshotTask` depends on."""
 
-    def screen(self, market: NormalizedMarket) -> ScreenDecision:
-        """Return the eligibility verdict for a market.
+    def screen_book(
+        self, market: NormalizedMarket, order_book: OrderBookSnapshot
+    ) -> ScreenResult:
+        """Screen a market against its order book and ledger the decision.
 
         Args:
             market: The market to screen.
+            order_book: The market's order-book snapshot.
 
         Returns:
-            The screening decision.
+            The aggregate screening result.
         """
         ...
 
@@ -165,10 +171,10 @@ class MarketSnapshotTask:
         self._writer = writer
 
     def run_once(self) -> None:
-        """Record a snapshot and a screening decision for each market."""
+        """Record a snapshot and screen each market the connector offers."""
         for market in self._connector.list_markets():
             self._record_snapshot(market)
-            self._record_decision(market)
+            self._screen_market(market)
 
     def _record_snapshot(self, market: NormalizedMarket) -> None:
         """Record one market's normalized snapshot event.
@@ -183,23 +189,28 @@ class MarketSnapshotTask:
         )
         self._record(event)
 
-    def _record_decision(self, market: NormalizedMarket) -> None:
-        """Record one market's screening-decision event.
+    def _screen_market(self, market: NormalizedMarket) -> None:
+        """Screen one market against its order book, isolating any failure.
+
+        The injected screener is the single ``SCREEN_DECISION`` emitter; it
+        writes to the shared ledger writer itself. A raising writer (surfaced
+        here through the screener) is logged and swallowed, mirroring
+        :meth:`_record`, so one bad decision write never aborts the run.
 
         Args:
-            market: The market to screen and record.
+            market: The market to screen.
         """
-        decision = self._screener.screen(market)
-        event = ConnectorEvent(
-            event_type=SCREEN_DECISION_EVENT,
-            payload={
-                "ticker": decision.ticker,
-                "decision": decision.decision,
-                "reason": decision.reason,
-            },
-            ts=utc_now_iso(),
-        )
-        self._record(event)
+        try:
+            self._screener.screen_book(
+                market, self._connector.get_order_book(market.ticker)
+            )
+        except Exception as exc:
+            _LOGGER.warning(
+                "failed to screen market %s (book fetch or decision write): %s",
+                market.ticker,
+                exc,
+                extra={"component": "connector"},
+            )
 
     def _record(self, event: ConnectorEvent) -> None:
         """Record an event via the writer, isolating any failure.

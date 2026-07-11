@@ -13,6 +13,9 @@ balances/positions/fills are issue #3).
 `KalshiPaginationError` rather than looping forever), and fails closed on a
 single malformed binary by ledgering a `MARKET_MALFORMED` event and continuing
 the scan instead of letting one bad payload abort the whole call.
+
+Issue #106: a binary missing `volume_24h` degrades through the same
+`MARKET_MALFORMED` path once `normalize_market` requires it.
 """
 
 from __future__ import annotations
@@ -390,6 +393,7 @@ def _binary_market(ticker: str, event_ticker: str, **overrides: Any) -> dict[str
         "close_time": "2024-12-18T19:00:00Z",
         "expected_expiration_time": None,
         "tick_size": 1,
+        "volume_24h": 1000,
     }
     market.update(overrides)
     return market
@@ -616,6 +620,36 @@ def test_list_markets_ledgers_malformed_binary_with_bad_numeric_type(
         event.payload["ticker"]
         for event in ledger.events_by_type(MARKET_MALFORMED_EVENT)
     } == {"KX-BAD"}
+
+
+def test_list_markets_ledgers_malformed_binary_when_volume_24h_is_missing(
+    ledger: InMemoryEventLedgerWriter, clock: Callable[[], datetime]
+) -> None:
+    """A binary missing `volume_24h` is ledgered as MARKET_MALFORMED (issue #106).
+
+    Mirrors `test_list_markets_ledgers_malformed_binary_and_continues`: a
+    required field missing from an otherwise-allowed binary degrades to a
+    ledgered `MARKET_MALFORMED` event and is skipped, never crash-propagated
+    and never silently dropped.
+    """
+    broken = _binary_market("KX-BAD", "E1")
+    del broken["volume_24h"]
+    session = _PaginatedSession(
+        {
+            "/markets": [
+                {"markets": [broken, _binary_market("KX-GOOD", "E1")], "cursor": ""},
+            ],
+            "/events": [{"events": [], "cursor": ""}],
+        }
+    )
+    connector = _connector_over(session, ledger, clock)
+
+    tickers = {market.ticker for market in connector.list_markets()}
+    malformed = ledger.events_by_type(MARKET_MALFORMED_EVENT)
+
+    assert tickers == {"KX-GOOD"}
+    assert {event.payload["ticker"] for event in malformed} == {"KX-BAD"}
+    assert all(event.payload["raw_exchange_payload_hash"] for event in malformed)
 
 
 def test_get_market_ledgers_malformed_matching_binary_and_raises_unknown(

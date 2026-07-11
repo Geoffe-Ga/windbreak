@@ -1,9 +1,15 @@
-"""Tests for windbreak.connector.kalshi.normalize (issue #17).
+"""Tests for windbreak.connector.kalshi.normalize (issues #17, #106).
 
 Pins the pure (no-I/O) normalization functions: `payload_hash`,
 `gate_product`, `normalize_market`, `normalize_order_book`. All prices/sizes
 convert to windbreak's fixed-point unit types (`PricePips`, `ContractCentis`)
 with zero float intermediaries (SPEC S6.1).
+
+Issue #106 adds `volume_24h_micros = int(raw["volume_24h"]) *
+MICROS_PER_CONTRACT_NOTIONAL` (settlement-notional micro-dollars, exact
+integer math). Until `normalize_market` sets that field, these new tests fail
+with `AttributeError: 'NormalizedMarket' object has no attribute
+'volume_24h_micros'` -- the expected Gate 1 RED state for issue #106.
 """
 
 from __future__ import annotations
@@ -50,6 +56,7 @@ def _raw_binary(**overrides: Any) -> dict[str, Any]:
         "close_time": "2024-12-18T19:00:00Z",
         "expected_expiration_time": "2024-12-18T20:00:00Z",
         "tick_size": 1,
+        "volume_24h": 1234,
     }
     base.update(overrides)
     return base
@@ -136,6 +143,25 @@ def test_group_id_is_none_when_no_event_is_supplied() -> None:
     market = normalize_market(_raw_binary(), None)
 
     assert market.mutually_exclusive_group_id is None
+
+
+def test_volume_24h_converts_to_exact_settlement_notional_micros() -> None:
+    """`volume_24h` (whole settled contracts) converts to settlement micros.
+
+    A raw `volume_24h` of 1234 (whole contracts, each worth up to $1 at
+    settlement) becomes exactly `1_234_000_000` settlement-notional
+    micro-dollars: an exact integer multiplication, never a float.
+    """
+    market = normalize_market(_raw_binary(volume_24h=1234), None)
+
+    assert market.volume_24h_micros == 1_234_000_000
+
+
+def test_volume_24h_zero_converts_to_zero_micros() -> None:
+    """A zero `volume_24h` converts to exactly zero micros, not treated as absent."""
+    market = normalize_market(_raw_binary(volume_24h=0), None)
+
+    assert market.volume_24h_micros == 0
 
 
 def test_raw_exchange_payload_hash_matches_payload_hash_of_the_raw_market() -> None:
