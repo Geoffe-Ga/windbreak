@@ -340,6 +340,90 @@ def test_mode_permission_ceiling_live_micro_vetoes_when_a_fee_bound_is_none(
     assert result.reason == "unprovable"
 
 
+def test_mode_permission_ceiling_live_micro_exempts_provable_derisking_close() -> None:
+    """(#100) A provable de-risking `sell_to_close` is exempt from the
+    LIVE_MICRO micro-cap term entirely: even with `total_exposure +
+    pending_kernel_reservations` already at/over `micro_cap` -- before any
+    cost from this order is even considered -- the close still approves,
+    because it can only reduce exposure, never add to it.
+    """
+    context = make_context(
+        mode=Mode.LIVE_MICRO,
+        micro_cap=MoneyMicros(1_000_000),
+        total_exposure=MoneyMicros(1_000_000),
+        pending_kernel_reservations=MoneyMicros(500_000),
+        open_position=ContractCentis(1000),
+    )
+    intent = make_intent(action="sell_to_close", size=ContractCentis(1000))
+
+    result = _real_check("mode_permission_ceiling")(intent, context)
+
+    assert result.vetoed is False
+
+
+def test_mode_permission_ceiling_provable_close_approves_with_missing_fee_bound() -> (
+    None
+):
+    """(#100) The LIVE_MICRO exemption short-circuits before `_order_cost` is
+    ever called: a provable de-risking close approves even when
+    `max_trading_fee` is `None` -- proof that cost is never computed for an
+    exempt close, matching the `concentration_limits` and `velocity_limits`
+    missing-fee-bound pins. (The pipeline still fails closed on the missing
+    bound via the independent `fee_upper_bound_present` / `floor_invariant`
+    checks; this pins only that the exemption itself never consumes cost.)
+    """
+    context = make_context(
+        mode=Mode.LIVE_MICRO,
+        micro_cap=MoneyMicros(1_000_000),
+        total_exposure=MoneyMicros(1_000_000),
+        pending_kernel_reservations=MoneyMicros(500_000),
+        open_position=ContractCentis(1000),
+        max_trading_fee=None,
+    )
+    intent = make_intent(action="sell_to_close", size=ContractCentis(1000))
+
+    result = _real_check("mode_permission_ceiling")(intent, context)
+
+    assert result.vetoed is False
+
+
+def test_mode_permission_ceiling_vetoes_non_provable_close_over_micro_cap() -> None:
+    """The exemption above is narrow: at the identical over-cap exposure, a
+    close that is NOT provably reduce-only (no open position on record) gets
+    no exemption, is still charged full worst-case notional, and still
+    vetoes (#100).
+    """
+    context = make_context(
+        mode=Mode.LIVE_MICRO,
+        micro_cap=MoneyMicros(1_000_000),
+        total_exposure=MoneyMicros(1_000_000),
+        pending_kernel_reservations=MoneyMicros(500_000),
+        open_position=None,
+    )
+    intent = make_intent(action="sell_to_close", size=ContractCentis(1000))
+
+    result = _real_check("mode_permission_ceiling")(intent, context)
+
+    assert result.vetoed is True
+    assert result.reason == "live-micro exposure ceiling exceeded"
+
+
+def test_mode_permission_ceiling_mode_gate_is_not_weakened_by_derisking_close() -> None:
+    """Security pin (#100): the de-risking exemption applies only to the
+    LIVE_MICRO cap arithmetic, never to the mode gate itself. A provable
+    de-risking close submitted in a non-trading mode (HALT here) still
+    vetoes with the unchanged "mode ... may not trade" reason -- the safety
+    valve for exposure must never become a bypass for the trading-mode gate.
+    """
+    context = make_context(mode=Mode.HALT, open_position=ContractCentis(1000))
+    intent = make_intent(action="sell_to_close", size=ContractCentis(1000))
+
+    result = _real_check("mode_permission_ceiling")(intent, context)
+
+    assert result.vetoed is True
+    assert result.reason == "mode HALT may not trade"
+
+
 # --- floor_invariant ---------------------------------------------------------------
 
 
@@ -755,24 +839,106 @@ def test_concentration_limits_vetoes_when_a_fee_bound_is_none(
     assert result.reason == "unprovable"
 
 
-def test_concentration_limits_charges_a_close_its_full_notional() -> None:
-    """`concentration_limits` charges the full worst-case notional even for a
-    `sell_to_close`, matching a buy. Pinned at the one-micro-over-threshold
-    exposure: the close still vetoes, which it would not if closes were charged
-    only fees+buffer (that far-smaller cost would keep `exposure + cost` under
-    the cap). This pins the deliberate conservative choice in `_order_cost` --
-    only `floor_invariant` reduces a provable close's cost.
+def test_concentration_limits_exempts_a_provable_derisking_close() -> None:
+    """(#100) Reverses the pre-#100 behavior this test used to pin (see git
+    history: `test_concentration_limits_charges_a_close_its_full_notional`).
+    At the identical one-micro-over-threshold exposure, a provable
+    de-risking `sell_to_close` now APPROVES: `concentration_limits` fully
+    exempts a provable close instead of charging it full worst-case
+    notional, so the safety valve that reduces exposure is never vetoed by
+    the cap it is reducing.
     """
     context = make_context(
         max_pos_market_pct_ppm=_CONCENTRATION_CAP_PPM,
         market_exposure=MoneyMicros(_CONCENTRATION_BOUNDARY_EXPOSURE_MICROS + 1),
+        open_position=ContractCentis(1000),
     )
+    intent = make_intent(action="sell_to_close", size=ContractCentis(1000))
 
-    result = _real_check("concentration_limits")(
-        make_intent(action="sell_to_close"), context
+    result = _real_check("concentration_limits")(intent, context)
+
+    assert result.vetoed is False
+
+
+def test_concentration_limits_still_vetoes_non_provable_close_over_threshold() -> None:
+    """The exemption above is narrow: at the identical over-threshold
+    exposure, a close that is NOT provably reduce-only (no open position on
+    record) gets no exemption, is still charged full worst-case notional,
+    and still vetoes (#100).
+    """
+    context = make_context(
+        max_pos_market_pct_ppm=_CONCENTRATION_CAP_PPM,
+        market_exposure=MoneyMicros(_CONCENTRATION_BOUNDARY_EXPOSURE_MICROS + 1),
+        open_position=None,
     )
+    intent = make_intent(action="sell_to_close", size=ContractCentis(1000))
+
+    result = _real_check("concentration_limits")(intent, context)
 
     assert result.vetoed is True
+    assert result.reason == "concentration limit exceeded"
+
+
+def test_concentration_limits_exempts_provable_close_even_massively_over_cap() -> None:
+    """(#100) The exemption is unconditional on exposure magnitude: even at
+    market_exposure vastly (not just one micro) over its cap, a provable
+    de-risking close still approves.
+    """
+    context = make_context(
+        max_pos_market_pct_ppm=_CONCENTRATION_CAP_PPM,
+        market_exposure=MoneyMicros(900_000_000_000),
+        open_position=ContractCentis(1000),
+    )
+    intent = make_intent(action="sell_to_close", size=ContractCentis(1000))
+
+    result = _real_check("concentration_limits")(intent, context)
+
+    assert result.vetoed is False
+
+
+def test_concentration_limits_exemption_boundary_matches_reduce_only_provable() -> None:
+    """(#100) The exemption's boundary is exactly `size <= open_position`
+    (the `_ReduceOnlyProvable` invariant): `size == open_position` is
+    provable and exempt (approves despite the over-cap exposure); one
+    contract past it is not provable, so full notional is charged and the
+    (still over-cap) check vetoes. Pins the `<=` boundary against `<`/`==`
+    mutants.
+    """
+    context = make_context(
+        max_pos_market_pct_ppm=_CONCENTRATION_CAP_PPM,
+        market_exposure=MoneyMicros(_CONCENTRATION_BOUNDARY_EXPOSURE_MICROS + 1),
+        open_position=ContractCentis(1000),
+    )
+
+    at_boundary = _real_check("concentration_limits")(
+        make_intent(action="sell_to_close", size=ContractCentis(1000)), context
+    )
+    over_boundary = _real_check("concentration_limits")(
+        make_intent(action="sell_to_close", size=ContractCentis(1001)), context
+    )
+
+    assert at_boundary.vetoed is False
+    assert over_boundary.vetoed is True
+    assert over_boundary.reason == "concentration limit exceeded"
+
+
+def test_concentration_limits_provable_close_approves_with_missing_fee_bound() -> None:
+    """(#100) The exemption short-circuits before `_order_cost` is ever
+    called: a provable de-risking close approves even when `max_trading_fee`
+    is `None`, which would otherwise make the cost unprovable and veto as
+    `"unprovable"` -- proof that cost is never computed for an exempt close.
+    """
+    context = make_context(
+        max_pos_market_pct_ppm=_CONCENTRATION_CAP_PPM,
+        market_exposure=MoneyMicros(_CONCENTRATION_BOUNDARY_EXPOSURE_MICROS + 1),
+        open_position=ContractCentis(1000),
+        max_trading_fee=None,
+    )
+    intent = make_intent(action="sell_to_close", size=ContractCentis(1000))
+
+    result = _real_check("concentration_limits")(intent, context)
+
+    assert result.vetoed is False
 
 
 # --- daily_loss_limit ---------------------------------------------------------------
@@ -900,6 +1066,154 @@ def test_velocity_limits_vetoes_when_a_fee_bound_is_none(
 
     assert result.vetoed is True
     assert result.reason == "unprovable"
+
+
+def test_velocity_limits_exempts_provable_derisking_close_from_daily_notional() -> None:
+    """(#100) The daily-notional term is exempt for a provable de-risking
+    close: even with `notional_today` already at (not just approaching) the
+    daily cap -- before any cost from this order is even considered -- the
+    close still approves.
+    """
+    context = make_context(
+        notional_today=MoneyMicros(5_000_000),
+        max_notional_per_day=MoneyMicros(5_000_000),
+        open_position=ContractCentis(1000),
+    )
+    intent = make_intent(action="sell_to_close", size=ContractCentis(1000))
+
+    result = _real_check("velocity_limits")(intent, context)
+
+    assert result.vetoed is False
+
+
+def test_velocity_limits_hourly_cap_still_applies_to_a_derisking_close() -> None:
+    """(#100) Unlike the daily-notional term, the hourly-order-count term is
+    runaway-order protection and is NOT exempted by a de-risking close: a
+    provable close that would breach the hourly cap still vetoes with the
+    unchanged "hourly order cap exceeded" reason.
+    """
+    context = make_context(
+        max_orders_per_hour=5,
+        orders_last_hour=5,
+        open_position=ContractCentis(1000),
+    )
+    intent = make_intent(action="sell_to_close", size=ContractCentis(1000))
+
+    result = _real_check("velocity_limits")(intent, context)
+
+    assert result.vetoed is True
+    assert result.reason == "hourly order cap exceeded"
+
+
+def test_velocity_limits_daily_cap_still_vetoes_a_non_provable_close() -> None:
+    """The daily-notional exemption is narrow: at the identical exhausted
+    daily budget, a close that is NOT provably reduce-only (no open position
+    on record) gets no exemption, is still charged full worst-case notional,
+    and still vetoes with the unchanged "daily notional cap exceeded" reason
+    (#100).
+    """
+    context = make_context(
+        notional_today=MoneyMicros(5_000_000),
+        max_notional_per_day=MoneyMicros(5_000_000),
+        open_position=None,
+    )
+    intent = make_intent(action="sell_to_close", size=ContractCentis(1000))
+
+    result = _real_check("velocity_limits")(intent, context)
+
+    assert result.vetoed is True
+    assert result.reason == "daily notional cap exceeded"
+
+
+def test_velocity_limits_provable_close_approves_with_missing_fee_bound() -> None:
+    """(#100) The daily-notional exemption short-circuits before
+    `_order_cost` is ever called: a provable de-risking close, with hourly
+    headroom to spare, approves even when `max_trading_fee` is `None` --
+    proof that cost is never computed for an exempt close.
+    """
+    context = make_context(
+        max_orders_per_hour=1_000,
+        orders_last_hour=0,
+        open_position=ContractCentis(1000),
+        max_trading_fee=None,
+    )
+    intent = make_intent(action="sell_to_close", size=ContractCentis(1000))
+
+    result = _real_check("velocity_limits")(intent, context)
+
+    assert result.vetoed is False
+
+
+# --- de-risking close exemption: cross-cap boundary consistency (#100) -----------
+
+#: Per-cap context overrides that put `concentration_limits`,
+#: `mode_permission_ceiling` (LIVE_MICRO), and `velocity_limits` (daily-notional
+#: term) each already over its own cap *before* any cost from the probe order is
+#: considered -- so a non-exempt (fully-charged) close is guaranteed to veto
+#: regardless of the couple-of-micros cost difference between `size ==
+#: open_position` and `size == open_position + 1`, isolating what this test
+#: actually probes: whether each cap's reduce-only-provable boundary is exactly
+#: `size <= open_position`, not the cap arithmetic itself (separately pinned
+#: per-check above).
+_DERISKING_BOUNDARY_CASES: tuple[tuple[str, dict[str, object], str], ...] = (
+    (
+        "concentration_limits",
+        {
+            "max_pos_market_pct_ppm": _CONCENTRATION_CAP_PPM,
+            "market_exposure": MoneyMicros(200_000_000),
+        },
+        "concentration limit exceeded",
+    ),
+    (
+        "mode_permission_ceiling",
+        {
+            "mode": Mode.LIVE_MICRO,
+            "micro_cap": MoneyMicros(1_000_000),
+            "total_exposure": MoneyMicros(2_000_000),
+        },
+        "live-micro exposure ceiling exceeded",
+    ),
+    (
+        "velocity_limits",
+        {
+            "notional_today": MoneyMicros(2_000_000),
+            "max_notional_per_day": MoneyMicros(1_000_000),
+        },
+        "daily notional cap exceeded",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("check_name", "context_kwargs", "veto_reason"),
+    _DERISKING_BOUNDARY_CASES,
+    ids=[case[0] for case in _DERISKING_BOUNDARY_CASES],
+)
+def test_derisking_close_exemption_boundary_is_consistent_across_all_three_caps(
+    check_name: str, context_kwargs: dict[str, object], veto_reason: str
+) -> None:
+    """(#100) The `size <= open_position` reduce-only boundary is identical
+    across `concentration_limits`, `mode_permission_ceiling`, and
+    `velocity_limits`: at `size == open_position` the close is provably
+    reduce-only and exempt (approves despite the cap already being breached
+    independent of this order); one contract past it is not provable, so
+    full notional is charged and the still-breached cap vetoes with its own
+    reason. A divergent predicate in any one cap fails this test under that
+    cap's own parametrize id.
+    """
+    open_position = ContractCentis(1000)
+    context = make_context(open_position=open_position, **context_kwargs)
+
+    at_boundary = _real_check(check_name)(
+        make_intent(action="sell_to_close", size=open_position), context
+    )
+    over_boundary = _real_check(check_name)(
+        make_intent(action="sell_to_close", size=ContractCentis(1001)), context
+    )
+
+    assert at_boundary.vetoed is False
+    assert over_boundary.vetoed is True
+    assert over_boundary.reason == veto_reason
 
 
 # --- quote_freshness / forecast_freshness ---------------------------------------
