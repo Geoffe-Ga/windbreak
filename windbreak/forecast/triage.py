@@ -17,6 +17,13 @@ dependency-injection point modeled on
 ``int``/``str``/``bool`` values -- never a float, per the package-wide no-float
 convention ``scripts/lint_no_floats.py`` enforces. All arithmetic here is
 integer-only for the same reason.
+
+The PROCEED path additionally threads an optional
+:class:`windbreak.forecast.pipeline.ForecastLedgerWriter` *discard* ledger into
+the full pipeline, so a triage-path run ledgers discarded model outputs
+identically to a direct :func:`windbreak.forecast.pipeline.run_pipeline` call.
+This is a separate seam from the ``TriageLedgerWriter`` above (which records
+only the STOP/PROCEED decision itself).
 """
 
 from __future__ import annotations
@@ -42,6 +49,7 @@ if TYPE_CHECKING:
 
     from windbreak.connector.models import NormalizedMarket
     from windbreak.forecast.cassettes import LlmTransport
+    from windbreak.forecast.pipeline import ForecastLedgerWriter
     from windbreak.forecast.records import BaselineQuoteSnapshot
     from windbreak.forecast.sandbox import ResearchTools
 
@@ -459,6 +467,7 @@ def _run_proceed_path(
     ledger: TriageLedgerWriter,
     full_transport: LlmTransport,
     research_tools: ResearchTools,
+    discard_ledger: ForecastLedgerWriter | None = None,
 ) -> ForecastRecord:
     """Handle the PROCEED path: run the full pipeline and fold in triage cost.
 
@@ -471,6 +480,10 @@ def _run_proceed_path(
         full_transport: The transport for the full pipeline's vote stage.
         research_tools: The sandboxed research tools threaded into the full
             pipeline's Stage-5 bounded web research.
+        discard_ledger: The optional forecast-event ledger for the full
+            pipeline's vote-discard events, or ``None`` to record nothing
+            (mirrors ``run_pipeline``'s ``ledger`` seam). Default ``None`` is a
+            strict no-op.
 
     Returns:
         The full forecast record with the Stage-0 cost folded into its total.
@@ -481,6 +494,7 @@ def _run_proceed_path(
         transport=full_transport,
         created_at=created_at,
         research_tools=research_tools,
+        ledger=discard_ledger,
     )
     folded = replace(
         full_record,
@@ -503,6 +517,7 @@ def run_triaged_pipeline(
     ledger: TriageLedgerWriter,
     created_at: datetime,
     research_tools: ResearchTools,
+    discard_ledger: ForecastLedgerWriter | None = None,
     triage_threshold_ppm: int = TRIAGE_THRESHOLD_PPM,
     operator_flagged: bool = False,
     refresh_triggered: bool = False,
@@ -526,6 +541,13 @@ def run_triaged_pipeline(
         created_at: The injected creation instant, for determinism.
         research_tools: The sandboxed research tools threaded into the full
             pipeline's Stage-5 bounded web research; untouched on the STOP path.
+        discard_ledger: The optional forecast-event ledger for the full
+            pipeline's vote-discard events, threaded through on the PROCEED path
+            so a triage-path run ledgers discarded model outputs identically to
+            a direct ``run_pipeline`` call (mirrors ``run_pipeline``'s ``ledger``
+            seam). Default ``None`` is a strict no-op -- untouched on the STOP
+            path, where no vote can be discarded -- leaving output byte-for-byte
+            unchanged.
         triage_threshold_ppm: The divergence threshold forcing the full run.
         operator_flagged: Whether an operator forces a full run.
         refresh_triggered: Whether a refresh forces a full run.
@@ -558,6 +580,7 @@ def run_triaged_pipeline(
             ledger=ledger,
             full_transport=full_transport,
             research_tools=research_tools,
+            discard_ledger=discard_ledger,
         )
     return _run_stop_path(
         market, baseline, context, created_at=created_at, ledger=ledger

@@ -54,6 +54,10 @@ from windbreak.forecast.cassettes import (
     RecordingCassette,
     ReplayCassette,
 )
+from windbreak.forecast.pipeline import (
+    FORECAST_OUTPUT_DISCARDED_EVENT,
+    InMemoryForecastLedger,
+)
 from windbreak.forecast.records import forecast_record_to_payload
 from windbreak.forecast.triage import (
     PER_FORECAST_BUDGET_MICROS,
@@ -504,3 +508,69 @@ def test_proceed_path_cassette_replay_matches_recording(
     )
 
     assert replayed == recorded
+
+
+# --- Discard-ledger threading (issue #98): separate seam from `ledger` -----------
+
+
+def test_stop_path_never_touches_discard_ledger(
+    market: NormalizedMarket,
+    baseline: BaselineQuoteSnapshot,
+    created_at: datetime,
+    make_fake_vote_transport: FakeVoteTransportFactory,
+    research_tools: ResearchTools,
+) -> None:
+    """A within-band prior stops before the full pipeline, so the wired
+    `discard_ledger` -- a seam that only the full pipeline's vote-discard
+    bookkeeping ever writes to -- must stay empty; `full_transport=
+    ForbiddenLiveTransport()` completing without raising is the structural
+    proof the full pipeline (and therefore `collect_model_votes`) never ran.
+    """
+    ledger = InMemoryTriageLedger()
+    discard_ledger = InMemoryForecastLedger()
+
+    record = run_triaged_pipeline(
+        market,
+        baseline,
+        triage_transport=make_fake_vote_transport(("460000",)),
+        full_transport=ForbiddenLiveTransport(),
+        ledger=ledger,
+        discard_ledger=discard_ledger,
+        created_at=created_at,
+        research_tools=research_tools,
+    )
+
+    assert record.triage_stage == "triage_only"
+    assert discard_ledger.events_by_type(FORECAST_OUTPUT_DISCARDED_EVENT) == ()
+
+
+def test_proceed_path_with_clean_votes_records_no_discard_events(
+    market: NormalizedMarket,
+    baseline: BaselineQuoteSnapshot,
+    created_at: datetime,
+    make_fake_vote_transport: FakeVoteTransportFactory,
+    research_tools: ResearchTools,
+) -> None:
+    """A far-from-baseline prior proceeds to the full pipeline; with every
+    full-pipeline vote clean, the wired `discard_ledger` records zero
+    `FORECAST_OUTPUT_DISCARDED` events and the record is a normal, live-
+    eligible `"full"`-stage record. Kills an "always record a discard event"
+    mutant that a proceed-path test without a clean-vote case would miss.
+    """
+    ledger = InMemoryTriageLedger()
+    discard_ledger = InMemoryForecastLedger()
+
+    record = run_triaged_pipeline(
+        market,
+        baseline,
+        triage_transport=make_fake_vote_transport(("600000",)),
+        full_transport=make_fake_vote_transport(),
+        ledger=ledger,
+        discard_ledger=discard_ledger,
+        created_at=created_at,
+        research_tools=research_tools,
+    )
+
+    assert record.triage_stage == "full"
+    assert record.eligible_for_live is True
+    assert discard_ledger.events_by_type(FORECAST_OUTPUT_DISCARDED_EVENT) == ()
