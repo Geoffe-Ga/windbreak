@@ -230,8 +230,9 @@ def test_ast_checker_does_not_flag_an_unrelated_riskkernel_import() -> None:
 
 def test_importlinter_declares_signing_key_isolation_contract() -> None:
     """`.importlinter` names a contract forbidding `riskkernel.signing`
-    imports, so a future `import-linter` CI job enforces the same boundary
-    the AST checker above already enforces at the pytest layer.
+    imports, so the CI-enforced `import-linter` gate (wired via
+    scripts/check-all.sh, issue #91) enforces the same boundary the AST
+    checker above already enforces at the pytest layer.
     """
     parser = configparser.ConfigParser()
     read_files = parser.read(_IMPORTLINTER_PATH, encoding="utf-8")

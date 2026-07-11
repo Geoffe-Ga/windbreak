@@ -4,7 +4,9 @@ The Risk Kernel is the sole holder of the approval-token **signing** key and
 runs with read-only exchange credentials (SPEC S5.2). It validates normalized
 order intents, reserves capital, and signs single-use approval tokens. Per the
 SPEC S5.3 import boundary, only this package may import the approval-token
-signing key handle; a future import-linter check will enforce that rule in CI.
+signing key handle; a CI-enforced import-linter check (wired via
+scripts/check-all.sh, issue #91) enforces that rule alongside the stronger
+pure-stdlib AST test.
 
 This package root re-exports the mode machine (:mod:`~windbreak.riskkernel.modes`),
 the pre-trade checks (:mod:`~windbreak.riskkernel.checks`), the process skeleton

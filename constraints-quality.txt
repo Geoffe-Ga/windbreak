@@ -35,3 +35,6 @@ coverage==7.13.4
 
 # Pre-commit runner
 pre-commit==4.5.1
+
+# Architecture (import boundaries)
+import-linter==2.13

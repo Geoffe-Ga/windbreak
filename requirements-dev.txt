@@ -34,6 +34,9 @@ mutmut>=2.4.0
 # Pre-commit hooks
 pre-commit>=3.4.0
 
+# Architecture import boundaries
+import-linter>=2.0
+
 # Structured-config parsing (compose structural test)
 PyYAML>=6.0
 

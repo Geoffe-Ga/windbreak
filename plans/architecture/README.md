@@ -84,7 +84,13 @@ See documentation:
 
 ## Integration
 
-Add to CI pipeline:
+These checks are wired into CI (issue #91): `scripts/check-all.sh` runs
+`scripts/architecture.sh`, which delegates to `run-check.sh`, so a broken
+boundary contract fails the quality gate. The pure-stdlib AST boundary tests
+remain the strictly-stronger primary layer; import-linter is independent
+defense-in-depth.
+
+To run the architecture check on its own in a pipeline step:
 
 ```yaml
 - name: Check Architecture
