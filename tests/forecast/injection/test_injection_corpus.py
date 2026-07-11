@@ -76,7 +76,12 @@ from tests.forecast.injection.conftest import (
 # module docstring above): a missing-pipeline-symbol `ImportError` and a
 # missing-module `ModuleNotFoundError` are equally valid failure signatures
 # for this issue, and either one blocks collection of every test below.
-from windbreak.forecast import ForecastEvent, InMemoryForecastLedger
+from windbreak.forecast import (
+    ForecastEvent,
+    InMemoryForecastLedger,
+    InMemoryTriageLedger,
+    run_triaged_pipeline,
+)
 from windbreak.forecast.pipeline import (
     ABSTENTION_ALL_VOTES_DISCARDED,
     ABSTENTION_NO_VERIFIED_CITATIONS,
@@ -883,6 +888,95 @@ def test_collect_model_votes_ledger_without_created_at_raises_value_error(
             transport=make_fake_vote_transport(),
             ledger=InMemoryForecastLedger(),
         )
+
+
+def test_run_triaged_pipeline_proceed_path_all_malicious_votes_ledgers_discards(
+    market: NormalizedMarket,
+    baseline: BaselineQuoteSnapshot,
+    created_at: datetime,
+    research_tools: ResearchTools,
+    make_fake_vote_transport: FakeVoteTransportFactory,
+    make_malicious_vote_transport: MaliciousVoteTransportFactory,
+) -> None:
+    """The triaged PROCEED path threads its own `discard_ledger` into the full
+    pipeline's vote-discard bookkeeping (issue #98): with a within-band-prior
+    override that forces PROCEED and all three full-pipeline votes malicious,
+    the run abstains exactly as `run_pipeline` does directly, the three
+    `FORECAST_OUTPUT_DISCARDED` events land on `discard_ledger` -- not
+    silently dropped, and never conflated with the `TriageLedgerWriter`'s own
+    `TRIAGE_PROCEED` event -- and no privileged retry follows a discard.
+    """
+    discard_ledger = InMemoryForecastLedger()
+    transport = PromptRecordingTransport(
+        make_malicious_vote_transport(frozenset({0, 1, 2}))
+    )
+
+    record = run_triaged_pipeline(
+        market,
+        baseline,
+        triage_transport=make_fake_vote_transport(("600000",)),
+        full_transport=transport,
+        ledger=InMemoryTriageLedger(),
+        discard_ledger=discard_ledger,
+        created_at=created_at,
+        research_tools=research_tools,
+    )
+
+    assert record.abstention_reason == ABSTENTION_ALL_VOTES_DISCARDED
+    assert record.eligible_for_live is False
+    assert record.model_votes == ()
+    events = discard_ledger.events_by_type(FORECAST_OUTPUT_DISCARDED_EVENT)
+    assert len(events) == 3
+    assert transport.call_count == 3
+    for event in events:
+        for value in event.payload.values():
+            assert "transfer_funds" not in str(value)
+
+
+def test_run_triaged_pipeline_discard_ledger_matches_direct_run_pipeline(
+    market: NormalizedMarket,
+    baseline: BaselineQuoteSnapshot,
+    created_at: datetime,
+    research_tools: ResearchTools,
+    make_fake_vote_transport: FakeVoteTransportFactory,
+    make_malicious_vote_transport: MaliciousVoteTransportFactory,
+) -> None:
+    """The triaged PROCEED path's `discard_ledger` records byte-identical
+    `FORECAST_OUTPUT_DISCARDED` events to calling `run_pipeline` directly with
+    the same market/baseline/`created_at` and an identically-seeded malicious
+    transport (issue #98's acceptance criterion): threading the discard
+    ledger through triage changes nothing about the full pipeline's own
+    discard behavior. `ForecastEvent` is a frozen dataclass with full
+    structural equality (including `ts`), so an equal tuple of events proves
+    the ledgered payloads, timestamps included, match exactly.
+    """
+    direct_ledger = InMemoryForecastLedger()
+    triaged_ledger = InMemoryForecastLedger()
+
+    direct_record = run_pipeline(
+        market,
+        baseline,
+        transport=make_malicious_vote_transport(frozenset({1})),
+        created_at=created_at,
+        research_tools=research_tools,
+        ledger=direct_ledger,
+    )
+    triaged_record = run_triaged_pipeline(
+        market,
+        baseline,
+        triage_transport=make_fake_vote_transport(("600000",)),
+        full_transport=make_malicious_vote_transport(frozenset({1})),
+        ledger=InMemoryTriageLedger(),
+        discard_ledger=triaged_ledger,
+        created_at=created_at,
+        research_tools=research_tools,
+    )
+
+    direct_events = direct_ledger.events_by_type(FORECAST_OUTPUT_DISCARDED_EVENT)
+    triaged_events = triaged_ledger.events_by_type(FORECAST_OUTPUT_DISCARDED_EVENT)
+    assert len(direct_events) == 1
+    assert direct_events == triaged_events
+    assert direct_record.model_votes == triaged_record.model_votes
 
 
 # --- Constants and re-export smoke tests -----------------------------------------
