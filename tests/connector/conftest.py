@@ -12,21 +12,35 @@ and are additive: nothing above this point is modified. `windbreak.connector.pap
 does not exist yet either, so `paper_exchange` fails collection the same way,
 with `ModuleNotFoundError: No module named 'windbreak.connector.paper'` -- the
 expected Gate 1 RED state for issue #19.
+
+Issue #106 rewires `snapshot_task` onto the real `Screener` (the stub is
+deleted) with a fixed clock chosen so the fixture markets' close times
+(December 2024) sit inside the default `horizon_days` window; a wall clock
+would drift the fixtures out of range as time passes.
 """
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
 
+from windbreak.config import ScreenerConfig
 from windbreak.connector.fake import FakeExchange
 from windbreak.connector.snapshot import InMemoryEventLedgerWriter, MarketSnapshotTask
-from windbreak.screener import StubScreener
+from windbreak.screener import Screener
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from windbreak.connector.paper import PaperExchange
+
+#: A fixed reference "now" inside every fixture market's close-time horizon
+#: (December 2024), so horizon-window assertions never drift with wall-clock
+#: time.
+_SNAPSHOT_NOW = datetime(2024, 12, 10, tzinfo=UTC)
 
 
 @pytest.fixture
@@ -48,11 +62,25 @@ def in_memory_ledger() -> InMemoryEventLedgerWriter:
 
 
 @pytest.fixture
+def snapshot_clock() -> Callable[[], datetime]:
+    """Provide the fixed clock `snapshot_task`'s `Screener` measures horizons from."""
+    return lambda: _SNAPSHOT_NOW
+
+
+@pytest.fixture
 def snapshot_task(
-    fake_exchange: FakeExchange, in_memory_ledger: InMemoryEventLedgerWriter
+    fake_exchange: FakeExchange,
+    in_memory_ledger: InMemoryEventLedgerWriter,
+    snapshot_clock: Callable[[], datetime],
 ) -> MarketSnapshotTask:
-    """Provide a `MarketSnapshotTask` wired to the fake exchange and stub screener."""
-    return MarketSnapshotTask(fake_exchange, StubScreener(), in_memory_ledger)
+    """Provide a `MarketSnapshotTask` wired to the fake exchange and the real Screener.
+
+    The task and its `Screener` share `in_memory_ledger`, so `MARKET_SNAPSHOT`
+    and `SCREEN_DECISION` events land in the same ledger (issue #106: the real
+    `Screener` is now the single `SCREEN_DECISION` emitter).
+    """
+    screener = Screener(ScreenerConfig(), in_memory_ledger, clock=snapshot_clock)
+    return MarketSnapshotTask(fake_exchange, screener, in_memory_ledger)
 
 
 @pytest.fixture

@@ -386,6 +386,7 @@ _MARKET_ITEM_SCHEMA: Final = ResponseSchema(
         "close_time": None,
         "expected_expiration_time": None,
         "tick_size": None,
+        "volume_24h": None,
     },
     cosmetic=frozenset(),
 )

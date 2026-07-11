@@ -14,7 +14,8 @@
     "fractional_trading_enabled": false,
     "mutually_exclusive_group_id": null,
     "jurisdiction_status": "eligible",
-    "raw_exchange_payload_hash": "sha256:isoa111222333444555666777888999"
+    "raw_exchange_payload_hash": "sha256:isoa111222333444555666777888999",
+    "volume_24h_micros": 5000000000
   },
   {
     "exchange": "paper-exchange",
@@ -31,6 +32,7 @@
     "fractional_trading_enabled": false,
     "mutually_exclusive_group_id": null,
     "jurisdiction_status": "eligible",
-    "raw_exchange_payload_hash": "sha256:isob111222333444555666777888999"
+    "raw_exchange_payload_hash": "sha256:isob111222333444555666777888999",
+    "volume_24h_micros": 5000000000
   }
 ]

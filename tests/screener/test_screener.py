@@ -24,6 +24,13 @@ The production API these tests pin:
     * `ScreenResult(ticker, eligible, blocked_by, filters)`,
       `LegalRiskAcknowledgement(category, reason)`, and the filter-module's
       `BookStats`/`FilterResult` are all frozen, slotted dataclasses.
+
+Issue #106 adds `Screener.screen_book(market, order_book) -> ScreenResult`:
+builds `BookStats` from the market's own `volume_24h_micros` field and a
+depth measured as `min(sum(yes_bids), sum(yes_asks))`, then delegates to
+`screen`. `Screener` has no `screen_book` method yet, so those tests fail with
+`AttributeError: 'Screener' object has no attribute 'screen_book'` -- the
+expected Gate 1 RED state for issue #106.
 """
 
 from __future__ import annotations
@@ -37,12 +44,16 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from windbreak.config import HorizonDays, ScreenerConfig
-from windbreak.connector.models import NormalizedMarket
+from windbreak.connector.models import (
+    NormalizedMarket,
+    OrderBookLevel,
+    OrderBookSnapshot,
+)
 from windbreak.connector.snapshot import (
     SCREEN_DECISION_EVENT,
     InMemoryEventLedgerWriter,
 )
-from windbreak.numeric import ContractCentis, MoneyMicros
+from windbreak.numeric import ContractCentis, MoneyMicros, PricePips
 from windbreak.screener.filters import (
     CATEGORY_BLOCKLIST,
     HORIZON_DAYS,
@@ -89,12 +100,15 @@ def _market(
     *,
     category: str = "economics",
     close_time: datetime = _NOW + timedelta(days=30),
+    volume_24h_micros: int = 0,
 ) -> NormalizedMarket:
-    """Build a valid `NormalizedMarket` with only `category`/`close_time` varied.
+    """Build a valid `NormalizedMarket` with `category`/`close_time`/volume varied.
 
     Args:
         category: The market's topical category.
         close_time: When the market closes.
+        volume_24h_micros: The market's own trailing 24h volume field
+            (issue #106), read by `Screener.screen_book`.
 
     Returns:
         A `NormalizedMarket` instance.
@@ -115,6 +129,22 @@ def _market(
         mutually_exclusive_group_id=None,
         jurisdiction_status="eligible",
         raw_exchange_payload_hash="sha256:abc123",
+        volume_24h_micros=volume_24h_micros,
+    )
+
+
+def _level(price_pips: int, quantity_centis: int) -> OrderBookLevel:
+    """Build an `OrderBookLevel` from raw pips/contract-centis integers.
+
+    Args:
+        price_pips: The level's price, in pips.
+        quantity_centis: The level's resting size, in contract-centis.
+
+    Returns:
+        The unit-wrapped order-book level.
+    """
+    return OrderBookLevel(
+        price=PricePips(price_pips), quantity=ContractCentis(quantity_centis)
     )
 
 
@@ -297,6 +327,103 @@ def test_ledgered_blocked_by_names_only_the_failing_filters_in_order() -> None:
     payload = writer.events_by_type(SCREEN_DECISION_EVENT)[-1].payload
     assert result.blocked_by == (MIN_DEPTH,)
     assert payload["blocked_by"] == [MIN_DEPTH]
+
+
+# --- screen_book: real book-derived BookStats (issue #106) ------------------
+
+
+def test_screen_book_measures_volume_from_the_market_field() -> None:
+    """`screen_book`'s measured 24h volume comes from `market.volume_24h_micros`."""
+    config = ScreenerConfig()
+    writer = InMemoryEventLedgerWriter()
+    screener = Screener(config, writer, clock=_clock)
+    market = _market(volume_24h_micros=config.min_volume_24h_micros + 1234)
+    book = OrderBookSnapshot(
+        ticker=market.ticker,
+        yes_bids=(_level(4500, config.min_depth_contract_centis),),
+        yes_asks=(_level(4600, config.min_depth_contract_centis),),
+        fetched_at=_NOW,
+    )
+
+    result = screener.screen_book(market, book)
+
+    measured = result.filters[MIN_VOLUME_24H].measured
+    assert measured == config.min_volume_24h_micros + 1234
+
+
+def test_screen_book_depth_is_the_min_of_the_two_side_sums() -> None:
+    """Depth is `min(sum(yes_bids), sum(yes_asks))`, not either side alone."""
+    config = ScreenerConfig()
+    writer = InMemoryEventLedgerWriter()
+    screener = Screener(config, writer, clock=_clock)
+    market = _market(volume_24h_micros=config.min_volume_24h_micros)
+    book = OrderBookSnapshot(
+        ticker=market.ticker,
+        yes_bids=(_level(4500, 300), _level(4400, 200)),
+        yes_asks=(_level(4600, 150), _level(4700, 100)),
+        fetched_at=_NOW,
+    )
+
+    result = screener.screen_book(market, book)
+
+    assert result.filters[MIN_DEPTH].measured == 250
+
+
+def test_screen_book_one_sided_book_measures_zero_depth_and_blocks_min_depth() -> None:
+    """A book with bids but no resting asks measures zero depth (the empty side)."""
+    config = ScreenerConfig()
+    writer = InMemoryEventLedgerWriter()
+    screener = Screener(config, writer, clock=_clock)
+    market = _market(volume_24h_micros=config.min_volume_24h_micros)
+    book = OrderBookSnapshot(
+        ticker=market.ticker,
+        yes_bids=(_level(4500, 50_000),),
+        yes_asks=(),
+        fetched_at=_NOW,
+    )
+
+    result = screener.screen_book(market, book)
+
+    assert result.filters[MIN_DEPTH].measured == 0
+    assert MIN_DEPTH in result.blocked_by
+
+
+def test_screen_book_empty_book_measures_zero_depth_on_both_sides() -> None:
+    """A wholly empty book (no bids, no asks) measures zero depth."""
+    config = ScreenerConfig()
+    writer = InMemoryEventLedgerWriter()
+    screener = Screener(config, writer, clock=_clock)
+    market = _market(volume_24h_micros=config.min_volume_24h_micros)
+    book = OrderBookSnapshot(
+        ticker=market.ticker, yes_bids=(), yes_asks=(), fetched_at=_NOW
+    )
+
+    result = screener.screen_book(market, book)
+
+    assert result.filters[MIN_DEPTH].measured == 0
+    assert result.eligible is False
+
+
+def test_screen_book_delegates_to_screen_and_ledgers_exactly_one_decision() -> None:
+    """`screen_book` ledgers exactly one `SCREEN_DECISION` with all four filters."""
+    config = ScreenerConfig()
+    writer = InMemoryEventLedgerWriter()
+    screener = Screener(config, writer, clock=_clock)
+    market = _market(volume_24h_micros=config.min_volume_24h_micros)
+    book = OrderBookSnapshot(
+        ticker=market.ticker,
+        yes_bids=(_level(4500, config.min_depth_contract_centis),),
+        yes_asks=(_level(4600, config.min_depth_contract_centis),),
+        fetched_at=_NOW,
+    )
+
+    result = screener.screen_book(market, book)
+
+    decisions = writer.events_by_type(SCREEN_DECISION_EVENT)
+    assert len(decisions) == 1
+    assert set(decisions[0].payload["filters"]) == set(_CANONICAL_ORDER)
+    assert result.ticker == market.ticker
+    assert result.eligible is True
 
 
 def _assert_no_float_leaf(value: object) -> None:

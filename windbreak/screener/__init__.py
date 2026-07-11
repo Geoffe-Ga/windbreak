@@ -12,17 +12,11 @@ and ``measured`` quantity. Legally-risky categories (e.g. ``sports``) fail close
 until an operator supplies a :class:`LegalRiskAcknowledgement`, which also emits
 a ``LEGAL_RISK_ACK`` event.
 
-:class:`StubScreener` and :class:`ScreenDecision` remain exported for the
-snapshot task until the live wiring lands (a follow-up: no 24h-volume source
-feeds :class:`~windbreak.screener.filters.BookStats` yet). Screening decisions
-derive from money-path values, so this package is guarded against floats by
-``scripts/lint_no_floats.py``.
+Screening decisions derive from money-path values, so this package is guarded
+against floats by ``scripts/lint_no_floats.py``.
 """
 
 from __future__ import annotations
-
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 from windbreak.screener.filters import (
     CATEGORY_BLOCKLIST,
@@ -44,64 +38,6 @@ from windbreak.screener.screener import (
     ScreenResult,
 )
 
-if TYPE_CHECKING:
-    from typing import Literal
-
-    from windbreak.connector.models import NormalizedMarket
-
-#: The jurisdiction verdict that permits trading a market.
-_ELIGIBLE: str = "eligible"
-
-
-@dataclass(frozen=True, slots=True)
-class ScreenDecision:
-    """The outcome of screening a single market.
-
-    Attributes:
-        ticker: The screened market's ticker.
-        decision: Whether the market is ``"eligible"`` or ``"blocked"``.
-        reason: Human-readable justification for the decision.
-    """
-
-    ticker: str
-    decision: Literal["eligible", "blocked"]
-    reason: str
-
-
-class StubScreener:
-    """A minimal screener that blocks only on non-eligible jurisdiction.
-
-    Real filters (liquidity, fees, resolution quality) arrive in issue #6; this
-    stub exists so the snapshot pipeline has an end-to-end verdict to record.
-    """
-
-    def screen(self, market: NormalizedMarket) -> ScreenDecision:
-        """Screen a market on jurisdiction alone.
-
-        Args:
-            market: The market to screen.
-
-        Returns:
-            A ``"blocked"`` decision (with a jurisdiction-referencing reason)
-            when the market's jurisdiction is not eligible, else an
-            ``"eligible"`` decision.
-        """
-        if market.jurisdiction_status != _ELIGIBLE:
-            return ScreenDecision(
-                ticker=market.ticker,
-                decision="blocked",
-                reason=(
-                    f"jurisdiction status is {market.jurisdiction_status!r}, "
-                    "not eligible"
-                ),
-            )
-        return ScreenDecision(
-            ticker=market.ticker,
-            decision="eligible",
-            reason="jurisdiction eligible",
-        )
-
-
 __all__ = [
     "CATEGORY_BLOCKLIST",
     "HORIZON_DAYS",
@@ -112,10 +48,8 @@ __all__ = [
     "BookStats",
     "FilterResult",
     "LegalRiskAcknowledgement",
-    "ScreenDecision",
     "ScreenResult",
     "Screener",
-    "StubScreener",
     "category_filter",
     "horizon_filter",
     "min_depth_filter",

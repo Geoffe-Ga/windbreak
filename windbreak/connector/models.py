@@ -98,6 +98,31 @@ def _require_positive_unit_int(value: int, field_name: str) -> None:
         raise ValueError(f"{field_name} must be positive, got {value}")
 
 
+def _require_nonnegative_unit_int(value: int, field_name: str) -> None:
+    """Guard that a plain-int unit field is a true, non-negative integer.
+
+    Mirrors :func:`_require_positive_unit_int` -- including its bool/int
+    rejection convention (a stray ``bool`` is an ``int`` subclass and must never
+    masquerade as a quantity) -- but admits ``0`` as legal: a market that simply
+    has not traded in the last 24 hours carries a genuine zero volume rather than
+    an invalid one.
+
+    Args:
+        value: The candidate integer.
+        field_name: The owning field's name, surfaced in the error message.
+
+    Raises:
+        TypeError: If ``value`` is a ``bool`` or is not an ``int``.
+        ValueError: If ``value`` is negative.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(
+            f"{field_name} must be a non-bool int, got {type(value).__name__}"
+        )
+    if value < 0:
+        raise ValueError(f"{field_name} must be non-negative, got {value}")
+
+
 @dataclass(frozen=True, slots=True)
 class NormalizedMarket:
     """A single exchange market normalized to windbreak's SPEC S6.2 schema.
@@ -121,6 +146,11 @@ class NormalizedMarket:
         jurisdiction_status: Eligibility verdict; one of the sanctioned values.
         raw_exchange_payload_hash: Non-empty hash of the source payload, for
             provenance.
+        volume_24h_micros: Trailing 24-hour traded volume in settlement-notional
+            micro-dollars (a non-negative int; zero is legal). This is a
+            windbreak extension beyond the literal SPEC S6.2 schema, added so the
+            screener's 24h-volume floor has an honest source drawn straight off
+            the normalized market.
     """
 
     exchange: str
@@ -138,6 +168,7 @@ class NormalizedMarket:
     mutually_exclusive_group_id: str | None
     jurisdiction_status: Literal["eligible", "ineligible", "unknown"]
     raw_exchange_payload_hash: str
+    volume_24h_micros: int
 
     def __post_init__(self) -> None:
         """Validate the closed-set, integrality, and provenance invariants.
@@ -145,8 +176,8 @@ class NormalizedMarket:
         Raises:
             TypeError: If a unit int field is a ``bool`` or non-``int``.
             ValueError: If ``market_type`` or ``jurisdiction_status`` is
-                unrecognized, a unit int field is non-positive, or the payload
-                hash is empty.
+                unrecognized, a strictly-positive unit int field is non-positive,
+                ``volume_24h_micros`` is negative, or the payload hash is empty.
         """
         _require_market_type(self.market_type)
         _require_jurisdiction(self.jurisdiction_status)
@@ -154,6 +185,7 @@ class NormalizedMarket:
         _require_positive_unit_int(
             self.min_order_contract_centis, "min_order_contract_centis"
         )
+        _require_nonnegative_unit_int(self.volume_24h_micros, "volume_24h_micros")
         if not self.raw_exchange_payload_hash:
             raise ValueError("raw_exchange_payload_hash must be non-empty")
 

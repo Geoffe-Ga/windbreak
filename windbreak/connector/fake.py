@@ -117,6 +117,7 @@ def _market_from_dict(data: Mapping[str, Any]) -> NormalizedMarket:
         mutually_exclusive_group_id=data["mutually_exclusive_group_id"],
         jurisdiction_status=data["jurisdiction_status"],
         raw_exchange_payload_hash=data["raw_exchange_payload_hash"],
+        volume_24h_micros=data["volume_24h_micros"],
     )
 
 

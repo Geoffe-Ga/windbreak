@@ -169,6 +169,7 @@ def market() -> NormalizedMarket:
         mutually_exclusive_group_id=None,
         jurisdiction_status="eligible",
         raw_exchange_payload_hash="sha256:abc123",
+        volume_24h_micros=0,
     )
 
 

@@ -14,7 +14,8 @@
     "fractional_trading_enabled": false,
     "mutually_exclusive_group_id": "KXFED-24-GROUP",
     "jurisdiction_status": "eligible",
-    "raw_exchange_payload_hash": "sha256:aaaa1111aaaa1111aaaa1111aaaa1111"
+    "raw_exchange_payload_hash": "sha256:aaaa1111aaaa1111aaaa1111aaaa1111",
+    "volume_24h_micros": 5000000000
   },
   {
     "exchange": "fake-exchange",
@@ -31,7 +32,8 @@
     "fractional_trading_enabled": false,
     "mutually_exclusive_group_id": null,
     "jurisdiction_status": "ineligible",
-    "raw_exchange_payload_hash": "sha256:bbbb2222bbbb2222bbbb2222bbbb2222"
+    "raw_exchange_payload_hash": "sha256:bbbb2222bbbb2222bbbb2222bbbb2222",
+    "volume_24h_micros": 5000000000
   },
   {
     "exchange": "fake-exchange",
@@ -48,6 +50,7 @@
     "fractional_trading_enabled": true,
     "mutually_exclusive_group_id": null,
     "jurisdiction_status": "unknown",
-    "raw_exchange_payload_hash": "sha256:cccc3333cccc3333cccc3333cccc3333"
+    "raw_exchange_payload_hash": "sha256:cccc3333cccc3333cccc3333cccc3333",
+    "volume_24h_micros": 5000000000
   }
 ]

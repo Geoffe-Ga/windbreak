@@ -3,7 +3,7 @@
 `run_loop` gains a keyword-only `on_beat: Callable[[int], None] | None = None`
 hook invoked once per beat with the 1-based sequence number; `main`'s `run`
 subcommand gains `--snapshot-fixture-dir` (default None = off) that wires a
-`FakeExchange` + `StubScreener` + `LoggingEventLedgerWriter` into that hook.
+`FakeExchange` + the real `Screener` + `LoggingEventLedgerWriter` into that hook.
 Kept out of `test_main.py`/`test_run_loop.py` to avoid cross-lane conflicts
 with issue #16's connector work.
 
@@ -12,6 +12,9 @@ argument) and `--snapshot-fixture-dir` is not a recognized CLI flag yet
 (argparse SystemExit(2)) -- both are the expected Gate 1 RED failures for
 issue #16, in addition to `windbreak.connector`/`windbreak.screener` not
 existing.
+
+Issue #106 asserts the wiring never emits `LEGAL_RISK_ACK` (no
+acknowledgements are configured by `_build_snapshot_on_beat`).
 """
 
 from __future__ import annotations
@@ -78,6 +81,7 @@ def test_run_with_snapshot_fixture_dir_emits_snapshot_and_decision_lines(
     assert exit_code == 0
     assert "MARKET_SNAPSHOT" in joined
     assert "SCREEN_DECISION" in joined
+    assert "LEGAL_RISK_ACK" not in joined
 
 
 def test_run_without_snapshot_fixture_dir_emits_no_snapshot_lines(

@@ -46,7 +46,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
     from types import FrameType
 
-    from windbreak.config import ConfigLoadEvent, WindbreakConfig
+    from windbreak.config import ConfigLoadEvent, ScreenerConfig, WindbreakConfig
     from windbreak.dashboard.app import DashboardStatus
 
 #: Operating mode reported in every heartbeat line. Matches the RESEARCH state
@@ -807,29 +807,39 @@ def _run_rearm(args: argparse.Namespace) -> int:
     return 0
 
 
-def _build_snapshot_on_beat(fixture_dir: str) -> Callable[[int], None]:
-    """Build a per-beat hook that snapshots a fixture-backed exchange.
+def _build_snapshot_on_beat(
+    fixture_dir: str, screener_config: ScreenerConfig
+) -> Callable[[int], None]:
+    """Build a per-beat hook that snapshots and screens a fixture-backed exchange.
 
-    The connector imports are local so the heartbeat path stays free of the
-    connector package unless snapshotting is actually requested.
+    The connector/screener imports are local so the heartbeat path stays free of
+    those packages unless snapshotting is actually requested. A single
+    ``LoggingEventLedgerWriter`` is shared by the real :class:`Screener` (the
+    single ``SCREEN_DECISION`` emitter) and the :class:`MarketSnapshotTask`, so
+    both event kinds land in the same ledger.
 
     Args:
         fixture_dir: Directory of exchange JSON fixtures to snapshot.
+        screener_config: The screening thresholds and blocklist to enforce.
 
     Returns:
         A callable that, given the beat sequence, runs one snapshot pass.
     """
+    from datetime import UTC, datetime
+
     from windbreak.connector import (
         FakeExchange,
         LoggingEventLedgerWriter,
         MarketSnapshotTask,
     )
-    from windbreak.screener import StubScreener
+    from windbreak.screener import Screener
 
+    writer = LoggingEventLedgerWriter()
+    screener = Screener(screener_config, writer, clock=lambda: datetime.now(UTC))
     task = MarketSnapshotTask(
         FakeExchange.from_fixture_dir(fixture_dir),
-        StubScreener(),
-        LoggingEventLedgerWriter(),
+        screener,
+        writer,
     )
 
     def _on_beat(_seq: int) -> None:
@@ -924,7 +934,7 @@ def _resolve_on_beat(
     if _paper_activated(config, args):
         return _build_paper_on_beat(args, config)
     if args.snapshot_fixture_dir is not None:
-        return _build_snapshot_on_beat(args.snapshot_fixture_dir)
+        return _build_snapshot_on_beat(args.snapshot_fixture_dir, config.screener)
     return None
 
 

@@ -9,7 +9,8 @@
       "category": "Economics",
       "close_time": "2024-12-18T19:00:00Z",
       "expected_expiration_time": "2024-12-18T20:00:00Z",
-      "tick_size": 1
+      "tick_size": 1,
+      "volume_24h": 75000
     },
     {
       "ticker": "KXFED-24DEC-B75",
@@ -20,7 +21,8 @@
       "category": "Economics",
       "close_time": "2024-12-18T19:00:00Z",
       "expected_expiration_time": "2024-12-18T20:00:00Z",
-      "tick_size": 1
+      "tick_size": 1,
+      "volume_24h": 12000
     },
     {
       "ticker": "KXWEA-24DEC",
@@ -31,7 +33,8 @@
       "category": "Weather",
       "close_time": "2024-12-31T05:00:00Z",
       "expected_expiration_time": null,
-      "tick_size": 1
+      "tick_size": 1,
+      "volume_24h": 300
     },
     {
       "ticker": "FAKE-PERP",

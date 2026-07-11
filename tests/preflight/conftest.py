@@ -232,6 +232,7 @@ def make_market(
         mutually_exclusive_group_id=None,
         jurisdiction_status=jurisdiction_status,
         raw_exchange_payload_hash="sha256:placeholder",
+        volume_24h_micros=0,
     )
 
 

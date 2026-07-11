@@ -14,6 +14,7 @@
     "fractional_trading_enabled": false,
     "mutually_exclusive_group_id": null,
     "jurisdiction_status": "eligible",
-    "raw_exchange_payload_hash": "sha256:fullconsume111222333444555666777"
+    "raw_exchange_payload_hash": "sha256:fullconsume111222333444555666777",
+    "volume_24h_micros": 5000000000
   }
 ]
