@@ -5,10 +5,10 @@ a small, explicit allowlist of hosts and *nothing else* -- no ledger, no order
 gateway, no config, no arbitrary network. This module makes that boundary
 **structural rather than prompt-based**: instead of instructing a model "please
 only fetch from these hosts" (a request a prompt-injected tool call can ignore),
-the only capabilities a research step is ever handed are the three methods on a
+the only capabilities a research step is ever handed are the two methods on a
 slots-closed :class:`ResearchTools` object, and :meth:`ResearchTools.fetch`
 allowlists by exact, parsed hostname before it will call its transport. A caller
-(or a hijacked tool-use turn) cannot smuggle in a fourth capability, cannot
+(or a hijacked tool-use turn) cannot smuggle in a third capability, cannot
 widen the allowlist, and cannot escape the on-disk cache jail, because those
 constraints live in code the model never gets to rewrite.
 
@@ -24,9 +24,11 @@ Three seams enforce the boundary:
   and refuses (:class:`SandboxPathViolationError`) anything that lands outside its
   root, defeating absolute names, ``..`` traversal, and symlink escapes.
 * **Final capability surface** -- :func:`tool_registry` exposes exactly
-  ``{"search", "fetch", "verify_citation"}`` as a read-only mapping, and
-  ``verify_citation`` is a reserved slot that fails closed until issue #26
-  ships its verification logic.
+  ``{"search", "fetch"}`` (the two egress primitives) as a read-only mapping.
+  Citation verification is not a sandbox capability: it is performed
+  pipeline-side by :func:`windbreak.forecast.citations.verify_citation` as a
+  composition over the egress-guarded ``fetch`` primitive, keeping SPEC S8.3
+  citation-verification traceability while the sandbox surface stays minimal.
 """
 
 from __future__ import annotations
@@ -34,7 +36,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, NoReturn, Protocol
+from typing import TYPE_CHECKING, Protocol
 from urllib.parse import urlsplit
 
 if TYPE_CHECKING:
@@ -209,9 +211,9 @@ class ResearchCache:
 class ResearchTools:
     """The final, capability-closed set of tools a research step may use.
 
-    The only public methods are :meth:`search`, :meth:`fetch`, and the reserved
-    :meth:`verify_citation`; a flat ``__slots__`` blocks any fourth attribute
-    from being attached. The allowlist and both transports are private, so a
+    The only public methods are :meth:`search` and :meth:`fetch`; a flat
+    ``__slots__`` blocks any third attribute from being attached. The allowlist
+    and both transports are private, so a
     caller cannot widen the egress policy or swap a transport after
     construction -- the boundary is structural, not advisory.
     """
@@ -292,26 +294,13 @@ class ResearchTools:
         self._cache.store(_cache_filename(url), content)
         return content
 
-    def verify_citation(self) -> NoReturn:
-        """Reserved verification capability -- deferred to issue #26.
-
-        The capability surface is final now, so ``verify_citation`` is present
-        in the registry, but no verification logic ships in issue #24.
-
-        Raises:
-            NotImplementedError: Always, referencing the deferred issue #26.
-        """
-        raise NotImplementedError(
-            "verify_citation is reserved for issue #26 (citation verification)"
-        )
-
 
 def tool_registry(tools: ResearchTools) -> Mapping[str, Callable[..., object]]:
     """Return the read-only tool registry backed by ``tools``.
 
-    The mapping surface is exactly ``{"search", "fetch", "verify_citation"}``
-    and is wrapped in :class:`types.MappingProxyType`, so a caller can neither
-    add a fourth capability nor rebind an existing one.
+    The mapping surface is exactly ``{"search", "fetch"}`` and is wrapped in
+    :class:`types.MappingProxyType`, so a caller can neither add a third
+    capability nor rebind an existing one.
 
     Args:
         tools: The capability object whose bound methods back the registry.
@@ -322,7 +311,6 @@ def tool_registry(tools: ResearchTools) -> Mapping[str, Callable[..., object]]:
     tools_by_name: dict[str, Callable[..., object]] = {
         "search": tools.search,
         "fetch": tools.fetch,
-        "verify_citation": tools.verify_citation,
     }
     return MappingProxyType(tools_by_name)
 
