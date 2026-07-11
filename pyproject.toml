@@ -83,18 +83,18 @@ directory = "htmlcov"
 
 [tool.mypy]
 python_version = "3.11"
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = true
-disallow_incomplete_defs = true
-check_untyped_defs = true
-disallow_untyped_decorators = true
-no_implicit_optional = true
-warn_redundant_casts = true
-warn_unused_ignores = true
-warn_no_return = true
-strict_equality = true
-strict_concatenate = true
+# Issue #179: `strict = true` is the single source of type-check strictness, so
+# the config-driven `mypy windbreak/ scripts/` invocation in scripts/typecheck.sh
+# (Gate 2 / check-all.sh) enforces exactly the same check set as the pre-commit
+# hook's `--strict` args in .pre-commit-config.yaml. Previously this section
+# hand-listed a *subset* of --strict's flags and conspicuously omitted
+# `no_implicit_reexport`, so implicit re-export errors (the #158/#178 pattern)
+# passed the local Gate-2 run yet failed CI's `--strict` pre-commit step -- the
+# exact recurrence #179 targets. `strict = true` supersedes the individual flags
+# (all of which it already implies) and the now-removed deprecated
+# `strict_concatenate` (folded into --strict's `extra_checks`). Kept in lockstep
+# with the hook's `--strict` by tests/toolchain/test_precommit_scope.py.
+strict = true
 
 [[tool.mypy.overrides]]
 module = "tests.*"

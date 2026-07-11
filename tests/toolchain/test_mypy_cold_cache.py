@@ -36,6 +36,7 @@ cache away from it.
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import re
 import shutil
@@ -46,6 +47,7 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _TYPECHECK_SCRIPT_PATH = _REPO_ROOT / "scripts" / "typecheck.sh"
 _MYPY_CACHE_DIR_PATH = _REPO_ROOT / ".mypy_cache"
+_PYPROJECT_PATH = _REPO_ROOT / "pyproject.toml"
 
 #: The bin directory of the interpreter running this test. In the real
 #: Gate-2 path `check-all.sh` prepends the shared `.venv/bin` to PATH
@@ -231,4 +233,100 @@ def test_typecheck_script_run_does_not_touch_repo_root_mypy_cache() -> None:
         ".mypy_cache tree -- it must isolate its cache in a per-run "
         "MYPY_CACHE_DIR temp directory instead of touching the persistent "
         f"one.\nbefore={before}\nafter={after}"
+    )
+
+
+def test_config_driven_mypy_catches_a_real_implicit_reexport(
+    tmp_path: Path,
+) -> None:
+    """The config-driven Gate-2 run must fail on a genuine implicit re-export.
+
+    Positive-detection regression for issue #179. The cold-cache fix alone is
+    inert on this bug class: `no-implicit-reexport` is a `--strict`-only check,
+    and `scripts/typecheck.sh` runs the *bare* command `mypy windbreak/
+    scripts/`, taking its strictness solely from pyproject.toml's `[tool.mypy]`.
+    Empirically, before this fix that config passed cleanly on a real implicit
+    re-export (cold cache made no difference), so the #158/#178 pattern still
+    false-greened locally and only failed CI's separate `--strict` pre-commit
+    step -- the exact recurrence #179 targets.
+
+    This test reproduces that pattern in an isolated fixture package and runs
+    mypy exactly as the fixed Gate-2 path does -- config-driven (via the repo's
+    real `pyproject.toml`, no explicit `--strict` flag) and cold
+    (`--no-incremental`, no shared cache) -- then asserts mypy *rejects* it. The
+    fixture is fully typed, so the implicit re-export is the only possible
+    error: `via` imports `VALUE` without explicitly re-exporting it, and
+    `consumer` imports `VALUE` through `via`, which `--no-implicit-reexport`
+    flags as `[attr-defined]`. If a future edit drops `strict = true` from the
+    config, this invocation goes green and the test fails loudly.
+
+    Fails loudly (never skips) if mypy is unavailable: it is a required Gate-2
+    tool, and importlib resolves the same mypy the enclosing pytest interpreter
+    (the shared `.venv`) provides, so `python -m mypy` below runs the exact
+    binary the real Gate-2 run uses.
+    """
+    assert importlib.util.find_spec("mypy") is not None, (
+        "mypy is not importable in the test interpreter -- it is a required "
+        "Gate-2 tool and this test cannot verify strict re-export detection "
+        "without it"
+    )
+
+    pkg = tmp_path / "reexport_probe"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text(
+        '"""Isolated fixture package reproducing the #158/#178 pattern."""\n',
+        encoding="utf-8",
+    )
+    (pkg / "source.py").write_text(
+        '"""Defines the value that gets implicitly re-exported."""\n'
+        "from __future__ import annotations\n\n"
+        "VALUE: int = 1\n",
+        encoding="utf-8",
+    )
+    (pkg / "via.py").write_text(
+        '"""Imports VALUE without explicitly re-exporting it."""\n'
+        "from __future__ import annotations\n\n"
+        "from reexport_probe.source import VALUE\n",
+        encoding="utf-8",
+    )
+    (pkg / "consumer.py").write_text(
+        '"""Imports VALUE through the non-re-exporting `via` module."""\n'
+        "from __future__ import annotations\n\n"
+        "from reexport_probe.via import VALUE\n\n\n"
+        "def use() -> int:\n"
+        '    """Return the implicitly re-exported value."""\n'
+        "    return VALUE\n",
+        encoding="utf-8",
+    )
+
+    env = dict(os.environ)
+    env["MYPYPATH"] = str(tmp_path)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "mypy",
+            "--config-file",
+            str(_PYPROJECT_PATH),
+            "--no-incremental",
+            str(pkg / "consumer.py"),
+        ],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+
+    assert result.returncode != 0, (
+        "config-driven `mypy` (as scripts/typecheck.sh runs it) accepted a "
+        "real implicit re-export -- the Gate-2 strictness gap from #179 has "
+        f"regressed.\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+    assert "does not explicitly export" in result.stdout, (
+        "mypy failed, but not on the expected implicit-re-export "
+        f"(`[attr-defined]`) error.\nstdout:\n{result.stdout}\n"
+        f"stderr:\n{result.stderr}"
     )
