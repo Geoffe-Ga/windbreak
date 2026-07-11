@@ -221,6 +221,74 @@ def test_replaying_a_valid_token_fails_on_the_second_verification() -> None:
     assert second.valid is False
 
 
+def test_replaying_a_valid_token_with_an_uppercase_signature_fails() -> None:
+    """An uppercase re-spelling of an already-consumed signature still
+    authenticates (hex decoding is case-insensitive) but must be rejected by
+    the single-use registry as the same, already-consumed token, not
+    accepted as a distinct one.
+    """
+    token = _issue(_BASE_CLAIMS)
+    registry = _fresh_registry()
+    uppercased = dataclasses.replace(token, signature_hex=token.signature_hex.upper())
+
+    first = verify_token(
+        token, key=_KEY_MATERIAL, now_epoch_s=_VALID_NOW, registry=registry
+    )
+    second = verify_token(
+        uppercased, key=_KEY_MATERIAL, now_epoch_s=_VALID_NOW, registry=registry
+    )
+
+    assert first.valid is True
+    assert second.valid is False
+    assert second.reason == "token already consumed"
+
+
+def test_replaying_a_valid_token_with_whitespace_in_the_signature_fails() -> None:
+    """A whitespace-interleaved re-spelling of an already-consumed signature
+    still authenticates (hex decoding ignores ASCII whitespace) but must be
+    rejected by the single-use registry as the same, already-consumed token.
+    """
+    token = _issue(_BASE_CLAIMS)
+    registry = _fresh_registry()
+    spaced_hex = " ".join(
+        token.signature_hex[i : i + 2] for i in range(0, len(token.signature_hex), 2)
+    )
+    spaced = dataclasses.replace(token, signature_hex=spaced_hex)
+
+    first = verify_token(
+        token, key=_KEY_MATERIAL, now_epoch_s=_VALID_NOW, registry=registry
+    )
+    second = verify_token(
+        spaced, key=_KEY_MATERIAL, now_epoch_s=_VALID_NOW, registry=registry
+    )
+
+    assert first.valid is True
+    assert second.valid is False
+    assert second.reason == "token already consumed"
+
+
+def test_replaying_uppercase_then_original_signature_fails_the_second_call() -> None:
+    """The single-use key must be spelling-independent, not merely
+    lowercase-favoring: consuming the uppercase spelling first still leaves
+    the original lowercase spelling of the same signature rejected as
+    already consumed.
+    """
+    token = _issue(_BASE_CLAIMS)
+    registry = _fresh_registry()
+    uppercased = dataclasses.replace(token, signature_hex=token.signature_hex.upper())
+
+    first = verify_token(
+        uppercased, key=_KEY_MATERIAL, now_epoch_s=_VALID_NOW, registry=registry
+    )
+    second = verify_token(
+        token, key=_KEY_MATERIAL, now_epoch_s=_VALID_NOW, registry=registry
+    )
+
+    assert first.valid is True
+    assert second.valid is False
+    assert second.reason == "token already consumed"
+
+
 def test_a_forged_signature_does_not_consume_the_single_use() -> None:
     """A verification that fails on signature never touches the registry, so
     the legitimate token can still be verified once, afterward.

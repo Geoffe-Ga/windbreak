@@ -140,7 +140,10 @@ class SingleUseRegistry(Protocol):
         """Attempt to consume a signature, reporting whether it was new.
 
         Args:
-            token_signature_hex: The token signature to consume.
+            token_signature_hex: The canonicalized signature key: the decoded
+                signature bytes re-encoded via ``bytes.hex()``, so it is always
+                lowercase and free of whitespace. Callers must canonicalize
+                before keying, so hex re-spellings collapse to one slot.
 
         Returns:
             ``True`` the first time a given signature is seen, ``False`` on
@@ -161,7 +164,10 @@ class InMemorySingleUseRegistry:
         """Consume ``token_signature_hex`` once, returning whether it was new.
 
         Args:
-            token_signature_hex: The token signature to consume.
+            token_signature_hex: The canonicalized signature key: the decoded
+                signature bytes re-encoded via ``bytes.hex()``, so it is always
+                lowercase and free of whitespace. Hex re-spellings of one
+                authentic signature therefore collapse to a single set entry.
 
         Returns:
             ``True`` if this signature had not been consumed before, else
@@ -188,7 +194,9 @@ def verify_token(
     claims bytes under ``key`` and compare it, in constant time, against the
     token's decoded signature; (2) reject an expired token (valid iff
     ``now_epoch_s < expires_at``); (3) consume the single-use registry slot
-    *last*, so only a token that is both authentic and unexpired can burn its
+    *last*, keyed on the canonicalized decoded signature (``provided.hex()``)
+    so hex re-spellings of one authentic signature collapse to a single slot,
+    ensuring only a token that is both authentic and unexpired can burn its
     one-time use. The whole body is wrapped fail-closed: a malformed hex
     signature (or any other raised exception) is caught and reported invalid
     before the expiry or registry steps are ever reached.
@@ -212,7 +220,7 @@ def verify_token(
             return VerificationResult(valid=False, reason="signature mismatch")
         if now_epoch_s >= token.claims.expires_at:
             return VerificationResult(valid=False, reason="token expired")
-        if not registry.consume(token.signature_hex):
+        if not registry.consume(provided.hex()):
             return VerificationResult(valid=False, reason="token already consumed")
         return VerificationResult(valid=True, reason="ok")
     except Exception as exc:  # Fail-closed: malformed signature or any error.
