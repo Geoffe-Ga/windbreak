@@ -1,7 +1,11 @@
-"""Tests pinning the toolchain-alignment contract (issues #104, #80).
+"""Tests pinning the toolchain-alignment contract (issues #104, #80, #91).
 
 These tests enforce the repository's dependency-and-toolchain governance
-contract, now green:
+contract. Every clause below is green EXCEPT the two `import-linter`
+clauses (`"import-linter"` in `_REQUIRED_TOOL_NAMES` and
+`test_requirements_dev_references_import_linter`), which are RED as of
+issue #91: import-linter is not yet pinned in constraints-quality.txt nor
+listed in requirements-dev.txt.
 
 - A single top-level `constraints-quality.txt` exact-pin file is the version
   authority for every cross-context quality tool (issue #104).
@@ -62,6 +66,7 @@ _REQUIRED_TOOL_NAMES = (
     "pytest-timeout",
     "hypothesis",
     "coverage",
+    "import-linter",
 )
 
 #: Maps a pre-commit repo URL substring to the constraints-quality.txt
@@ -333,6 +338,18 @@ def test_requirements_dev_references_constraints_file() -> None:
     text = _REQUIREMENTS_DEV_PATH.read_text(encoding="utf-8")
 
     assert "constraints-quality.txt" in text
+
+
+def test_requirements_dev_references_import_linter() -> None:
+    """requirements-dev.txt lists import-linter, the architecture-boundary
+    enforcement tool (issue #91) that gives plans/architecture/.importlinter's
+    contracts real CI-enforced teeth (defense-in-depth for #24) instead of
+    only living as documentation.
+    """
+    text = _REQUIREMENTS_DEV_PATH.read_text(encoding="utf-8")
+
+    names = _requirement_names(text)
+    assert "import-linter" in names
 
 
 def test_ci_references_constraints_file_and_check_all_script() -> None:

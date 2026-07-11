@@ -13,9 +13,10 @@
 #      import store`, `from . import config`) -- loopholes a forbidden-modules
 #      contract cannot express -- while carving out the same
 #      `windbreak.connector.models` allowance.
-#   3. Wiring import-linter (plans/architecture/run-check.sh) into CI is a
-#      follow-up (chore(ci): wire import-linter into CI). Until then this file
-#      documents the contract; the pytest AST check is the enforcing gate.
+#   3. import-linter (plans/architecture/run-check.sh) is now a CI-enforced
+#      gate, wired in via scripts/check-all.sh (issue #91). The pure-stdlib
+#      AST check remains the strictly-stronger PRIMARY layer; this contract is
+#      independent defense-in-depth.
 
 [importlinter]
 root_package = windbreak
@@ -23,6 +24,7 @@ root_package = windbreak
 [importlinter:contract:forecast-sandbox-boundary]
 name = Forecast engine may not reach ledger/order/risk/config machinery (SPEC S8.3)
 type = forbidden
+allow_indirect_imports = True
 source_modules =
     windbreak.forecast
 forbidden_modules =
@@ -48,24 +50,34 @@ forbidden_modules =
 #      it is strictly STRONGER than this config (it also flags a bare
 #      `from windbreak.riskkernel import signing` module-plus-symbol import AND
 #      every relative import, loopholes a forbidden-modules contract cannot
-#      express). Wiring import-linter into CI is a follow-up; until then this
-#      file documents the contract and the pytest AST check enforces it.
+#      express). import-linter is now a CI-enforced gate too, wired in via
+#      scripts/check-all.sh (issue #91); this contract is independent
+#      defense-in-depth behind that stronger AST check.
 
 [importlinter:contract:signing-key-isolation]
 name = Only the Risk Kernel may import the approval-token signing key handle (SPEC S5.3)
 type = forbidden
+allow_indirect_imports = True
 source_modules =
     windbreak.alerts
     windbreak.config
     windbreak.connector
     windbreak.dashboard
+    windbreak.drills
+    windbreak.evaluation
     windbreak.forecast
     windbreak.ledger
+    windbreak.net
     windbreak.numeric
     windbreak.order_gateway
     windbreak.pipeline
+    windbreak.preflight
+    windbreak.reports
+    windbreak.scheduler
     windbreak.screener
+    windbreak.selector
     windbreak.tokens
+    windbreak.__main__
     windbreak.main
     windbreak.logging_setup
 forbidden_modules =
@@ -91,24 +103,33 @@ forbidden_modules =
 #      it is strictly STRONGER than this config (it also flags a bare
 #      `from windbreak.connector import paper` / `... import PaperExchange`
 #      module-plus-symbol import AND every relative import, loopholes a
-#      forbidden-modules contract cannot express). Wiring import-linter into CI
-#      is a follow-up; until then this file documents the contract and the
-#      pytest AST check enforces it.
+#      forbidden-modules contract cannot express). import-linter is now a
+#      CI-enforced gate too, wired in via scripts/check-all.sh (issue #91);
+#      this contract is independent defense-in-depth behind that stronger AST
+#      check.
 
 [importlinter:contract:order-submission-client-isolation]
 name = Only the Order Gateway may import the exchange order-submission client (SPEC S5.2/S5.3)
 type = forbidden
+allow_indirect_imports = True
 source_modules =
     windbreak.alerts
     windbreak.config
     windbreak.dashboard
+    windbreak.drills
+    windbreak.evaluation
     windbreak.forecast
     windbreak.ledger
+    windbreak.net
     windbreak.numeric
     windbreak.pipeline
+    windbreak.preflight
+    windbreak.reports
     windbreak.riskkernel
     windbreak.screener
+    windbreak.selector
     windbreak.tokens
+    windbreak.__main__
     windbreak.main
     windbreak.logging_setup
 forbidden_modules =

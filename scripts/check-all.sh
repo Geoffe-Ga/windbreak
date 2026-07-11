@@ -24,12 +24,13 @@ Run all quality checks in sequence.
 
 Runs:
   1. Linting (Ruff)
-  2. Formatting (ruff format)
-  3. Type checking (MyPy)
-  4. Security checks (Bandit + Safety)
-  5. Complexity analysis (Radon)
-  6. Unit tests
-  7. Coverage report
+  2. Architecture boundary checks (import-linter)
+  3. Formatting (ruff format)
+  4. Type checking (MyPy)
+  5. Security checks (Bandit + Safety)
+  6. Complexity analysis (Radon)
+  7. Unit tests
+  8. Coverage report
 
 OPTIONS:
     --verbose   Show detailed output
@@ -101,6 +102,7 @@ run_check() {
 
 # Run all checks
 run_check "Linting" "lint.sh" --check
+run_check "Architecture (import-linter)" "architecture.sh"
 run_check "Formatting" "format.sh" --check
 run_check "Type checking" "typecheck.sh"
 run_check "Security checks" "security.sh"

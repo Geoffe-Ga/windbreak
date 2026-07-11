@@ -200,8 +200,9 @@ def test_ast_checker_does_not_flag_an_unrelated_connector_import(source: str) ->
 
 def test_importlinter_declares_order_submission_client_isolation_contract() -> None:
     """`.importlinter` names a contract forbidding `connector.paper` imports,
-    so a future `import-linter` CI job enforces the same boundary the AST
-    scanner above already enforces at the pytest layer.
+    so the CI-enforced `import-linter` gate (wired via scripts/check-all.sh,
+    issue #91) enforces the same boundary the AST scanner above already
+    enforces at the pytest layer.
     """
     parser = configparser.ConfigParser()
     read_files = parser.read(_IMPORTLINTER_PATH, encoding="utf-8")
