@@ -1,10 +1,13 @@
 name: "Main-red alarm"
 
 # A red main must never go unnoticed. When the CI workflow completes on main
-# with a failure, this files (or updates) exactly one open P0 issue labeled
-# `ci-red`. The Ralph loop treats an open ci-red issue as drop-everything work:
-# the next wake dispatches ci-debugging on it immediately. Owner directive,
-# issue #127.
+# with any non-success conclusion (failure, cancelled, timed_out), this files
+# (or updates) exactly one open P0 issue labeled `ci-red`. A cancelled run is
+# just as red as a failed one: the commit was never verified — cancelled
+# merge-commit runs slipped past a failure-only alarm for weeks while main
+# looked green. The Ralph loop treats an open ci-red issue as drop-everything
+# work: the next wake dispatches ci-debugging on it immediately. Owner
+# directive, issue #127.
 #
 # Dedup contract: at most one open ci-red issue at a time — a repeat failure
 # comments on the existing issue instead of filing a new one.
@@ -24,19 +27,20 @@ concurrency:
 
 jobs:
   alarm:
-    if: github.event.workflow_run.conclusion == 'failure'
+    if: contains(fromJSON('["failure", "cancelled", "timed_out"]'), github.event.workflow_run.conclusion)
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
       RUN_URL: ${{ github.event.workflow_run.html_url }}
       HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+      CONCLUSION: ${{ github.event.workflow_run.conclusion }}
     steps:
       - name: File or update the single open ci-red issue
         run: |
           set -euo pipefail
           EXISTING=$(gh issue list --repo "$GITHUB_REPOSITORY" \
             --label ci-red --state open --limit 1 --json number --jq '.[0].number // empty')
-          BODY="CI on \`main\` failed at \`${HEAD_SHA:0:7}\`: $RUN_URL"
+          BODY="CI on \`main\` concluded \`${CONCLUSION}\` at \`${HEAD_SHA:0:7}\` (commit NOT verified): $RUN_URL"
           PROTOCOL="**Protocol (Ralph):** this is drop-everything work. Reproduce via the run link, fix the root cause with ci-debugging (failing-test-first), never weaken a gate. Close only when CI on \`main\` is green again."
           if [ -n "$EXISTING" ]; then
             gh issue comment "$EXISTING" --repo "$GITHUB_REPOSITORY" \

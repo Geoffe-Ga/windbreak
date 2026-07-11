@@ -7,9 +7,15 @@ on:
     branches: [main, develop]
   workflow_dispatch:
 
+# PR runs: a new push to the same PR cancels the superseded run (stale-head
+# dedup). Push runs (main/develop): NEVER cancelled or queue-replaced — each
+# gets a unique per-run group. Sharing one cancelable group per ref meant
+# Ralph's post-merge `record completion` push (~15s after every squash merge)
+# cancelled the merge commit's run, so every merge landed on main with 5
+# cancelled jobs and no verification while the branch looked green.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   MIN_COVERAGE: 90
