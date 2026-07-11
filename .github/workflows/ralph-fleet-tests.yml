@@ -30,7 +30,10 @@ name: Ralph Fleet Tests
 # use_sticky_comment, env-mapped token). assert-review-posted.sh shares its
 # verdict regex with pr-ready.sh via verdict-regex.sh — the single source of
 # truth whose drift is the class of silent-stall bug #135 fixes — so
-# code-review.yml is a path trigger here too.
+# code-review.yml is a path trigger here too. test_should_retry_review.sh guards
+# should-retry-review.sh — the bounded in-job retry decision (#152) that reuses
+# that same backstop to self-heal the intermittent no-verdict flake before it
+# fails the job.
 
 on:
   push:
@@ -80,3 +83,4 @@ jobs:
           bash scripts/ralph/test_scan_workflows.sh
           bash scripts/ralph/test_deslop_workflow.sh
           bash scripts/ralph/test_assert_review_posted.sh
+          bash scripts/ralph/test_should_retry_review.sh

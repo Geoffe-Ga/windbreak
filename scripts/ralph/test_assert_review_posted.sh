@@ -143,8 +143,11 @@ if command -v jq >/dev/null 2>&1; then
   check "same-second verdict (createdAt == STARTED_AT) -> exit 0 (inclusive >=)" "0" "$rc"
 
   # --- 2) no comments at all ----------------------------------------------------
+  # #152: a retryable miss (no fresh verdict, no hard failure, no
+  # workflow-validation guard) is exit 3, distinct from the hard-failure exit 1
+  # paths below — so should-retry-review.sh can tell them apart.
   rc="$(COMMENTS_JSON="$EMPTY_COMMENTS" run_capture "$PR" "$STARTED")"
-  check "no comments at all -> exit 1" "1" "$rc"
+  check "no comments at all -> exit 3 (retryable miss)" "3" "$rc"
   check "no-comments stderr mentions STARTED_AT" "yes" \
     "$(grep -qF "$STARTED" "$STDERR_FILE" && echo yes || echo no)"
   check "no-comments stderr mentions rerun" "yes" \
@@ -152,11 +155,11 @@ if command -v jq >/dev/null 2>&1; then
 
   # --- 3) verdict present but STALE (before STARTED_AT) -------------------------
   rc="$(COMMENTS_JSON="$STALE_LGTM_COMMENTS" run_capture "$PR" "$STARTED")"
-  check "stale verdict comment (createdAt < STARTED_AT) -> exit 1" "1" "$rc"
+  check "stale verdict comment (createdAt < STARTED_AT) -> exit 3 (retryable miss)" "3" "$rc"
 
   # --- 4) only non-verdict chatter ----------------------------------------------
   rc="$(COMMENTS_JSON="$CHATTER_COMMENTS" run_capture "$PR" "$STARTED")"
-  check "only non-verdict chatter comment -> exit 1" "1" "$rc"
+  check "only non-verdict chatter comment -> exit 3 (retryable miss)" "3" "$rc"
 
   # --- 5) real-jq regex cases mirroring test_pr_ready.sh's body shapes ----------
   # This script only cares that A verdict was posted — LGTM-ness is pr-ready.sh's
@@ -168,7 +171,7 @@ if command -v jq >/dev/null 2>&1; then
   check "real ## Verdict\\n(emoji) LGTM heading-with-token-on-next-line (fresh) -> exit 0" "0" "$rc"
 
   rc="$(COMMENTS_JSON="$PROSE_ONLY_COMMENTS" run_capture "$PR" "$STARTED")"
-  check "real prose-only 'verdict' mention (not a verdict line), fresh -> exit 1" "1" "$rc"
+  check "real prose-only 'verdict' mention (not a verdict line), fresh -> exit 3 (retryable miss)" "3" "$rc"
 
   # --- 6) execution-file: is_error true fails FAST, independent of comments ----
   ERROR_EXEC="$WORK/exec-error.json"
@@ -209,7 +212,8 @@ JSON
   check "execution-file is_error:false + fresh verdict comment -> exit 0" "0" "$rc"
 
   rc="$(COMMENTS_JSON="$EMPTY_COMMENTS" run_capture "$PR" "$STARTED" --execution-file "$SUCCESS_EXEC")"
-  check "execution-file is_error:false + no comment -> exit 1 (comment check still authoritative)" "1" "$rc"
+  check "execution-file is_error:false + no comment -> exit 3 (comment check still authoritative, retryable)" \
+    "3" "$rc"
 
   # --- 8) execution-file absent/empty/malformed must fall through, never crash -
   rc="$(COMMENTS_JSON="$FRESH_LGTM_COMMENTS" run_capture "$PR" "$STARTED" --execution-file "")"
@@ -260,9 +264,10 @@ JSON
     "$(grep -qi 'workflow validation' "$STDERR_FILE" && echo yes || echo no)"
 
   # 3) Generic preserved: STEP B fails but the diff does NOT touch the workflow.
+  # #152: this is a retryable miss too -> exit 3, not 1.
   rc="$(COMMENTS_JSON="$EMPTY_COMMENTS" DIFF_FILES='scripts/ralph/pr-ready.sh' \
         run_capture "$PR" "$STARTED")"
-  check "no guard: diff touches an unrelated file -> exit 1 (generic message)" "1" "$rc"
+  check "no guard: diff touches an unrelated file -> exit 3 (generic message, retryable)" "3" "$rc"
   check "  ...stderr keeps the generic 'rerun the Code Review workflow' text" "yes" \
     "$(grep -qF 'rerun the Code Review workflow' "$STDERR_FILE" && echo yes || echo no)"
   check "  ...stderr has no guard vocabulary" "no" \
@@ -271,27 +276,31 @@ JSON
   # 4) No substring false-positive: near-miss filenames must NOT trigger the guard.
   rc="$(COMMENTS_JSON="$EMPTY_COMMENTS" DIFF_FILES='docs/code-review.yml' \
         run_capture "$PR" "$STARTED")"
-  check "no guard: 'docs/code-review.yml' is not the workflow path -> generic message" "no" \
+  check "no guard: 'docs/code-review.yml' is not the workflow path -> exit 3 (generic, retryable)" \
+    "3" "$rc"
+  check "  ...stderr has no guard vocabulary" "no" \
     "$(grep -qi 'workflow validation' "$STDERR_FILE" && echo yes || echo no)"
 
   rc="$(COMMENTS_JSON="$EMPTY_COMMENTS" \
         DIFF_FILES='.github/workflows/code-review.yml.bak' \
         run_capture "$PR" "$STARTED")"
-  check "no guard: '.github/workflows/code-review.yml.bak' is not an exact match -> generic message" "no" \
+  check "no guard: '.github/workflows/code-review.yml.bak' is not an exact match -> exit 3 (generic, retryable)" \
+    "3" "$rc"
+  check "  ...stderr has no guard vocabulary" "no" \
     "$(grep -qi 'workflow validation' "$STDERR_FILE" && echo yes || echo no)"
 
   # 5) Diff unset entirely + no comments -> generic message (implicit regression net).
   rc="$(COMMENTS_JSON="$EMPTY_COMMENTS" run_capture "$PR" "$STARTED")"
-  check "no guard: DIFF_FILES unset -> exit 1 (generic message)" "1" "$rc"
+  check "no guard: DIFF_FILES unset -> exit 3 (generic message, retryable)" "3" "$rc"
   check "  ...stderr keeps the generic 'rerun the Code Review workflow' text" "yes" \
     "$(grep -qF 'rerun the Code Review workflow' "$STDERR_FILE" && echo yes || echo no)"
   check "  ...stderr has no guard vocabulary" "no" \
     "$(grep -qi 'workflow validation' "$STDERR_FILE" && echo yes || echo no)"
 
   # 6) Diff query hard-fails (gh unavailable/errors) -> must degrade to the
-  #    generic message, never crash under `set -euo pipefail` (rc==1, not 2).
+  #    generic message, never crash under `set -euo pipefail` (rc==3, not 2).
   rc="$(COMMENTS_JSON="$EMPTY_COMMENTS" DIFF_RC=1 run_capture "$PR" "$STARTED")"
-  check "diff query hard-fails -> exit 1 (not 2, no crash)" "1" "$rc"
+  check "diff query hard-fails -> exit 3 (not 2, no crash, retryable)" "3" "$rc"
   check "  ...stderr keeps the generic 'rerun the Code Review workflow' text" "yes" \
     "$(grep -qF 'rerun the Code Review workflow' "$STDERR_FILE" && echo yes || echo no)"
 

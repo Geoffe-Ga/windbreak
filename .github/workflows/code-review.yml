@@ -14,6 +14,68 @@ jobs:
   claude-review:
     runs-on: ubuntu-latest
 
+    # Job-level env: single-sources the review prompt and the action arguments so
+    # BOTH the first attempt and the bounded retry (issue #152) share ONE
+    # definition — no drift between the two invocations. These two values are
+    # deliberately time-agnostic: the review window's start is captured
+    # per-attempt by the "Record review start time" steps below (and re-captured
+    # for the retried window), never here — so the post-gate's start-before-action
+    # ordering guard keeps seeing the step-level capture as the first such
+    # occurrence.
+    env:
+      REVIEW_PROMPT: |
+        Please review this pull request and provide feedback using the following template:
+
+        ## Summary
+        Brief overview (2-3 sentences)
+
+        ## Strengths
+        What's done well?
+
+        ## Security Concerns
+        Vulnerabilities? 🔴 BLOCKING | 🟡 HIGH | 🟢 LOW
+
+        ## Problems
+        Critical issues blocking merge (mark 🔴)
+        Consider priority greater than Minor as "Blocking"
+
+        ## Code Quality
+        Non-blocking improvements for educational purposes or for future GitHub Issues
+
+        ## CLAUDE.md Adherence
+        ✅/❌ Coverage, linting, types, patterns, commits
+
+        ## Testing
+        Test quality evaluation
+        Insufficient testing is Blocking (mark 🔴)
+
+        ## Documentation
+        Docs completeness
+
+
+        ## Verdict
+        ✅ LGTM | 🔄 CHANGES_REQUESTED | 💬 COMMENTS
+        **Reasoning:** Specific references
+
+        Use the repository's CLAUDE.md for guidance on style and conventions. Be constructive and helpful in your feedback.
+
+        Use `gh pr comment` with your Bash tool to leave your review as a comment on the PR.
+
+        IMPORTANT: posting your verdict to the PR via `gh pr comment` is MANDATORY and required — it is the last thing you MUST do before finishing. A review that is generated but not posted as a PR comment does NOT count and is treated as no review at all, which fails this workflow. Do not end your turn until the verdict comment is posted.
+
+      # Security: Restrict Claude to read-only GitHub CLI commands
+      # Wildcard patterns (e.g., "gh pr view:*") allow any arguments to the specified command
+      # but the action enforces read-only permissions (pull-requests: read, issues: read)
+      # preventing write operations even if attempted.
+      #
+      # Note: gh pr comment is the ONLY write operation allowed and is required for
+      # Claude to post automated review results as PR comments. All other commands
+      # are read-only (view, list, diff, search).
+      #
+      # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
+      # for allowed-tools syntax and security model.
+      REVIEW_CLAUDE_ARGS: '--allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"'
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -34,56 +96,57 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          prompt: |
-            Please review this pull request and provide feedback using the following template:
+          prompt: ${{ env.REVIEW_PROMPT }}
+          claude_args: ${{ env.REVIEW_CLAUDE_ARGS }}
 
-            ## Summary
-            Brief overview (2-3 sentences)
+      # BOUNDED IN-JOB RETRY (issue #152) — ONE retry, no more.
+      # The review action intermittently finishes "successfully" without posting
+      # its verdict (the #135/#140 flake class). Rather than let that transient
+      # miss stall the lane until the final assert fails the job, we attempt a
+      # single retry when — and ONLY when — the miss looks retryable.
+      #
+      # should-retry-review.sh reuses the REAL assert-review-posted.sh backstop
+      # (no re-implemented verdict logic) and maps its exit-code contract to a
+      # decision it appends to $GITHUB_OUTPUT (retry=true|false, reason=<...>):
+      #   - verdict already posted      -> retry=false (nothing to do)
+      #   - retryable miss (assert exit 3) -> retry=true
+      #   - HARD failure (assert exit 1) -> retry=false. This deliberately does
+      #     NOT retry the workflow-validation-guard case: claude-code-action
+      #     SKIPS the review agent on any PR whose diff touches THIS workflow
+      #     file, so no rerun can ever produce a verdict until the PR merges —
+      #     retrying would only burn a second attempt to the same dead end. The
+      #     agent-errored case (e.g. credit/OAuth) is likewise not self-healing.
+      # The step is advisory: it exits 0 for any decision so it never fails the
+      # job. A SECOND miss stays red via the final assert backstop below — the
+      # retry can self-heal a flake, but it can never weaken the gate.
+      - name: Decide whether to retry the review
+        id: retry-decision
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          REVIEW_STARTED_AT: ${{ env.REVIEW_STARTED_AT }}
+          EXECUTION_FILE: ${{ steps.claude-review.outputs.execution_file }}
+        run: |
+          bash scripts/ralph/should-retry-review.sh "$PR_NUMBER" "$REVIEW_STARTED_AT" \
+            --repo "$REPO" --execution-file "$EXECUTION_FILE"
 
-            ## Strengths
-            What's done well?
+      # Re-capture the start time for the RETRIED window so the final post-gate
+      # times the retry attempt, not the original (a verdict posted by attempt 1
+      # after its window is irrelevant; only a verdict from THIS retry counts).
+      - name: Record review start time (retry)
+        if: ${{ !cancelled() && steps.retry-decision.outputs.retry == 'true' }}
+        run: echo "REVIEW_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
 
-            ## Security Concerns
-            Vulnerabilities? 🔴 BLOCKING | 🟡 HIGH | 🟢 LOW
-
-            ## Problems
-            Critical issues blocking merge (mark 🔴)
-            Consider priority greater than Minor as "Blocking"
-
-            ## Code Quality
-            Non-blocking improvements for educational purposes or for future GitHub Issues
-
-            ## CLAUDE.md Adherence
-            ✅/❌ Coverage, linting, types, patterns, commits
-
-            ## Testing
-            Test quality evaluation
-            Insufficient testing is Blocking (mark 🔴)
-
-            ## Documentation
-            Docs completeness
-
-
-            ## Verdict
-            ✅ LGTM | 🔄 CHANGES_REQUESTED | 💬 COMMENTS
-            **Reasoning:** Specific references
-
-            Use the repository's CLAUDE.md for guidance on style and conventions. Be constructive and helpful in your feedback.
-
-            Use `gh pr comment` with your Bash tool to leave your review as a comment on the PR.
-
-          # Security: Restrict Claude to read-only GitHub CLI commands
-          # Wildcard patterns (e.g., "gh pr view:*") allow any arguments to the specified command
-          # but the action enforces read-only permissions (pull-requests: read, issues: read)
-          # preventing write operations even if attempted.
-          #
-          # Note: gh pr comment is the ONLY write operation allowed and is required for
-          # Claude to post automated review results as PR comments. All other commands
-          # are read-only (view, list, diff, search).
-          #
-          # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
-          # for allowed-tools syntax and security model.
-          claude_args: '--allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"'
+      - name: Run Claude Code Review (retry)
+        id: claude-review-retry
+        if: ${{ !cancelled() && steps.retry-decision.outputs.retry == 'true' }}
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: ${{ env.REVIEW_PROMPT }}
+          claude_args: ${{ env.REVIEW_CLAUDE_ARGS }}
 
       # Regression guard for #135 (silent-success stall) and #140 (expired-token
       # instant is_error incident). The action above can go GREEN without ever
@@ -93,6 +156,11 @@ jobs:
       # success (the #140 incident). This step turns both into a loud failure:
       # it reads the action's own is_error flag AND asserts a fresh
       # verdict-bearing comment (createdAt >= REVIEW_STARTED_AT) actually landed.
+      #
+      # This is the AUTHORITATIVE backstop for the #152 bounded retry above: even
+      # if the single retry also misses, this step still fails the job red (the
+      # assert's retryable-miss exit 3 is nonzero), so the retry can only ever
+      # self-heal a flake — never weaken the gate.
       #
       # DO NOT switch the action above into sticky-comment mode (the action's
       # single-edited-in-place review comment): a sticky comment is EDITED in
@@ -109,19 +177,23 @@ jobs:
       # claude-review check therefore stays red BY
       # DESIGN (no rerun can help until merge); assert-review-posted.sh detects
       # the workflow-file diff and says so instead of the misleading generic
-      # rerun message. Such a PR requires operator review + admin merge. This
-      # self-approval-prevention posture is CORRECT, not a bug.
+      # rerun message, and should-retry-review.sh returns retry=false for it (a
+      # retry could never succeed). Such a PR requires operator review + admin
+      # merge. This self-approval-prevention posture is CORRECT, not a bug.
       #
       # Every value flows into the run: body through env: — no inline ${{ }} in
       # the script — for injection-safety and actionlint/shellcheck cleanliness.
       # REVIEW_STARTED_AT was exported into $GITHUB_ENV by the "Record review
-      # start time" step; it is re-surfaced here via `env.REVIEW_STARTED_AT` (NOT
-      # re-wrapped inside the run: body) so shellcheck sees the shell var as
-      # assigned — a bare $VAR that is only set via $GITHUB_ENV upstream trips
-      # SC2154 (referenced-but-not-assigned) in the analyzed fragment. The job
-      # already grants pull-requests: read, which is all `gh pr view --json
-      # comments` needs — no write permission is added. The repo is already
-      # checked out (step 1), so scripts/ralph/assert-review-posted.sh is on disk.
+      # start time" step (and re-exported for the retried window); it is
+      # re-surfaced here via `env.REVIEW_STARTED_AT` (NOT re-wrapped inside the
+      # run: body) so shellcheck sees the shell var as assigned — a bare $VAR that
+      # is only set via $GITHUB_ENV upstream trips SC2154
+      # (referenced-but-not-assigned) in the analyzed fragment. The job already
+      # grants pull-requests: read, which is all `gh pr view --json comments`
+      # needs — no write permission is added. The repo is already checked out
+      # (step 1), so scripts/ralph/assert-review-posted.sh is on disk. The
+      # EXECUTION_FILE prefers the retry attempt's file when the retry ran, else
+      # falls back to the first attempt's.
       - name: Assert the review verdict comment was posted
         if: ${{ !cancelled() }}
         env:
@@ -129,7 +201,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
           REVIEW_STARTED_AT: ${{ env.REVIEW_STARTED_AT }}
-          EXECUTION_FILE: ${{ steps.claude-review.outputs.execution_file }}
+          EXECUTION_FILE: ${{ steps.claude-review-retry.outputs.execution_file || steps.claude-review.outputs.execution_file }}
         run: |
           bash scripts/ralph/assert-review-posted.sh "$PR_NUMBER" "$REVIEW_STARTED_AT" \
             --repo "$REPO" --execution-file "$EXECUTION_FILE"

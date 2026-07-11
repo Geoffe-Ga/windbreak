@@ -27,6 +27,18 @@
 #
 # Usage:  assert-review-posted.sh <PR_NUMBER> <STARTED_AT> \
 #           [--repo <owner/repo>] [--execution-file <path>]
+#
+# EXIT CODES (the machine-readable contract should-retry-review.sh maps on, #152):
+#   0  success — a FRESH verdict-bearing comment was posted during this run
+#      (also the >= same-second boundary).
+#   1  HARD failure, NOT retryable — either STEP A's execution-file is_error:true
+#      (the "review agent errored" path) or STEP B's workflow-validation guard
+#      (the diff touches this workflow file, so no rerun can ever help until merge).
+#   2  usage error (bad/missing args).
+#   3  RETRYABLE miss — no fresh verdict, but no hard failure and no
+#      workflow-validation guard either; a single bounded in-job retry MAY help.
+# Every failure path (1, 2, and 3) is NONZERO, so when this script runs as the
+# FINAL assert step the gate is never weakened — exit 3 still fails the job red.
 set -euo pipefail
 
 # Shared verdict regex — the single source of truth also sourced by pr-ready.sh
@@ -131,4 +143,8 @@ if [[ -n "$changed_files" && $'\n'"$changed_files"$'\n' == *$'\n'"$REVIEW_WORKFL
 fi
 
 echo "assert-review-posted: no verdict-bearing comment created at/after ${started_at} — the review agent posted no verdict; rerun the Code Review workflow" >&2
-exit 1
+# Exit 3 (retryable miss), NOT 1: this is the generic no-verdict flake #152's
+# bounded in-job retry targets. Still NONZERO, so as the final assert it keeps
+# the gate red; should-retry-review.sh distinguishes it from the exit-1 hard
+# failures above to decide whether ONE retry is worth attempting.
+exit 3
