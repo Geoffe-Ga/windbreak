@@ -252,26 +252,63 @@ def _equity_of(account: AccountState) -> MoneyMicros:
     )
 
 
+def _is_derisking_close(intent: OrderIntent, context: EvaluationContext) -> bool:
+    """Return whether ``intent`` is a *provably* de-risking close (#100).
+
+    A close is provably de-risking iff it is a closing action against a known
+    open position that it cannot overshoot -- the exact invariant
+    :meth:`_ReduceOnlyProvable.__call__`'s close branch enforces: the action is
+    in :data:`_CLOSING_ACTIONS`, an open position is on record
+    (``context.market.open_position is not None``), and the order size does not
+    exceed it (``intent.size <= open_position``). One shared definition,
+    consumed by four checks (:class:`_ReduceOnlyProvable`,
+    :class:`_ConcentrationLimits`, :class:`_ModePermissionCeiling`, and
+    :class:`_VelocityLimits`), so the reduce-only test can never drift between
+    them.
+
+    SPEC S9.8 permits a ``SELL_TO_CLOSE`` only from the kill path, drawdown
+    de-risking, or an operator command; SPEC S10.4 requires that "for closes,
+    worst-case cost must be provably non-increasing". A close that satisfies
+    this predicate can therefore only ever *reduce* exposure, so the three
+    aggregate-cap checks exempt it: the safety valve that reduces exposure must
+    never be blocked by the very cap it is reducing.
+
+    This is defense in depth, not a shortcut. These caps run *before*
+    ``reduce_only_provable`` in the SPEC S10.3 sequence, so each must establish
+    the de-risking property itself rather than deferring to that later check --
+    the ``sell_to_close`` label alone is never trusted; only a size provably
+    within a known open position earns the exemption.
+
+    Args:
+        intent: The order intent supplying the action and size.
+        context: The evaluation context supplying the open position on record.
+
+    Returns:
+        ``True`` iff the intent is a provable de-risking close, else ``False``.
+    """
+    open_position = context.market.open_position
+    return (
+        intent.action in _CLOSING_ACTIONS
+        and open_position is not None
+        and intent.size <= open_position
+    )
+
+
 def _order_cost(intent: OrderIntent, context: EvaluationContext) -> MoneyMicros:
     """Compute an order's full worst-case cost, requiring present fee bounds.
 
     This always charges the full worst-case notional (SPEC S10.4 opening-buy
-    formula), regardless of ``intent.action``. The aggregate-cap checks
-    (:class:`_ModePermissionCeiling` LIVE_MICRO cap, :class:`_ConcentrationLimits`,
-    :class:`_VelocityLimits`) use it deliberately: over-charging a
-    ``SELL_TO_CLOSE`` against a cap can only bias toward a veto, never toward
-    approving fresh risk, which is the conservative side for a headroom check.
-    Only :class:`_FloorInvariant` splits open vs. close, because the floor is
-    the one check where a provable close *reduces* worst-case cost to fees plus
-    buffer (S10.4), so charging it full notional there could wrongly block a
-    risk-reducing exit.
-
-    Scoping note (#100): giving the three cap checks their own per-action close
-    policy -- so a de-risking ``SELL_TO_CLOSE`` from the kill path (SPEC S9.8)
-    is not vetoed by a cap it should reduce -- is deferred until the kill /
-    de-risking emitter (#35) exists to integration-test against. Until then
-    every intent is vetoed by the 7 explicit-veto stubs regardless, so no close
-    reaches these caps in production.
+    formula), regardless of ``intent.action``. On the *non-exempt* path the
+    aggregate-cap checks (:class:`_ModePermissionCeiling` LIVE_MICRO cap,
+    :class:`_ConcentrationLimits`, :class:`_VelocityLimits`) use it deliberately:
+    over-charging a ``SELL_TO_CLOSE`` that is *not* provably de-risking against a
+    cap can only bias toward a veto, never toward approving fresh risk, which is
+    the conservative side for a headroom check. A provably de-risking close is
+    instead exempted outright (:func:`_is_derisking_close`) before its cost is
+    ever computed, since such a close can only reduce exposure. Both the floor
+    invariant and those three caps thus special-case a provable close --
+    :class:`_FloorInvariant` by charging only fees plus buffer (S10.4), the caps
+    by full exemption -- so a risk-reducing exit is never wrongly blocked.
 
     Both fee upper bounds must be present for the cost to be provable. When
     either is ``None`` the cost is indeterminate, so this raises
@@ -353,6 +390,14 @@ class _ModePermissionCeiling:
     def __call__(self, intent: OrderIntent, context: EvaluationContext) -> CheckResult:
         """Approve iff the mode may trade and the LIVE_MICRO cap is respected.
 
+        The mode gate is absolute and runs first: a non-trading mode vetoes as
+        ``"mode ... may not trade"`` even for a provable de-risking close, so the
+        exposure safety valve can never become a bypass for the trading-mode
+        gate. Only *inside* the LIVE_MICRO branch, and only for the exposure-cap
+        arithmetic, is a provable de-risking close (:func:`_is_derisking_close`)
+        exempt: it can only reduce exposure, so it approves regardless of the
+        micro-cap term and without ever computing its cost (#100).
+
         Args:
             intent: The order intent to evaluate.
             context: The evaluation context supplying mode, exposure, and cap.
@@ -360,11 +405,15 @@ class _ModePermissionCeiling:
         Returns:
             A vetoing result if the mode may not trade, the LIVE_MICRO cost is
             unprovable (a missing fee bound vetoes as ``"unprovable"``), or the
-            cap is exceeded, else an approval.
+            cap is exceeded; an approval for a provable de-risking close in
+            LIVE_MICRO or for any order in a permitted non-LIVE_MICRO mode; else
+            an approval when the cap is respected.
         """
         if context.mode not in {Mode.PAPER, Mode.LIVE_MICRO, Mode.LIVE}:
             return _veto(f"mode {context.mode.name} may not trade")
         if context.mode is not Mode.LIVE_MICRO:
+            return _approve()
+        if _is_derisking_close(intent, context):
             return _approve()
         try:
             cost = _order_cost(intent, context)
@@ -504,16 +553,26 @@ class _ConcentrationLimits:
     def __call__(self, intent: OrderIntent, context: EvaluationContext) -> CheckResult:
         """Approve iff every exposure dimension stays within its ppm cap.
 
+        A provable de-risking close (:func:`_is_derisking_close`) is fully
+        exempt and approves as the very first step -- regardless of how far any
+        exposure dimension is over its cap, and even when a fee bound is missing,
+        because the exemption short-circuits before :func:`_order_cost` is ever
+        called, so an exempt close never consumes cost. Such a close can only
+        reduce exposure, so the cap it is reducing must never veto it (#100).
+
         Args:
             intent: The order intent supplying price and size.
             context: The evaluation context supplying account and caps.
 
         Returns:
-            A vetoing result if the cost is unprovable (a missing fee bound
-            vetoes as ``"unprovable"``) or if any of market/event/bucket/total
-            exposure plus cost exceeds its floored share of worst-case equity,
-            else approval.
+            An approval for a provable de-risking close; otherwise a vetoing
+            result if the cost is unprovable (a missing fee bound vetoes as
+            ``"unprovable"``) or if any of market/event/bucket/total exposure
+            plus cost exceeds its floored share of worst-case equity, else
+            approval.
         """
+        if _is_derisking_close(intent, context):
+            return _approve()
         try:
             cost = _order_cost(intent, context)
         except _UnprovableCostError:
@@ -592,23 +651,37 @@ class _VelocityLimits:
     def __call__(self, intent: OrderIntent, context: EvaluationContext) -> CheckResult:
         """Approve iff both the hourly-order and daily-notional caps hold.
 
+        The hourly-order-count cap is checked first and needs no cost: it is
+        runaway-order protection and still applies to a de-risking close, which
+        can flood the exchange with cancels/replacements just as an open can. A
+        provable de-risking close (:func:`_is_derisking_close`) is then exempt
+        from the daily-notional term only: it can only reduce exposure, so the
+        notional budget it would otherwise consume must not veto it. That
+        exemption short-circuits before :func:`_order_cost` is ever called, so an
+        exempt close with hourly headroom approves even when a fee bound is
+        missing -- cost is never consumed on that path (#100).
+
         Args:
             intent: The order intent supplying price and size.
             context: The evaluation context supplying counters and caps.
 
         Returns:
-            A vetoing result if the cost is unprovable (a missing fee bound
-            vetoes as ``"unprovable"``) or if this order would exceed the
-            hourly order cap or the daily notional cap, else an approval.
+            A vetoing result if this order would exceed the hourly order cap
+            (applies to closes too); an approval for a provable de-risking close
+            past the hourly gate; otherwise a vetoing result if the cost is
+            unprovable (a missing fee bound vetoes as ``"unprovable"``) or if the
+            daily notional cap would be exceeded, else an approval.
         """
-        try:
-            cost = _order_cost(intent, context)
-        except _UnprovableCostError:
-            return _veto(_UNPROVABLE_REASON)
         account = context.account
         limits = context.limits
         if account.orders_last_hour + 1 > limits.max_orders_per_hour:
             return _veto("hourly order cap exceeded")
+        if _is_derisking_close(intent, context):
+            return _approve()
+        try:
+            cost = _order_cost(intent, context)
+        except _UnprovableCostError:
+            return _veto(_UNPROVABLE_REASON)
         if (account.notional_today + cost) > limits.max_notional_per_day:
             return _veto("daily notional cap exceeded")
         return _approve()
@@ -846,8 +919,7 @@ class _ReduceOnlyProvable:
             return _approve()
         if intent.action not in _CLOSING_ACTIONS:
             return _veto(_UNPROVABLE_REASON)
-        open_position = context.market.open_position
-        if open_position is not None and intent.size <= open_position:
+        if _is_derisking_close(intent, context):
             return _approve()
         return _veto("close is not provably reduce-only")
 
