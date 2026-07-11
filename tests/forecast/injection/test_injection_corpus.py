@@ -591,7 +591,7 @@ def test_every_case_only_ever_touches_the_allowlisted_host_and_tools(
     strings appear *inside* several poisoned pages' text), the search log is
     exactly the three fixed subquestions, the vote transport is called
     either zero or three times (never a partial or retried count), and the
-    tool registry's surface never grows a fourth capability.
+    tool registry's surface never grows a third capability.
     """
     run = _run_corpus_case(
         case,
@@ -611,7 +611,7 @@ def test_every_case_only_ever_touches_the_allowlisted_host_and_tools(
     assert list(run.search_log.queries) == list(decompose_subquestions(market))
     assert run.prompt_log.call_count in (0, 3)
     registry_keys = set(tool_registry(run.tools).keys())
-    assert registry_keys == {"search", "fetch", "verify_citation"}
+    assert registry_keys == {"search", "fetch"}
 
 
 # --- Cache-write discipline: every case, regardless of outcome -------------------

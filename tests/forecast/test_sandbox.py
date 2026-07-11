@@ -6,18 +6,14 @@ collection with `ModuleNotFoundError: No module named 'windbreak.forecast.sandbo
 tool boundary the sandbox must enforce:
 
 * **Registry / instance surface** -- `tool_registry(tools)` and a bare
-  `ResearchTools` instance expose *exactly* `{"search", "fetch",
-  "verify_citation"}` and nothing else; both are read-only / slots-closed so a
-  caller (or a future prompt-injected tool call) cannot smuggle in a fourth
-  capability.
+  `ResearchTools` instance expose *exactly* `{"search", "fetch"}` and nothing
+  else; both are read-only / slots-closed so a caller (or a future
+  prompt-injected tool call) cannot smuggle in a third capability.
 * **Egress** -- `ResearchTools.fetch` allowlists by exact, lowercased hostname
   only, structurally defeating the classic `user@evil.example` userinfo trick,
   non-http(s) schemes (e.g. `file://`), and missing hosts.
 * **Path jail** -- `ResearchCache.store` resolves every candidate path and
   refuses to write outside its root, including through a symlink escape.
-* **Reserved slot** -- `verify_citation` is present in the registry (the
-  capability surface is final now) but raises `NotImplementedError` pointing at
-  issue #26; no verification logic ships in issue #24.
 * **No privileged handle** -- nothing reachable from a `ResearchTools`
   instance, nor any parameter of `build_research_tools`, ever touches
   `windbreak.ledger`, `windbreak.config`, or `windbreak.connector`.
@@ -170,13 +166,13 @@ def _build_tools(
 # --- Registry surface --------------------------------------------------------------
 
 
-def test_tool_registry_keys_are_exactly_search_fetch_verify_citation(
+def test_tool_registry_keys_are_exactly_search_fetch(
     research_tools: ResearchTools,
 ) -> None:
-    """`tool_registry` exposes exactly `{search, fetch, verify_citation}`."""
+    """`tool_registry` exposes exactly `{search, fetch}`."""
     registry = tool_registry(research_tools)
 
-    assert set(registry.keys()) == {"search", "fetch", "verify_citation"}
+    assert set(registry.keys()) == {"search", "fetch"}
 
 
 def test_tool_registry_is_read_only(research_tools: ResearchTools) -> None:
@@ -193,13 +189,13 @@ def test_tool_registry_is_read_only(research_tools: ResearchTools) -> None:
 # --- Instance surface ----------------------------------------------------------
 
 
-def test_research_tools_public_surface_is_exactly_three_methods(
+def test_research_tools_public_surface_is_exactly_two_methods(
     research_tools: ResearchTools,
 ) -> None:
-    """A `ResearchTools` instance's non-underscore attributes are exactly three."""
+    """A `ResearchTools` instance's non-underscore attributes are exactly two."""
     public_names = {name for name in dir(research_tools) if not name.startswith("_")}
 
-    assert public_names == {"search", "fetch", "verify_citation"}
+    assert public_names == {"search", "fetch"}
 
 
 def test_research_tools_is_slots_based_and_rejects_new_attribute(
@@ -387,21 +383,26 @@ def test_allowed_fetch_persists_content_under_cache_dir(tmp_path: Path) -> None:
     assert persisted_files[0].read_text(encoding="utf-8") == "persisted-content"
 
 
-# --- Reserved slot: verify_citation ----------------------------------------------
+# --- Retired capability: verify_citation is gone -----------------------------
 
 
-def test_verify_citation_is_registered_but_reserved(
+def test_verify_citation_is_absent_from_surface(
     research_tools: ResearchTools,
 ) -> None:
-    """`verify_citation` is in the registry, but calling it raises
-    `NotImplementedError` referencing the deferred-verification issue (#26).
+    """The reserved `verify_citation` slot has been retired from the sandbox.
+
+    Issue #26 moved citation verification to the pipeline-side
+    `verify_citation` function in `windbreak/forecast/citations.py`, a
+    composition over `fetch`. The model-facing sandbox never needed its own
+    stub, so this follow-up (#93) removes it: `verify_citation` must be
+    absent from both the tool registry and the `ResearchTools` instance
+    itself, pinning the surface to exactly `{"search", "fetch"}` and failing
+    closed if the retired slot ever reappears.
     """
     registry = tool_registry(research_tools)
 
-    assert "verify_citation" in registry
-
-    with pytest.raises(NotImplementedError, match="26"):
-        research_tools.verify_citation()
+    assert "verify_citation" not in registry
+    assert not hasattr(research_tools, "verify_citation")
 
 
 # --- No privileged handle ---------------------------------------------------------
