@@ -33,6 +33,7 @@ place -- any future edit that drifts one side of the lockstep breaks them.
 from __future__ import annotations
 
 import re
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +43,7 @@ from tests.toolchain.test_toolchain_pins import _find_repo
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _TYPECHECK_SCRIPT_PATH = _REPO_ROOT / "scripts" / "typecheck.sh"
+_PYPROJECT_PATH = _REPO_ROOT / "pyproject.toml"
 
 #: Repo URL substrings for the two pre-commit repos this module inspects,
 #: reusing the same lookup convention as test_toolchain_pins._find_repo.
@@ -118,6 +120,53 @@ def test_mypy_hook_has_pass_filenames_false() -> None:
     hook = _find_hook(_MYPY_REPO_SUBSTRING, "mypy")
 
     assert hook.get("pass_filenames") is False
+
+
+def _mypy_config() -> dict[str, Any]:
+    """Return pyproject.toml's `[tool.mypy]` table.
+
+    Returns:
+        The parsed `[tool.mypy]` mapping.
+
+    Raises:
+        AssertionError: If pyproject.toml has no `[tool.mypy]` table.
+    """
+    data = tomllib.loads(_PYPROJECT_PATH.read_text(encoding="utf-8"))
+    mypy_config = data.get("tool", {}).get("mypy")
+    assert isinstance(mypy_config, dict), "pyproject.toml has no [tool.mypy] table"
+    return mypy_config
+
+
+def test_mypy_config_strictness_is_in_lockstep_with_the_precommit_hook() -> None:
+    """The `[tool.mypy]` config and the pre-commit hook enforce equal strictness.
+
+    Issue #179: `scripts/typecheck.sh` (Gate 2 / check-all.sh) runs the bare,
+    config-driven command `mypy windbreak/ scripts/` -- it takes its strictness
+    solely from pyproject.toml's `[tool.mypy]`. The pre-commit hook, by
+    contrast, passes `--strict` on the command line. If the config enforced only
+    a hand-picked *subset* of `--strict`'s checks (as it once did, omitting
+    `no_implicit_reexport`), the local Gate-2 run would silently miss an entire
+    error class that CI's `--strict` pre-commit step still caught -- the exact
+    false-green recurrence #179 targets.
+
+    This pins the two in lockstep: the hook must pass `--strict`, and the config
+    must set `strict = true` (which enables the full `--strict` check set,
+    `no_implicit_reexport` included). Any future edit that drops `strict` from
+    the config, or `--strict` from the hook, breaks this test.
+    """
+    hook = _find_hook(_MYPY_REPO_SUBSTRING, "mypy")
+    args = hook.get("args", [])
+
+    assert "--strict" in args, (
+        f"mypy pre-commit hook args {args!r} no longer pass '--strict' -- the "
+        "config-driven typecheck.sh run would drift from the hook's strictness"
+    )
+    assert _mypy_config().get("strict") is True, (
+        "pyproject.toml's [tool.mypy] must set `strict = true` so the "
+        "config-driven `mypy windbreak/ scripts/` run in scripts/typecheck.sh "
+        "enforces the same check set (including no_implicit_reexport) as the "
+        "pre-commit hook's `--strict`"
+    )
 
 
 @pytest.mark.parametrize(
