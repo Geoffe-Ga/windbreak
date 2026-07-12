@@ -39,6 +39,7 @@ from windbreak.ledger.events import (
 from windbreak.logging_setup import configure_logging
 from windbreak.riskkernel import checks
 from windbreak.riskkernel.demotion import TRIGGER_ACTIONS, resolve_demotion
+from windbreak.riskkernel.kill import kill_state_in
 from windbreak.riskkernel.modes import (
     IllegalModeTransitionError,
     Mode,
@@ -291,28 +292,47 @@ class RiskKernel:
         mode_machine: ModeStateMachine | None = None,
         evaluation_config: EvaluationConfig | None = None,
     ) -> RiskKernel:
-        """Rebuild a kernel, replaying durable override state from the ledger.
+        """Rebuild a kernel, replaying durable override and kill state.
 
-        The significance-override cap is durable, ledgered state rather than
-        process memory, so a kernel rebuilt over a history that recorded a
-        :class:`~windbreak.ledger.events.SignificanceOverrideApplied` event comes
-        back with the cap already in force.
+        Two durable, ledgered states are recovered rather than left to process
+        memory. The significance-override cap comes back in force whenever the
+        history recorded a
+        :class:`~windbreak.ledger.events.SignificanceOverrideApplied` event; the
+        kill state comes back ``KILLED`` whenever the history ends on an
+        unrearmed :class:`~windbreak.ledger.events.KillEngaged` (folded by
+        :func:`~windbreak.riskkernel.kill.kill_state_in`). Because the method
+        now folds ``events`` twice, it materializes them once up front -- a
+        single-pass iterator would be exhausted by the override fold and the
+        kill fold would silently fail open, the exact drift this replay guards
+        against.
+
+        The already-``KILLED`` guard mirrors
+        :meth:`~windbreak.riskkernel.kill.KillSwitch.kill`'s idempotence: a
+        machine passed in already ``KILLED`` is left untouched rather than driven
+        through an illegal ``KILLED -> KILLED`` transition.
 
         Args:
-            events: The event history to replay override state from.
+            events: The event history to replay override and kill state from.
             ledger_writer: The writer the rebuilt kernel records new events to.
             mode_machine: The operating-mode state machine to adopt.
             evaluation_config: The promotion-threshold config for the gates.
 
         Returns:
-            A :class:`RiskKernel` whose override cap reflects ``events``.
+            A :class:`RiskKernel` whose override cap and kill state reflect
+            ``events``.
         """
+        event_history = tuple(events)
         kernel = cls(
             ledger_writer,
             mode_machine=mode_machine,
             evaluation_config=evaluation_config,
         )
-        kernel._override_applied = override_applied_in(events)
+        kernel._override_applied = override_applied_in(event_history)
+        if (
+            kill_state_in(event_history).killed
+            and kernel._mode_machine.mode is not Mode.KILLED
+        ):
+            kernel._mode_machine.transition(Mode.KILLED)
         return kernel
 
     @property

@@ -69,6 +69,8 @@ from windbreak.riskkernel.kill import (
     KillSwitch,
     KillTrigger,
     ReconciliationMismatchMonitor,
+    ReplayedKillState,
+    kill_state_in,
 )
 from windbreak.riskkernel.modes import (
     REARM_CONFIRMATION_PHRASE,
@@ -165,6 +167,7 @@ __all__ = [
     "PromotionGate",
     "ReconciliationMismatchMonitor",
     "Releaser",
+    "ReplayedKillState",
     "Reservation",
     "ReservationLedger",
     "RiskKernel",
@@ -175,6 +178,7 @@ __all__ = [
     "effective_mode_ceiling",
     "evaluate_intent",
     "evaluate_promotion",
+    "kill_state_in",
     "override_applied_in",
     "resolve_demotion",
     "worst_case_cost",
