@@ -114,6 +114,16 @@ _DEFAULT_FORECAST_TTL_SECONDS = 3600
 #: live cycle; a conservative one-hour default suffices.
 _DEFAULT_VERIFICATION_TTL_SECONDS = 3600
 
+#: Default max admissible exchange-status age, in seconds (SPEC S7.3
+#: approval/submission snapshot TTL range). The PAPER loop supplies
+#: ``exchange_status=None`` data, so this only bounds a future live cycle.
+_DEFAULT_EXCHANGE_STATUS_TTL_SECONDS = 30
+
+#: Default max admissible pipeline-heartbeat age, in seconds. The PAPER loop
+#: supplies ``pipeline_heartbeat_epoch_s=None`` data, so this only bounds a
+#: future live cycle.
+_DEFAULT_PIPELINE_HEARTBEAT_TTL_SECONDS = 60
+
 #: The slippage-model id stamped on the selector's per-contract buffer input.
 _SLIPPAGE_MODEL_ID = "paper"
 
@@ -373,6 +383,8 @@ def _build_limits(
         rounding_buffer=MoneyMicros(0),
         verification_ttl_seconds=_DEFAULT_VERIFICATION_TTL_SECONDS,
         require_human_ack_above_micros=_human_ack_micros(config),
+        exchange_status_ttl_seconds=_DEFAULT_EXCHANGE_STATUS_TTL_SECONDS,
+        pipeline_heartbeat_ttl_seconds=_DEFAULT_PIPELINE_HEARTBEAT_TTL_SECONDS,
     )
 
 
@@ -422,6 +434,13 @@ def build_evaluation_context(
     the reconciliation checks rather than open (mirroring
     :class:`~windbreak.riskkernel.context.EvaluationContext`'s own contract).
 
+    For the same fail-closed reason the PAPER loop honestly supplies
+    ``exchange_status=None`` / ``exchange_status_epoch_s=None`` and
+    ``pipeline_heartbeat_epoch_s=None``: it has no live exchange-status feed or
+    pipeline heartbeat, so ``exchange_status_ok`` and ``pipeline_heartbeat_ok``
+    veto on the honest ``None`` rather than being fed a fabricated liveness
+    reading (mirroring ``verification=None``).
+
     Args:
         config: The configuration whose capital/risk sections map to the limits.
         now_epoch_s: The kernel's current wall clock, in epoch seconds.
@@ -437,6 +456,8 @@ def build_evaluation_context(
         visible_depth=None,
         exchange_clock_epoch_s=now_epoch_s,
         open_position=None,
+        exchange_status=None,
+        exchange_status_epoch_s=None,
     )
     fees = FeeBounds(max_trading_fee=MoneyMicros(0), max_settlement_fee=MoneyMicros(0))
     return EvaluationContext(
@@ -450,6 +471,7 @@ def build_evaluation_context(
         used_idempotency_keys=frozenset(),
         verification=verification,
         acknowledged_intent_ids=frozenset(),
+        pipeline_heartbeat_epoch_s=None,
     )
 
 
@@ -899,7 +921,11 @@ def _approve_stage(deps: PaperTickDeps, decision: SelectorDecision) -> int:
 
     With the real kernel the approval always vetoes (no token minted), so no
     order ever routes; the routing path exists for the doubled-seam fill-leg
-    proof and for the day #110's stubs are retired.
+    proof. Issue #110's ``exchange_status_ok`` / ``pipeline_heartbeat_ok`` are
+    now real, but PAPER fills stay gated: the ``jurisdiction_product_eligibility``
+    stub still vetoes, and the honest ``verification=None`` plus the ``None``
+    exchange status / pipeline heartbeat this loop supplies make those two
+    now-real checks veto too.
 
     Args:
         deps: The tick's dependency bundle.

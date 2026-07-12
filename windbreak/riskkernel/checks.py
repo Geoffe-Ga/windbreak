@@ -1,15 +1,15 @@
 """Pre-trade veto checks for the Risk Kernel (SPEC S10.3).
 
-This module ships the 24 SPEC S10.3 pre-trade checks. Issues #30, #31, #32, and
-#34 give 21 of them real logic -- instrument whitelist, mode/ceiling, the floor
-invariant, balance/position/open-order reconciliation (#32), fee-bound presence,
-concentration, daily loss, trailing drawdown, velocity, quote/forecast
+This module ships the 24 SPEC S10.3 pre-trade checks. Issues #30, #31, #32,
+#34, and #110 give 23 of them real logic -- instrument whitelist, mode/ceiling,
+the floor invariant, balance/position/open-order reconciliation (#32), fee-bound
+presence, concentration, daily loss, trailing drawdown, velocity, quote/forecast
 freshness, price band, participation cap, human-ack satisfaction (#34),
-approval-token and idempotency-key uniqueness (#31), clock skew, and reduce-only
-provability -- each reading a full :class:`EvaluationContext`. The remaining 3
-are deliberate stubs that still veto, each naming the GitHub issue that will
-replace it (:data:`_STUB_REASONS`), so an operator sees *why* a check is not yet
-live rather than a bare "not implemented".
+approval-token and idempotency-key uniqueness (#31), clock skew, exchange-status
+and pipeline-heartbeat liveness (#110), and reduce-only provability -- each
+reading a full :class:`EvaluationContext`. The remaining 1 is a deliberate stub
+that still vetoes, naming the metadata it awaits (:data:`_STUB_REASONS`), so an
+operator sees *why* a check is not yet live rather than a bare "not implemented".
 
 Every check is a small, pure callable taking ``(intent, context)`` and
 returning a :class:`CheckResult`; :func:`evaluate_intent` runs the whole
@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 from windbreak.numeric import RoundingDirection, divide
+from windbreak.riskkernel.context import ExchangeTradingStatus
 from windbreak.riskkernel.floor import worst_case_cost, worst_case_equity
 from windbreak.riskkernel.modes import Mode
 
@@ -67,6 +68,13 @@ _SEMANTICS_UNKNOWN_REASON = "balance semantics not fully known in live mode"
 #: (:mod:`windbreak.riskkernel.ack_flow`) can key its HELD-vs-vetoed decision off
 #: this exact string without duplicating the literal.
 HUMAN_ACK_REQUIRED_REASON = "human acknowledgement required"
+
+#: The exchange trading statuses in which an order may be placed. Only
+#: :attr:`ExchangeTradingStatus.OPEN` is tradable; ``PAUSED`` and ``CLOSED`` (and
+#: an unknown ``None``) all fail closed via ``exchange_status_ok`` (issue #110).
+_TRADABLE_EXCHANGE_STATUSES: frozenset[ExchangeTradingStatus] = frozenset(
+    {ExchangeTradingStatus.OPEN}
+)
 
 
 class _UnprovableCostError(Exception):
@@ -359,7 +367,7 @@ def _is_stale(timestamp: int | None, now: int, ttl_seconds: int) -> bool:
     return now - timestamp > ttl_seconds
 
 
-# --- The 21 real checks (SPEC S10.3) ---------------------------------------------
+# --- The 23 real checks (SPEC S10.3) ---------------------------------------------
 
 
 class _InstrumentWhitelist:
@@ -817,6 +825,77 @@ class _ClockSkewLimit:
         return _approve()
 
 
+class _ExchangeStatusOk:
+    """Veto when the exchange status is stale, unknown, or not open (#110)."""
+
+    name = "exchange_status_ok"
+
+    def __call__(self, intent: OrderIntent, context: EvaluationContext) -> CheckResult:
+        """Approve iff a fresh exchange status reports the exchange OPEN.
+
+        Staleness is checked *first*, before the status value, so a stale or
+        unknown (``None``) status can never be read as tradable: an absent
+        status feed fails closed exactly like a missing quote. Only once the
+        status is proven fresh is its value consulted, and only
+        :attr:`ExchangeTradingStatus.OPEN`
+        (:data:`_TRADABLE_EXCHANGE_STATUSES`) approves; ``PAUSED`` / ``CLOSED``
+        veto (SPEC S7.3 / SPEC S10.3).
+
+        Args:
+            intent: The order intent (unused).
+            context: The evaluation context supplying the market status, its
+                epoch, the clock, and the status ttl.
+
+        Returns:
+            A ``"exchange status stale or missing"`` veto when the status is
+            ``None`` or its epoch is missing, future-dated, or past its ttl; an
+            ``"exchange not open for trading"`` veto for a fresh non-open
+            status; else an approval.
+        """
+        del intent
+        if context.market.exchange_status is None or _is_stale(
+            context.market.exchange_status_epoch_s,
+            context.now_epoch_s,
+            context.limits.exchange_status_ttl_seconds,
+        ):
+            return _veto("exchange status stale or missing")
+        if context.market.exchange_status not in _TRADABLE_EXCHANGE_STATUSES:
+            return _veto("exchange not open for trading")
+        return _approve()
+
+
+class _PipelineHeartbeatOk:
+    """Veto when the pipeline heartbeat is stale or missing (#110, threat T5)."""
+
+    name = "pipeline_heartbeat_ok"
+
+    def __call__(self, intent: OrderIntent, context: EvaluationContext) -> CheckResult:
+        """Approve iff the pipeline heartbeat is present and within its ttl.
+
+        This is the SPEC S10.3 threat-T5 dead-man's switch: a missing
+        (``None``), future-dated, or stale heartbeat means the pipeline can no
+        longer prove it is alive, so the check fails closed rather than letting
+        an order through on a silent pipeline.
+
+        Args:
+            intent: The order intent (unused).
+            context: The evaluation context supplying the heartbeat epoch, the
+                clock, and the heartbeat ttl.
+
+        Returns:
+            A ``"pipeline heartbeat stale or missing"`` veto when the heartbeat
+            is ``None``, in the future, or older than its ttl, else an approval.
+        """
+        del intent
+        if _is_stale(
+            context.pipeline_heartbeat_epoch_s,
+            context.now_epoch_s,
+            context.limits.pipeline_heartbeat_ttl_seconds,
+        ):
+            return _veto("pipeline heartbeat stale or missing")
+        return _approve()
+
+
 class _HumanAckSatisfied:
     """Veto a live over-threshold order lacking a human acknowledgement (#34)."""
 
@@ -1010,7 +1089,7 @@ _RECONCILIATION_CHECKS: tuple[_ReconciliationCheck, ...] = (
 )
 
 
-# --- The 3 deliberate stubs (each blocked on a later issue) -----------------------
+# --- The 1 deliberate stub (blocked on awaited metadata) --------------------------
 
 
 @dataclass(frozen=True, slots=True)
@@ -1040,19 +1119,19 @@ class _ExplicitVetoStub:
 
 
 #: The stub checks paired with their blocking-issue veto reasons, naming the
-#: issue that will replace each one. ``jurisdiction_product_eligibility`` has no
-#: tracking issue yet and instead names the metadata it awaits. (Issue #31
-#: promoted ``approval_token_uniqueness`` / ``idempotency_key_uniqueness`` out
-#: of this table into real checks; issue #32 promoted ``balance_reconciliation``
-#: / ``position_reconciliation`` / ``open_order_reconciliation`` out too.) Held
-#: as a tuple of pairs (not a dict literal) so a future ``token``/``key``-named
-#: entry could never sit as a string-valued literal dict key -- a shape bandit's
-#: B105 heuristic misreads as a hardcoded credential; the runtime lookup dict is
+#: issue that will replace each one. Only ``jurisdiction_product_eligibility``
+#: remains a stub; it has no tracking issue yet and instead names the metadata
+#: it awaits. (Issue #31 promoted ``approval_token_uniqueness`` /
+#: ``idempotency_key_uniqueness`` out of this table into real checks; issue #32
+#: promoted ``balance_reconciliation`` / ``position_reconciliation`` /
+#: ``open_order_reconciliation`` out too; issue #110 promoted
+#: ``exchange_status_ok`` / ``pipeline_heartbeat_ok`` out as well.) Held as a
+#: tuple of pairs (not a dict literal) so a future ``token``/``key``-named entry
+#: could never sit as a string-valued literal dict key -- a shape bandit's B105
+#: heuristic misreads as a hardcoded credential; the runtime lookup dict is
 #: built below.
 _STUB_REASON_ITEMS: tuple[tuple[str, str], ...] = (
     ("jurisdiction_product_eligibility", "awaiting NormalizedMarket metadata"),
-    ("exchange_status_ok", "blocked on #110 (exchange status feed)"),
-    ("pipeline_heartbeat_ok", "blocked on #110 (pipeline heartbeat)"),
 )
 
 #: Each stub check's name mapped to its blocking-issue veto reason.
@@ -1090,7 +1169,7 @@ _SPEC_10_3_CHECK_NAMES: tuple[str, ...] = (
     "reduce_only_provable",
 )
 
-#: The 21 real checks, keyed by SPEC S10.3 name for order-independent assembly.
+#: The 23 real checks, keyed by SPEC S10.3 name for order-independent assembly.
 _REAL_CHECKS: tuple[Check, ...] = (
     _InstrumentWhitelist(),
     _ModePermissionCeiling(),
@@ -1110,15 +1189,17 @@ _REAL_CHECKS: tuple[Check, ...] = (
     _ApprovalTokenUniqueness(),
     _IdempotencyKeyUniqueness(),
     _ClockSkewLimit(),
+    _ExchangeStatusOk(),
+    _PipelineHeartbeatOk(),
     _ReduceOnlyProvable(),
 )
 
-#: The 3 stub checks, keyed by SPEC S10.3 name, each vetoing with its reason.
+#: The 1 stub check, keyed by SPEC S10.3 name, vetoing with its reason.
 _STUB_CHECKS: tuple[Check, ...] = tuple(
     _ExplicitVetoStub(name, reason) for name, reason in _STUB_REASONS.items()
 )
 
-#: Name-to-check lookup spanning all 24 checks (21 real, 3 stub); the pinned
+#: Name-to-check lookup spanning all 24 checks (23 real, 1 stub); the pinned
 #: :data:`_SPEC_10_3_CHECK_NAMES` sequence selects and orders them.
 _CHECK_BY_NAME: dict[str, Check] = {
     check.name: check for check in (*_REAL_CHECKS, *_STUB_CHECKS)

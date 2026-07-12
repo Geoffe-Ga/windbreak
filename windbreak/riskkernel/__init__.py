@@ -28,6 +28,7 @@ from windbreak.riskkernel.checks import (
 from windbreak.riskkernel.context import (
     AccountState,
     EvaluationContext,
+    ExchangeTradingStatus,
     FeeBounds,
     MarketView,
     RiskLimits,
@@ -133,6 +134,7 @@ __all__ = [
     "DuplicateAckRequestError",
     "DuplicateReservationError",
     "EvaluationContext",
+    "ExchangeTradingStatus",
     "FeeBounds",
     "FloorGovernance",
     "ForbiddenOriginError",

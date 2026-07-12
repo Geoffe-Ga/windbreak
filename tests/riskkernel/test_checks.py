@@ -1,5 +1,5 @@
 """Failing-first tests for windbreak.riskkernel.checks (issues #30, #31, #32,
-#34, RED).
+#34, #110, RED).
 
 Issue #30 gave 15 of the 24 SPEC S10.3 pre-trade checks their real logic
 (instrument whitelist, mode/ceiling, the floor invariant, fee-bound presence,
@@ -22,26 +22,36 @@ against the order's own worst-case cost and a new
 threshold (or a cost at or below a configured one) always approves; a cost
 strictly above a configured threshold approves only if the intent id is
 already acknowledged, and otherwise vetoes; an unprovable cost (missing fee
-bound) vetoes fail-closed, exactly like every other cost-consuming check --
-so 21 of the 24 SPEC S10.3 checks are now real; the remaining 3 stay
-deliberate stubs that still veto, each naming the GitHub issue that will
-replace it.
+bound) vetoes fail-closed, exactly like every other cost-consuming check.
+Issue #110 promotes the final two -- `exchange_status_ok` and
+`pipeline_heartbeat_ok` -- reading a new `MarketView.exchange_status:
+ExchangeTradingStatus | None` / `.exchange_status_epoch_s: int | None` pair and
+a new `EvaluationContext.pipeline_heartbeat_epoch_s: int | None` (no default,
+mirroring the `verification` fail-loud precedent): `exchange_status_ok` fails
+closed (staleness-first) on a missing or stale status via the existing
+`_is_stale` pattern, then vetoes a fresh but non-`OPEN` status (`PAUSED` /
+`CLOSED`); `pipeline_heartbeat_ok` fails closed on a missing or stale
+heartbeat the same way -- so 23 of the 24 SPEC S10.3 checks are now real; the
+remaining 1 (`jurisdiction_product_eligibility`) stays a deliberate stub that
+still vetoes, naming the metadata it awaits.
 
 `windbreak/riskkernel/context.py` does not yet declare `used_intent_ids` /
 `used_idempotency_keys` / `verification` / `acknowledged_intent_ids` /
-`require_human_ack_above_micros`, and `windbreak/riskkernel/verification.py`
-does not exist at all yet (this file's `conftest` import alone triggers the
+`require_human_ack_above_micros` / `ExchangeTradingStatus` /
+`pipeline_heartbeat_epoch_s`, and `windbreak/riskkernel/verification.py` does
+not exist at all yet (this file's `conftest` import alone triggers the
 collection failure), so importing anything here fails collection with
-`ModuleNotFoundError`/`TypeError` -- the expected Gate 1 RED state for issues
-#31, #32, and #34. Once `context.py`, `verification.py`, and the six real
-checks exist, this file pins: the exact boundary of every real check (the
-precise value that passes vs. the one unit past it that vetoes); that every
-`None` optional input (fee bounds, timestamps, depth, open position,
-verification snapshot, human-ack threshold) vetoes or approves as documented;
-that an unknown `action` vetoes every check that branches on open/close; the
-unchanged 24-name SPEC S10.3 order; that a fully-permissive context leaves
-*only* the 3 stub checks vetoing, each naming its blocking issue; the
-fail-closed error-conversion contract; and the frozen result types.
+`ModuleNotFoundError`/`ImportError`/`TypeError` -- the expected Gate 1 RED
+state for issues #31, #32, #34, and #110. Once `context.py`, `verification.py`,
+and the eight real checks exist, this file pins: the exact boundary of every
+real check (the precise value that passes vs. the one unit past it that
+vetoes); that every `None` optional input (fee bounds, timestamps, depth, open
+position, verification snapshot, human-ack threshold, exchange status,
+pipeline heartbeat) vetoes or approves as documented; that an unknown `action`
+vetoes every check that branches on open/close; the unchanged 24-name SPEC
+S10.3 order; that a fully-permissive context leaves *only* the 1 stub check
+vetoing, naming the metadata it awaits; the fail-closed error-conversion
+contract; and the frozen result types.
 
 This file supersedes and deletes `tests/riskkernel/test_checks_stub.py`:
 every behavior that file pinned (frozen `OrderIntent`/`CheckResult`/
@@ -76,6 +86,7 @@ from windbreak.riskkernel.checks import (
     CheckResult,
     evaluate_intent,
 )
+from windbreak.riskkernel.context import ExchangeTradingStatus
 from windbreak.riskkernel.modes import Mode
 
 if TYPE_CHECKING:
@@ -112,11 +123,13 @@ EXPECTED_CHECK_NAMES: tuple[str, ...] = (
 
 _EXPECTED_CHECK_COUNT = 24
 
-#: The 21 checks now real after issues #30, #31, #32, and #34, in SPEC S10.3
-#: order. `approval_token_uniqueness` / `idempotency_key_uniqueness` are the
-#: two issue #31 promotes from stub to real logic; `balance_reconciliation` /
-#: `position_reconciliation` / `open_order_reconciliation` are the three issue
-#: #32 promotes; `human_ack_satisfied` is the one issue #34 promotes.
+#: The 23 checks now real after issues #30, #31, #32, #34, and #110, in SPEC
+#: S10.3 order. `approval_token_uniqueness` / `idempotency_key_uniqueness` are
+#: the two issue #31 promotes from stub to real logic; `balance_reconciliation`
+#: / `position_reconciliation` / `open_order_reconciliation` are the three
+#: issue #32 promotes; `human_ack_satisfied` is the one issue #34 promotes;
+#: `exchange_status_ok` / `pipeline_heartbeat_ok` are the final two issue #110
+#: promotes.
 REAL_CHECK_NAMES: tuple[str, ...] = (
     "instrument_whitelist",
     "mode_permission_ceiling",
@@ -138,16 +151,16 @@ REAL_CHECK_NAMES: tuple[str, ...] = (
     "approval_token_uniqueness",
     "idempotency_key_uniqueness",
     "clock_skew_limit",
+    "exchange_status_ok",
+    "pipeline_heartbeat_ok",
     "reduce_only_provable",
 )
 
-#: The 3 checks that remain deliberate stubs after issue #34, each blocked on
-#: a later issue -- `None` for `jurisdiction_product_eligibility`, which has
-#: no tracking issue yet (a follow-up to file, not invented here).
+#: The 1 check that remains a deliberate stub after issue #110 --
+#: `jurisdiction_product_eligibility` has no tracking issue yet (a follow-up
+#: to file, not invented here).
 _STUB_ISSUE_NUMBERS: dict[str, int | None] = {
     "jurisdiction_product_eligibility": None,
-    "exchange_status_ok": 110,
-    "pipeline_heartbeat_ok": 110,
 }
 
 STUB_CHECK_NAMES: tuple[str, ...] = tuple(_STUB_ISSUE_NUMBERS)
@@ -216,14 +229,14 @@ def test_real_and_stub_name_sets_partition_the_24_spec_names_exactly() -> None:
     equal the full 24-name SPEC S10.3 set -- protects the taxonomy this whole
     file's pipeline-level tests assume.
     """
-    assert len(REAL_CHECK_NAMES) == 21
-    assert len(STUB_CHECK_NAMES) == 3
+    assert len(REAL_CHECK_NAMES) == 23
+    assert len(STUB_CHECK_NAMES) == 1
     assert set(REAL_CHECK_NAMES).isdisjoint(STUB_CHECK_NAMES)
     assert set(REAL_CHECK_NAMES) | set(STUB_CHECK_NAMES) == set(EXPECTED_CHECK_NAMES)
 
 
 def test_make_context_defaults_make_every_real_check_pass() -> None:
-    """`make_context()` paired with `make_intent()` passes all 20 real
+    """`make_context()` paired with `make_intent()` passes all 23 real
     checks -- the load-bearing fixture assumption every per-check boundary
     test below relies on to isolate its one overridden field.
     """
@@ -1597,6 +1610,214 @@ def test_clock_skew_limit_vetoes_when_exchange_clock_epoch_is_none() -> None:
     assert result.vetoed is True
 
 
+# --- exchange_status_ok (issue #110) -----------------------------------------------
+
+
+def test_exchange_status_ok_passes_with_default_open_and_fresh_status() -> None:
+    """The default context (`OPEN`, fresh) passes."""
+    result = _real_check("exchange_status_ok")(make_intent(), make_context())
+
+    assert result.vetoed is False
+
+
+def test_exchange_status_ok_vetoes_when_status_is_none() -> None:
+    """A missing (`None`) exchange status vetoes -- fail-closed on an unknown
+    status, mirroring every other `None`-means-veto optional field.
+    """
+    context = make_context(exchange_status=None)
+
+    result = _real_check("exchange_status_ok")(make_intent(), context)
+
+    assert result.vetoed is True
+    assert result.reason == "exchange status stale or missing"
+
+
+def test_exchange_status_ok_vetoes_when_epoch_is_none() -> None:
+    """A present status with a missing epoch vetoes -- staleness is checked
+    first, independent of the status value itself.
+    """
+    context = make_context(
+        exchange_status=ExchangeTradingStatus.OPEN, exchange_status_epoch_s=None
+    )
+
+    result = _real_check("exchange_status_ok")(make_intent(), context)
+
+    assert result.vetoed is True
+    assert result.reason == "exchange status stale or missing"
+
+
+def test_exchange_status_ok_vetoes_a_future_timestamp() -> None:
+    """A status timestamped after `now_epoch_s` vetoes, however fresh its age
+    would otherwise appear -- matching `quote_freshness`'s future-dated
+    boundary.
+    """
+    context = make_context(
+        exchange_status=ExchangeTradingStatus.OPEN,
+        exchange_status_epoch_s=DEFAULT_NOW_EPOCH_S + 1,
+    )
+
+    result = _real_check("exchange_status_ok")(make_intent(), context)
+
+    assert result.vetoed is True
+    assert result.reason == "exchange status stale or missing"
+
+
+def test_exchange_status_ok_vetoes_one_second_past_ttl() -> None:
+    """A status one second past its ttl is stale."""
+    context = make_context(
+        exchange_status_ttl_seconds=3_600,
+        exchange_status_epoch_s=DEFAULT_NOW_EPOCH_S - 3_601,
+    )
+
+    result = _real_check("exchange_status_ok")(make_intent(), context)
+
+    assert result.vetoed is True
+    assert result.reason == "exchange status stale or missing"
+
+
+def test_exchange_status_ok_passes_at_exact_ttl_age() -> None:
+    """A status exactly `exchange_status_ttl_seconds` old (age == ttl) is
+    still fresh -- the same inclusive boundary `quote_freshness` pins.
+    """
+    context = make_context(
+        exchange_status_ttl_seconds=3_600,
+        exchange_status_epoch_s=DEFAULT_NOW_EPOCH_S - 3_600,
+    )
+
+    result = _real_check("exchange_status_ok")(make_intent(), context)
+
+    assert result.vetoed is False
+
+
+def test_exchange_status_ok_vetoes_a_fresh_paused_status() -> None:
+    """A fresh `PAUSED` status vetoes with the distinct "not open for
+    trading" reason -- proving the tradable-status branch runs once staleness
+    has already passed.
+    """
+    context = make_context(exchange_status=ExchangeTradingStatus.PAUSED)
+
+    result = _real_check("exchange_status_ok")(make_intent(), context)
+
+    assert result.vetoed is True
+    assert result.reason == "exchange not open for trading"
+
+
+def test_exchange_status_ok_vetoes_a_fresh_closed_status() -> None:
+    """A fresh `CLOSED` status vetoes with the same "not open" reason."""
+    context = make_context(exchange_status=ExchangeTradingStatus.CLOSED)
+
+    result = _real_check("exchange_status_ok")(make_intent(), context)
+
+    assert result.vetoed is True
+    assert result.reason == "exchange not open for trading"
+
+
+# --- pipeline_heartbeat_ok (issue #110) ---------------------------------------------
+
+
+def test_pipeline_heartbeat_ok_passes_with_default_fresh_heartbeat() -> None:
+    """The default context (a fresh heartbeat) passes."""
+    result = _real_check("pipeline_heartbeat_ok")(make_intent(), make_context())
+
+    assert result.vetoed is False
+
+
+def test_pipeline_heartbeat_ok_vetoes_when_epoch_is_none() -> None:
+    """A missing heartbeat timestamp vetoes."""
+    context = make_context(pipeline_heartbeat_epoch_s=None)
+
+    result = _real_check("pipeline_heartbeat_ok")(make_intent(), context)
+
+    assert result.vetoed is True
+    assert result.reason == "pipeline heartbeat stale or missing"
+
+
+def test_pipeline_heartbeat_ok_vetoes_a_future_timestamp() -> None:
+    """A heartbeat timestamped after `now_epoch_s` vetoes, however fresh its
+    age would otherwise appear.
+    """
+    context = make_context(pipeline_heartbeat_epoch_s=DEFAULT_NOW_EPOCH_S + 1)
+
+    result = _real_check("pipeline_heartbeat_ok")(make_intent(), context)
+
+    assert result.vetoed is True
+    assert result.reason == "pipeline heartbeat stale or missing"
+
+
+def test_pipeline_heartbeat_ok_vetoes_one_second_past_ttl() -> None:
+    """A heartbeat one second past its ttl is stale."""
+    context = make_context(
+        pipeline_heartbeat_ttl_seconds=3_600,
+        pipeline_heartbeat_epoch_s=DEFAULT_NOW_EPOCH_S - 3_601,
+    )
+
+    result = _real_check("pipeline_heartbeat_ok")(make_intent(), context)
+
+    assert result.vetoed is True
+    assert result.reason == "pipeline heartbeat stale or missing"
+
+
+def test_pipeline_heartbeat_ok_passes_at_exact_ttl_age() -> None:
+    """A heartbeat exactly `pipeline_heartbeat_ttl_seconds` old (age == ttl)
+    is still fresh -- the same inclusive boundary `quote_freshness` pins.
+    """
+    context = make_context(
+        pipeline_heartbeat_ttl_seconds=3_600,
+        pipeline_heartbeat_epoch_s=DEFAULT_NOW_EPOCH_S - 3_600,
+    )
+
+    result = _real_check("pipeline_heartbeat_ok")(make_intent(), context)
+
+    assert result.vetoed is False
+
+
+def test_pipeline_heartbeat_ok_reads_a_distinct_configured_ttl() -> None:
+    """A distinct, tight ttl (10s) proves the check reads `limits`'s own
+    field rather than some other check's ttl constant.
+    """
+    context = make_context(
+        pipeline_heartbeat_ttl_seconds=10,
+        pipeline_heartbeat_epoch_s=DEFAULT_NOW_EPOCH_S - 11,
+    )
+
+    result = _real_check("pipeline_heartbeat_ok")(make_intent(), context)
+
+    assert result.vetoed is True
+    assert result.reason == "pipeline heartbeat stale or missing"
+
+
+# --- exchange_status_ok / pipeline_heartbeat_ok: DEFAULT_CHECKS routing (#110) ------
+
+
+def test_default_checks_routes_the_real_exchange_status_ok_check() -> None:
+    """`evaluate_intent` over `DEFAULT_CHECKS` surfaces the exchange-status
+    veto reason when only `exchange_status` is missing -- proving
+    `DEFAULT_CHECKS` wires the real check, not the retired stub.
+    """
+    intent = make_intent()
+    context = make_context(exchange_status=None)
+
+    decision = evaluate_intent(intent, context)
+
+    assert "exchange status stale or missing" in decision.reasons
+
+
+def test_default_checks_routes_the_real_pipeline_heartbeat_ok_check() -> None:
+    """`evaluate_intent` over `DEFAULT_CHECKS` surfaces the heartbeat veto
+    reason when only the heartbeat is stale -- proving `DEFAULT_CHECKS`
+    wires the real check, not the retired stub.
+    """
+    intent = make_intent()
+    context = make_context(
+        pipeline_heartbeat_ttl_seconds=3_600,
+        pipeline_heartbeat_epoch_s=DEFAULT_NOW_EPOCH_S - 3_601,
+    )
+
+    decision = evaluate_intent(intent, context)
+
+    assert "pipeline heartbeat stale or missing" in decision.reasons
+
+
 # --- reduce_only_provable ----------------------------------------------------------
 
 
@@ -1665,9 +1886,9 @@ def test_default_checks_names_match_spec_10_3_exactly_in_order() -> None:
 
 def test_default_checks_over_permissive_context_leaves_only_stubs_vetoing() -> None:
     """Given `make_intent()`/`make_context()` (tuned so every real check
-    passes), `evaluate_intent` is still vetoed -- but with exactly the 3 stub
-    reasons, in SPEC S10.3 order, each naming its blocking issue (where one is
-    known). This is the test that proves which 21 checks are now real.
+    passes), `evaluate_intent` is still vetoed -- but with exactly the 1 stub
+    reason, naming the metadata it awaits. This is the test that proves which
+    23 checks are now real.
     """
     intent = make_intent()
     context = make_context()
@@ -1676,8 +1897,8 @@ def test_default_checks_over_permissive_context_leaves_only_stubs_vetoing() -> N
 
     assert decision.vetoed is True
     stub_positions = [name for name in EXPECTED_CHECK_NAMES if name in STUB_CHECK_NAMES]
-    assert len(stub_positions) == 3
-    assert len(decision.reasons) == 3
+    assert len(stub_positions) == 1
+    assert len(decision.reasons) == 1
     for reason, name in zip(decision.reasons, stub_positions, strict=True):
         issue_number = _STUB_ISSUE_NUMBERS[name]
         if issue_number is None:
@@ -1689,8 +1910,8 @@ def test_default_checks_over_permissive_context_leaves_only_stubs_vetoing() -> N
 @pytest.mark.parametrize("name", STUB_CHECK_NAMES)
 def test_each_stub_check_still_vetoes_a_valid_intent(name: str) -> None:
     """Called directly, every stub check still vetoes over a fully
-    permissive context -- issues #30/#31 together only promote 17 of the 24
-    checks to real logic."""
+    permissive context -- issues #30/#31/#32/#34/#110 together promote 23 of
+    the 24 checks to real logic."""
     result = _real_check(name)(make_intent(), make_context())
 
     assert result.vetoed is True

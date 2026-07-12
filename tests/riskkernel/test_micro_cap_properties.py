@@ -18,10 +18,10 @@ this file collects cleanly; both tests are genuinely RED against *today's*
 intent is wrongly approved), not an import error.
 
 Both tests isolate ``mode_permission_ceiling`` from the other 23 SPEC S10.3
-checks -- 3 of which (``jurisdiction_product_eligibility``,
-``exchange_status_ok``, ``pipeline_heartbeat_ok``) are still unconditional-veto
-stubs -- by monkeypatching ``windbreak.riskkernel.checks.evaluate_intent`` to
-run only the named check(s), mirroring
+checks -- 1 of which (``jurisdiction_product_eligibility``) is still an
+unconditional-veto stub -- by monkeypatching
+``windbreak.riskkernel.checks.evaluate_intent`` to run only the named
+check(s), mirroring
 ``tests/riskkernel/test_reservations.py``'s T4 isolation technique exactly. No
 production code is touched.
 """
@@ -64,8 +64,8 @@ def _isolate_checks(monkeypatch: pytest.MonkeyPatch, *names: str) -> None:
     """Patch ``evaluate_intent`` to run only the named SPEC S10.3 check(s).
 
     Mirrors ``tests/riskkernel/test_reservations.py``'s T4 isolation
-    technique: 3 of the 24 SPEC S10.3 checks are still unconditional-veto
-    stubs, which would otherwise mask every cap behavior this file targets.
+    technique: 1 of the 24 SPEC S10.3 checks is still an unconditional-veto
+    stub, which would otherwise mask every cap behavior this file targets.
     Filtering ``DEFAULT_CHECKS`` (rather than hand-building a tuple) preserves
     the checks' pinned SPEC S10.3 evaluation order.
 
@@ -192,8 +192,8 @@ def test_approved_reservations_never_jointly_breach_the_micro_cap(
     Runs entirely offline against in-memory fakes; the
     ``TokenIssuer``/``ReservationLedger``/``ApprovalPipeline`` triad is
     exercised exactly as in ``tests/riskkernel/test_reservations.py``, with
-    ``mode_permission_ceiling`` isolated from the 3 still-stubbed SPEC S10.3
-    checks. Every input is a plain Python ``int`` (SPEC S6.1: no floats
+    ``mode_permission_ceiling`` isolated from the 1 still-stubbed SPEC S10.3
+    check. Every input is a plain Python ``int`` (SPEC S6.1: no floats
     anywhere in this file).
 
     Uses ``pytest.MonkeyPatch.context()`` rather than the ``monkeypatch``
