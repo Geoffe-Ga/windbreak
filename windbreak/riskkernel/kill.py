@@ -29,7 +29,17 @@ fully built and tested here, but they are *not yet composed into the live
 and ``process.main()`` does not yet pass ``kill_integration=``. Until that
 wiring lands, ``windbreak kill`` writes a ``KILL`` file that no running kernel
 polls, so it does *not* halt a live deployment; the ``KILL`` file's presence is
-the durable signal a wired watcher *will* act on once composed.
+one signal a wired watcher *will* act on once composed.
+
+**Durable kill state (issue #123):** kill state is no longer only process
+memory, and the ``KILL`` file is no longer the sole interim restart measure. The
+kill/re-arm ledger is authoritative: :func:`kill_state_in` folds a recorded
+history into a :class:`ReplayedKillState`, and :meth:`KillSwitch.from_events`
+(with :meth:`~windbreak.riskkernel.process.RiskKernel.from_events`) rebuilds a
+switch already at its restored kill sequence and, on an unrearmed history, a
+kernel already ``KILLED``. Ledger replay is thus the *primary* durable
+mechanism; the ``KILL`` file is belt-and-suspenders, so an operator's ``KILL``
+drop survives even a ledger-less restart.
 
 Everything on this path is float-free (SPEC S6.1): epoch seconds and kill
 sequence numbers are ``int`` only.
@@ -41,7 +51,7 @@ import enum
 import secrets
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, cast
 
 from windbreak.alerts.registry import AlertType
 from windbreak.ledger.events import CancelAllDirective, KillEngaged, KillReArmed
@@ -50,9 +60,10 @@ from windbreak.riskkernel.modes import KillReArmError, Mode
 from windbreak.riskkernel.verification import VerificationOutcome
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable
     from pathlib import Path
 
+    from windbreak.ledger.events import Event
     from windbreak.riskkernel.modes import ModeStateMachine
     from windbreak.riskkernel.process import KernelLedgerWriter
     from windbreak.riskkernel.reservations import ReservationLedger
@@ -81,6 +92,18 @@ _HALT_KILL_MESSAGE = "kill switch engaged; trading halted, positions held"
 #: Byte budget handed to :func:`secrets.token_urlsafe` for a dashboard nonce.
 _CHALLENGE_TOKEN_BYTES = 32
 
+#: The kill sequence a replay reports when the history records no kill at all --
+#: also a fresh switch's pre-first-kill default, so a restored sequence of 0 is
+#: indistinguishable from "never killed".
+_NO_KILL_SEQUENCE = 0
+
+#: The ``event_type`` discriminators the durable-state fold matches, kept as
+#: literals so :func:`kill_state_in` recognizes both live event instances and
+#: deserialized base ``Event`` records by type string alone -- mirroring
+#: :meth:`FloorGovernance._absorb_replayed_event`'s string-keyed matching.
+_KILL_ENGAGED_EVENT_TYPE = "KillEngaged"
+_KILL_REARMED_EVENT_TYPE = "KillReArmed"
+
 
 def _default_clock() -> int:
     """Return the current wall clock as whole epoch seconds.
@@ -92,6 +115,61 @@ def _default_clock() -> int:
         The current time, in whole epoch seconds.
     """
     return int(time.time())
+
+
+@dataclass(frozen=True, slots=True)
+class ReplayedKillState:
+    """The two durable kill facts recovered from a replayed ledger (issue #123).
+
+    Attributes:
+        last_kill_sequence: The ``kill_sequence`` of the most recent
+            :class:`KillEngaged` in the history, or :data:`_NO_KILL_SEQUENCE`
+            (0) when the history records no kill at all. It survives a matching
+            re-arm, so the monotonic counter never resets across a restart.
+        killed: ``True`` iff that latest kill has no matching later
+            :class:`KillReArmed` -- i.e. the kernel was killed and not yet
+            re-armed when the history ended.
+    """
+
+    last_kill_sequence: int
+    killed: bool
+
+
+def kill_state_in(events: Iterable[Event]) -> ReplayedKillState:
+    """Fold a kill/re-arm history into its durable :class:`ReplayedKillState`.
+
+    Fail-closed, because this drives a re-arm authorization control: a
+    :class:`KillReArmed` clears the kill flag *only* when its ``kill_sequence``
+    matches the latest kill's, so a stale or mismatched re-arm record can never
+    un-kill a replay. Events are matched by ``event_type`` string alone
+    (mirroring :meth:`FloorGovernance._absorb_replayed_event`), so the fold
+    works on both live :class:`KillEngaged` / :class:`KillReArmed` instances and
+    deserialized base :class:`~windbreak.ledger.events.Event` records.
+
+    Args:
+        events: The kill/re-arm event history to replay (e.g. on restart).
+
+    Returns:
+        The :class:`ReplayedKillState` the history folds to.
+    """
+    # The fold tracks the *last-in-iteration-order* kill, which equals the
+    # highest kill_sequence only under the ledger's single-writer, append-only,
+    # strictly-increasing invariant (KillSwitch.kill increments then records).
+    # That invariant holds for every stream this replays; were a future
+    # reordered/compacted ledger to break it, an older KillEngaged landing last
+    # could let its matching (older) re-arm phrase clear the flag -- so the
+    # ordering guarantee is load-bearing for this fail-closed control.
+    last_kill_sequence = _NO_KILL_SEQUENCE
+    killed = False
+    for event in events:
+        if event.event_type == _KILL_ENGAGED_EVENT_TYPE:
+            last_kill_sequence = cast("int", event.payload["kill_sequence"])
+            killed = True
+        elif event.event_type == _KILL_REARMED_EVENT_TYPE and (
+            cast("int", event.payload["kill_sequence"]) == last_kill_sequence
+        ):
+            killed = False
+    return ReplayedKillState(last_kill_sequence=last_kill_sequence, killed=killed)
 
 
 class KillTrigger(enum.Enum):
@@ -150,6 +228,13 @@ class KillSwitch:
     ``KILLED`` is :meth:`rearm` with the exact typed confirmation phrase. The
     switch composes the LOCKED :mod:`~windbreak.riskkernel.modes` primitives and
     never widens the mode ladder.
+
+    Kill state is durable, not merely process memory (issue #123): the
+    monotonic kill sequence is recovered from the ledger via
+    :meth:`from_events` (folding :func:`kill_state_in`), so a switch rebuilt
+    after a restart re-arms the exact ledgered kill and its next kill still
+    increments monotonically. The ``KILL`` file remains as belt-and-suspenders
+    for a ledger-less restart.
     """
 
     def __init__(
@@ -187,7 +272,65 @@ class KillSwitch:
         self._directive_sink = directive_sink
         self._state_dir = state_dir
         self._clock = clock if clock is not None else _default_clock
-        self._kill_sequence = 0
+        self._kill_sequence = _NO_KILL_SEQUENCE
+
+    @classmethod
+    def from_events(
+        cls,
+        events: Iterable[Event],
+        mode_machine: ModeStateMachine,
+        ledger_writer: KernelLedgerWriter,
+        alert_dispatcher: AlertDispatcherProtocol,
+        *,
+        reservation_ledger: ReservationLedger | None = None,
+        directive_sink: DirectiveSink | None = None,
+        state_dir: Path | None = None,
+        clock: Callable[[], int] | None = None,
+    ) -> KillSwitch:
+        """Rebuild a kill switch, restoring its kill sequence from the ledger.
+
+        The kill sequence is durable, ledgered state, so a switch rebuilt over a
+        recorded history restores :attr:`active_kill_sequence` from the latest
+        :class:`KillEngaged` -- *unconditionally*, even when the net replayed
+        state is not killed (a matching re-arm cleared it) -- so a post-restart
+        :meth:`kill` still increments monotonically to ``N + 1`` rather than
+        resetting to 1. It restores only the switch's own counter: it does
+        **not** transition ``mode_machine`` to ``KILLED``. Driving the shared
+        machine to ``KILLED`` on an unrearmed history is
+        :meth:`~windbreak.riskkernel.process.RiskKernel.from_events`'s sole
+        responsibility, so the two never race to transition the one machine.
+
+        Args:
+            events: The event history to restore the kill sequence from.
+            mode_machine: The LOCKED operating-mode state machine (adopted, not
+                transitioned here).
+            ledger_writer: The seam the rebuilt switch records new events through.
+            alert_dispatcher: The seam the rebuilt switch fires its one alert
+                through.
+            reservation_ledger: The capital ledger released on a later kill, or
+                ``None``.
+            directive_sink: The order-gateway seam for a later cancel-all, or
+                ``None``.
+            state_dir: The directory a later kill writes a ``KILL`` file into, or
+                ``None``.
+            clock: The rebuilt switch's injected epoch-second clock, or ``None``
+                for :func:`_default_clock`.
+
+        Returns:
+            A :class:`KillSwitch` whose :attr:`active_kill_sequence` reflects
+            ``events``.
+        """
+        switch = cls(
+            mode_machine,
+            ledger_writer,
+            alert_dispatcher,
+            reservation_ledger=reservation_ledger,
+            directive_sink=directive_sink,
+            state_dir=state_dir,
+            clock=clock,
+        )
+        switch._kill_sequence = kill_state_in(events).last_kill_sequence
+        return switch
 
     @property
     def mode(self) -> Mode:
@@ -288,8 +431,10 @@ class KillSwitch:
     def _write_kill_file(self) -> None:
         """Drop an empty ``KILL`` file when a state directory is wired.
 
-        The file's mere presence -- never its content -- is the durable kill
-        signal a restarted process or a peer watcher reads. The directory is
+        The file's mere presence -- never its content -- is a belt-and-
+        suspenders kill signal a peer watcher or a ledger-less restart reads,
+        backing the ledger replay that is now the primary durable mechanism
+        (issue #123). The directory is
         created (parents included) first: a non-CLI trigger (dashboard,
         auto-reconciliation) can fire against a fresh ``state_dir`` before
         ``windbreak kill`` has ever run, and the fail-toward-dead file write must

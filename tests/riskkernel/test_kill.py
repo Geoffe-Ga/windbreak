@@ -23,6 +23,19 @@ kill/re-arm idempotency; the position-hold no-dump invariant under Hypothesis;
 and the full SPEC S10.12 kill drill (open reservations, mid-run KILL-file
 kill, then REARM-file re-arm restoring approval capability with no stale
 reservation replay).
+
+Issue #123 (durable kill state via ledger replay on kernel rebuild) adds a
+pure fold, `kill_state_in`, returning a new `ReplayedKillState` dataclass;
+`KillSwitch.from_events`, a classmethod restoring `active_kill_sequence` from
+a replayed history; and extends `RiskKernel.from_events` (issue #33's
+override-replay entrypoint) to also replay kill state, driving the shared
+mode machine to `KILLED` on an unrearmed kill history. `ReplayedKillState`
+and `kill_state_in` do not exist on the real, not-yet-updated `kill.py`
+module yet, so the `from windbreak.riskkernel.kill import ...` block below
+independently fails collection with `ImportError: cannot import name
+'ReplayedKillState' from 'windbreak.riskkernel.kill'` -- the expected Gate 1
+RED state for issue #123, on top of (and however the other pieces above have
+already landed) whatever the rest of this file's imports pin.
 """
 
 from __future__ import annotations
@@ -43,8 +56,11 @@ from windbreak.connector.fake import FakeExchange
 from windbreak.ledger.events import (
     EVENT_TYPES,
     CancelAllDirective,
+    Event,
     KillEngaged,
     KillReArmed,
+    ModeHeartbeat,
+    SignificanceOverrideApplied,
 )
 from windbreak.main import main as windbreak_main
 from windbreak.numeric.types import ContractCentis, MoneyMicros
@@ -57,6 +73,8 @@ from windbreak.riskkernel.kill import (
     KillSwitch,
     KillTrigger,
     ReconciliationMismatchMonitor,
+    ReplayedKillState,
+    kill_state_in,
 )
 from windbreak.riskkernel.modes import (
     REARM_CONFIRMATION_PHRASE,
@@ -65,6 +83,7 @@ from windbreak.riskkernel.modes import (
     ModeStateMachine,
 )
 from windbreak.riskkernel.process import InMemoryKernelLedgerWriter, RiskKernel
+from windbreak.riskkernel.promotion import SIGNIFICANCE_OVERRIDE_ACK_PHRASE
 from windbreak.riskkernel.reservations import (
     DuplicateReservationError,
     ReservationLedger,
@@ -85,6 +104,19 @@ _FIXED_EPOCH_S = 1_700_000_000
 #: A representative expiry far enough past `_FIXED_EPOCH_S` that no
 #: reservation created in a test ever expires from under it.
 _FAR_FUTURE_EXPIRY_S = 2_000_000_000
+
+#: The kill sequence the issue #123 restart/restore tests pin as "the
+#: sequence recorded before a restart": an arbitrary but fixed value well
+#: above 1, so a test asserting the switch's *restored* sequence can never
+#: coincidentally pass against a fresh switch's default starting sequence of
+#: 0, nor against the "always starts its first kill at 1" behavior other
+#: tests in this file pin.
+_RESTORED_KILL_SEQUENCE = 4
+
+#: An earlier, already-re-armed kill sequence preceding `_RESTORED_KILL_SEQUENCE`
+#: in a multi-cycle history, so the end-to-end restart test replays a genuine
+#: kill/re-arm/kill sequence rather than a single kill.
+_EARLIER_KILL_SEQUENCE = 3
 
 #: The closed set of event types the kill path may ever ledger (SPEC intent:
 #: position-hold, never dump): the kill announcement, the one cancel-all
@@ -1211,3 +1243,367 @@ def test_poll_once_with_no_kill_file_and_a_live_switch_is_a_safe_no_op(
 
     assert machine.mode == Mode.LIVE
     assert writer.events == []
+
+
+# --- kill_state_in: the pure fold over kill/re-arm event history (issue #123) ---
+
+
+def test_kill_state_in_empty_events_is_not_killed_with_sequence_zero() -> None:
+    """`kill_state_in([])` folds to the not-killed, zero-sequence baseline --
+    mirroring `override_applied_in([])`'s equivalent empty-history baseline.
+    """
+    assert kill_state_in([]) == ReplayedKillState(last_kill_sequence=0, killed=False)
+
+
+def test_kill_state_in_detects_an_unrearmed_kill_engaged() -> None:
+    """A lone `KillEngaged`, never re-armed, folds to `killed=True` at its own
+    sequence number.
+    """
+    events = [
+        KillEngaged(
+            component="riskkernel", trigger="CLI", kill_sequence=1, epoch=_FIXED_EPOCH_S
+        ),
+    ]
+
+    assert kill_state_in(events) == ReplayedKillState(last_kill_sequence=1, killed=True)
+
+
+def test_kill_state_in_ignores_unrelated_events() -> None:
+    """A history of unrelated events (a heartbeat, a generic base `Event`)
+    never trips `kill_state_in`, mirroring `test_override.py::
+    test_override_applied_in_ignores_unrelated_events`'s equivalent fixture.
+    """
+    events: list[Event] = [
+        ModeHeartbeat(component="riskkernel", mode="RESEARCH", beat=1),
+        Event(
+            event_type="Something",
+            component="riskkernel",
+            payload_schema_version=1,
+            payload={},
+        ),
+    ]
+
+    assert kill_state_in(events) == ReplayedKillState(
+        last_kill_sequence=0, killed=False
+    )
+
+
+def test_kill_state_in_rearmed_kill_is_not_killed_but_keeps_last_sequence() -> None:
+    """A kill immediately re-armed at the matching sequence nets
+    `killed=False`, but the last sequence number survives the fold -- a
+    re-arm never resets the monotonic counter, only clears the kill flag.
+    """
+    events = [
+        KillEngaged(
+            component="riskkernel", trigger="CLI", kill_sequence=1, epoch=_FIXED_EPOCH_S
+        ),
+        KillReArmed(component="riskkernel", kill_sequence=1),
+    ]
+
+    assert kill_state_in(events) == ReplayedKillState(
+        last_kill_sequence=1, killed=False
+    )
+
+
+def test_kill_state_in_multiple_cycles_restores_the_latest_sequence() -> None:
+    """Two full kill/re-arm cycles fold to the *latest* sequence at each
+    stage: `killed=True` after the second kill (not the first's stale
+    sequence), and `killed=False` once that second kill is also re-armed.
+    """
+    events_after_second_kill = [
+        KillEngaged(
+            component="riskkernel", trigger="CLI", kill_sequence=1, epoch=_FIXED_EPOCH_S
+        ),
+        KillReArmed(component="riskkernel", kill_sequence=1),
+        KillEngaged(
+            component="riskkernel", trigger="CLI", kill_sequence=2, epoch=_FIXED_EPOCH_S
+        ),
+    ]
+
+    assert kill_state_in(events_after_second_kill) == ReplayedKillState(
+        last_kill_sequence=2, killed=True
+    )
+
+    events_after_second_rearm = [
+        *events_after_second_kill,
+        KillReArmed(component="riskkernel", kill_sequence=2),
+    ]
+
+    assert kill_state_in(events_after_second_rearm) == ReplayedKillState(
+        last_kill_sequence=2, killed=False
+    )
+
+
+def test_kill_state_in_mismatched_rearm_sequence_stays_killed() -> None:
+    """A `KillReArmed` whose sequence does not match the latest
+    `KillEngaged` is a stale/mismatched record: it never un-kills.
+    """
+    events = [
+        KillEngaged(
+            component="riskkernel", trigger="CLI", kill_sequence=2, epoch=_FIXED_EPOCH_S
+        ),
+        KillReArmed(component="riskkernel", kill_sequence=1),
+    ]
+
+    assert kill_state_in(events) == ReplayedKillState(last_kill_sequence=2, killed=True)
+
+
+def test_kill_state_in_rearm_before_any_kill_is_not_killed() -> None:
+    """A `KillReArmed` with no preceding `KillEngaged` at all leaves the fold
+    at its not-killed, zero-sequence baseline -- there is nothing yet to
+    clear, and the re-arm record itself never advances the sequence.
+    """
+    events = [KillReArmed(component="riskkernel", kill_sequence=1)]
+
+    assert kill_state_in(events) == ReplayedKillState(
+        last_kill_sequence=0, killed=False
+    )
+
+
+# --- RiskKernel.from_events: replaying kill state on rebuild (issue #123) -------
+
+
+@pytest.mark.timeout(30)
+def test_rebuilt_kernel_over_unrearmed_kill_history_comes_back_killed() -> None:
+    """`RiskKernel.from_events` over an unrearmed kill history rebuilds
+    already `KILLED` -- both in `.mode` and in `evaluate_intent`'s behavior,
+    which must return the single `"KILLED"` reason exactly as
+    `test_evaluate_intent_on_a_killed_kernel_returns_the_single_killed_reason`
+    pins for an in-process kill.
+    """
+    events = [
+        KillEngaged(
+            component="riskkernel", trigger="CLI", kill_sequence=1, epoch=_FIXED_EPOCH_S
+        ),
+    ]
+
+    rebuilt = RiskKernel.from_events(events, InMemoryKernelLedgerWriter())
+
+    assert rebuilt.mode is Mode.KILLED
+    decision = rebuilt.evaluate_intent(make_intent(), make_context())
+    assert decision.reasons == ("KILLED",)
+
+
+def test_rebuilt_kernel_over_a_rearmed_history_keeps_the_passed_mode() -> None:
+    """A net-re-armed kill history (a kill immediately followed by its own
+    matching re-arm) never forces `KILLED` on rebuild: the rebuilt kernel
+    keeps whatever mode the passed `mode_machine` was already in.
+    """
+    events = [
+        KillEngaged(
+            component="riskkernel", trigger="CLI", kill_sequence=1, epoch=_FIXED_EPOCH_S
+        ),
+        KillReArmed(component="riskkernel", kill_sequence=1),
+    ]
+    machine = ModeStateMachine(mode_ceiling=Mode.LIVE, mode=Mode.PAUSED)
+
+    rebuilt = RiskKernel.from_events(
+        events, InMemoryKernelLedgerWriter(), mode_machine=machine
+    )
+
+    assert rebuilt.mode is Mode.PAUSED
+
+
+def test_rebuild_with_a_machine_already_in_killed_does_not_raise() -> None:
+    """Rebuilding over an unrearmed kill history with a `mode_machine` that
+    is already `KILLED` must never attempt a redundant `KILLED -> KILLED`
+    transition (illegal on the ladder): it must not raise
+    `IllegalModeTransitionError`, and the kernel comes back `KILLED`.
+    """
+    events = [
+        KillEngaged(
+            component="riskkernel", trigger="CLI", kill_sequence=1, epoch=_FIXED_EPOCH_S
+        ),
+    ]
+    machine = ModeStateMachine(mode_ceiling=Mode.LIVE, mode=Mode.KILLED)
+
+    rebuilt = RiskKernel.from_events(
+        events, InMemoryKernelLedgerWriter(), mode_machine=machine
+    )
+
+    assert rebuilt.mode is Mode.KILLED
+
+
+def test_rebuild_replays_override_and_kill_state_together() -> None:
+    """One history recording both a significance override and an unrearmed
+    kill rebuilds with *both* durable effects in force at once: `KILLED`
+    mode and the `LIVE_MICRO` override ceiling -- the two replays (issue #33's
+    override fold and issue #123's kill fold) compose independently.
+    """
+    events = [
+        SignificanceOverrideApplied(
+            component="riskkernel",
+            operator_ack=SIGNIFICANCE_OVERRIDE_ACK_PHRASE,
+            ceiling="LIVE_MICRO",
+        ),
+        KillEngaged(
+            component="riskkernel", trigger="CLI", kill_sequence=1, epoch=_FIXED_EPOCH_S
+        ),
+    ]
+    machine = ModeStateMachine(mode_ceiling=Mode.LIVE, mode=Mode.RESEARCH)
+
+    rebuilt = RiskKernel.from_events(
+        events, InMemoryKernelLedgerWriter(), mode_machine=machine
+    )
+
+    assert rebuilt.mode is Mode.KILLED
+    assert rebuilt.mode_ceiling_effective is Mode.LIVE_MICRO
+
+
+def test_from_events_accepts_a_single_pass_iterator() -> None:
+    """`from_events` accepts a single-pass iterator, not just a list: it must
+    materialize `events` internally rather than consuming it twice (once for
+    the override fold, once for the kill fold) -- a naive double-consume of a
+    generator would silently fail open, never observing the kill on the
+    already-exhausted second pass.
+    """
+    events_iterator = iter(
+        [
+            KillEngaged(
+                component="riskkernel",
+                trigger="CLI",
+                kill_sequence=1,
+                epoch=_FIXED_EPOCH_S,
+            ),
+        ]
+    )
+
+    rebuilt = RiskKernel.from_events(events_iterator, InMemoryKernelLedgerWriter())
+
+    assert rebuilt.mode is Mode.KILLED
+
+
+# --- KillSwitch.from_events: re-arm authority survives a restart (issue #123) ---
+
+
+def test_kill_switch_from_events_restores_the_active_kill_sequence_for_rearm() -> None:
+    """A `KillSwitch` rebuilt via `from_events` over the same unrearmed kill
+    history that drives a shared `RiskKernel.from_events`'s mode machine to
+    `KILLED` restores the switch's own `active_kill_sequence`, so the
+    operator's exact restored-sequence re-arm phrase succeeds and clears the
+    shared machine.
+    """
+    events = [
+        KillEngaged(
+            component="riskkernel",
+            trigger="CLI",
+            kill_sequence=_RESTORED_KILL_SEQUENCE,
+            epoch=_FIXED_EPOCH_S,
+        ),
+    ]
+    shared_machine = ModeStateMachine(mode_ceiling=Mode.LIVE, mode=Mode.RESEARCH)
+    writer = InMemoryKernelLedgerWriter()
+    RiskKernel.from_events(events, writer, mode_machine=shared_machine)
+    assert shared_machine.mode is Mode.KILLED
+    switch = KillSwitch.from_events(
+        events, shared_machine, writer, _FakeAlertSink(), clock=lambda: _FIXED_EPOCH_S
+    )
+
+    switch.rearm(switch.expected_rearm_phrase(_RESTORED_KILL_SEQUENCE))
+
+    assert shared_machine.mode == Mode.PAUSED
+    rearmed_events = [
+        event for event in writer.events if event.event_type == "KillReArmed"
+    ]
+    assert len(rearmed_events) == 1
+    assert rearmed_events[0].payload["kill_sequence"] == _RESTORED_KILL_SEQUENCE
+
+
+def test_rearm_after_restart_rejects_the_sequence_zero_phrase() -> None:
+    """A restored switch's `active_kill_sequence` is the ledgered sequence,
+    never a fresh 0: a phrase built for sequence 0 (the pre-restart default)
+    is rejected, the shared machine stays `KILLED`, and nothing new is
+    ledgered.
+    """
+    events = [
+        KillEngaged(
+            component="riskkernel",
+            trigger="CLI",
+            kill_sequence=_RESTORED_KILL_SEQUENCE,
+            epoch=_FIXED_EPOCH_S,
+        ),
+    ]
+    shared_machine = ModeStateMachine(mode_ceiling=Mode.LIVE, mode=Mode.RESEARCH)
+    writer = InMemoryKernelLedgerWriter()
+    RiskKernel.from_events(events, writer, mode_machine=shared_machine)
+    switch = KillSwitch.from_events(
+        events, shared_machine, writer, _FakeAlertSink(), clock=lambda: _FIXED_EPOCH_S
+    )
+    events_before_rearm_attempt = list(writer.events)
+
+    with pytest.raises(KillReArmError):
+        switch.rearm(switch.expected_rearm_phrase(0))
+
+    assert shared_machine.mode == Mode.KILLED
+    assert writer.events == events_before_rearm_attempt
+
+
+def test_kill_after_restart_increments_monotonically_from_the_restored_sequence() -> (
+    None
+):
+    """Over a net-re-armed history ending at the restored sequence (so the
+    machine is not `KILLED`), a switch rebuilt via `from_events` still
+    restores `active_kill_sequence` unconditionally -- even though nothing is
+    currently killed -- so its next `kill()` carries exactly
+    `restored_sequence + 1`, never resetting back to 1.
+    """
+    events = [
+        KillEngaged(
+            component="riskkernel",
+            trigger="CLI",
+            kill_sequence=_RESTORED_KILL_SEQUENCE,
+            epoch=_FIXED_EPOCH_S,
+        ),
+        KillReArmed(component="riskkernel", kill_sequence=_RESTORED_KILL_SEQUENCE),
+    ]
+    mode_machine = ModeStateMachine(mode_ceiling=Mode.LIVE, mode=Mode.PAUSED)
+    writer = InMemoryKernelLedgerWriter()
+    switch = KillSwitch.from_events(
+        events, mode_machine, writer, _FakeAlertSink(), clock=lambda: _FIXED_EPOCH_S
+    )
+
+    switch.kill(KillTrigger.CLI)
+
+    kill_events = [
+        event for event in writer.events if event.event_type == "KillEngaged"
+    ]
+    assert len(kill_events) == 1
+    assert kill_events[0].payload["kill_sequence"] == _RESTORED_KILL_SEQUENCE + 1
+
+
+def test_multi_cycle_history_ending_killed_rebuilds_end_to_end() -> None:
+    """A multi-cycle history that nets `KILLED` at a sequence above 1 rebuilds
+    correctly through *both* composed `from_events` methods over one shared
+    machine: the kernel comes back `KILLED`, the switch restores the latest
+    sequence so its exact re-arm phrase clears the machine, and the switch's
+    next kill after that re-arm increments monotonically -- never resetting.
+    """
+    events = [
+        KillEngaged(
+            component="riskkernel",
+            trigger="CLI",
+            kill_sequence=_EARLIER_KILL_SEQUENCE,
+            epoch=_FIXED_EPOCH_S,
+        ),
+        KillReArmed(component="riskkernel", kill_sequence=_EARLIER_KILL_SEQUENCE),
+        KillEngaged(
+            component="riskkernel",
+            trigger="AUTO_RECONCILIATION",
+            kill_sequence=_RESTORED_KILL_SEQUENCE,
+            epoch=_FIXED_EPOCH_S,
+        ),
+    ]
+    shared_machine = ModeStateMachine(mode_ceiling=Mode.LIVE, mode=Mode.RESEARCH)
+    writer = InMemoryKernelLedgerWriter()
+    kernel = RiskKernel.from_events(events, writer, mode_machine=shared_machine)
+    assert kernel.mode is Mode.KILLED
+    switch = KillSwitch.from_events(
+        events, shared_machine, writer, _FakeAlertSink(), clock=lambda: _FIXED_EPOCH_S
+    )
+
+    switch.rearm(switch.expected_rearm_phrase(_RESTORED_KILL_SEQUENCE))
+    assert shared_machine.mode is Mode.PAUSED
+
+    switch.kill(KillTrigger.CLI)
+
+    assert switch.active_kill_sequence == _RESTORED_KILL_SEQUENCE + 1
