@@ -14,8 +14,11 @@ appending one audit event to the ledger at every stage, plus a per-tick
 
 The approval seam is the load-bearing safety boundary: :class:`KernelApproval`
 composes the *real* ``RiskKernel.evaluate_intent`` with the *real*
-``ApprovalPipeline.approve``. Today that can never mint a token -- three SPEC
-S10.3 checks are still unconditional-veto stubs (blocked on #110) and the three
+``ApprovalPipeline.approve``. Today that can never mint a token -- the
+``jurisdiction_product_eligibility`` SPEC S10.3 check is still an
+unconditional-veto stub, the now-real ``exchange_status_ok`` /
+``pipeline_heartbeat_ok`` checks (issue #110) fail closed on the ``None`` exchange
+status and pipeline heartbeat this loop honestly supplies, and the three
 reconciliation checks fail closed on the ``verification=None`` this loop honestly
 supplies (no live exchange verification cycle runs in PAPER yet) -- so the real
 tick never fills. The fill leg is proven separately by driving the gateway with a
