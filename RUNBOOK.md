@@ -79,8 +79,12 @@ stage composes the real `RiskKernel.evaluate_intent` with the real
 Right now that seam can never mint an approval token, for two independent
 reasons:
 
-- Three SPEC S10.3 pre-trade checks are still unconditional-veto stubs,
-  blocked on issue #110.
+- One SPEC S10.3 pre-trade check (`jurisdiction_product_eligibility`) is still
+  an unconditional-veto stub.
+- `exchange_status_ok` and `pipeline_heartbeat_ok` are now real checks (issue
+  #110), but the loop honestly supplies no exchange-status feed and no
+  pipeline heartbeat (`exchange_status=None`, `pipeline_heartbeat_epoch_s=None`),
+  so both fail closed and veto today.
 - The reconciliation checks fail closed on `verification=None`, which is
   exactly what the loop honestly supplies today -- no live exchange
   verification cycle runs in PAPER yet.
@@ -90,8 +94,9 @@ selector decision, and an `IntentVetoed`) but routes nothing and fills
 nothing; `filled_centis` on every tick's outcome is `0`. Don't be surprised
 to see nothing but vetoes in `/decisions` or `selector_decisions.json` --
 that is the expected, honestly-ledgered state of the loop today. The first
-real, kernel-approved paper fill activates once issue #110 lands and a live
-verification cycle is wired into the loop.
+real, kernel-approved paper fill activates once the remaining stub is retired
+and live exchange-status, heartbeat, and verification feeds are wired into the
+loop in place of today's fail-closed `None`s.
 
 **Known limitation -- the kill switch does not stop the PAPER loop yet.**
 `windbreak kill --state-dir <dir>` and `windbreak rearm --state-dir <dir>` write
@@ -265,10 +270,12 @@ pass.
 
 ### Known limitations (summary)
 
-- The real Risk Kernel currently vetoes every intent (three SPEC S10.3 checks
-  are unconditional-veto stubs blocked on #110; reconciliation also fails
-  closed on the `verification=None` the loop supplies), so no PAPER tick
-  fills yet -- expect vetoes, not fills, in the ledger and dashboard.
+- The real Risk Kernel currently vetoes every intent (the
+  `jurisdiction_product_eligibility` check is still an unconditional-veto stub;
+  the now-real `exchange_status_ok`/`pipeline_heartbeat_ok` checks and the
+  reconciliation checks all fail closed on the `None` status/heartbeat/
+  verification the loop honestly supplies), so no PAPER tick fills yet --
+  expect vetoes, not fills, in the ledger and dashboard.
 - `windbreak kill`/`windbreak rearm` do not stop or gate the PAPER loop today
   (`kill_integration=None`); use process signals to stop the loop.
 - `windbreak run --process dashboard` boots the HTTP dashboard server directly
