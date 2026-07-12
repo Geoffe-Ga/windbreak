@@ -13,7 +13,10 @@ defends. This module governs how that floor moves:
       the floor *ratchets* upward automatically as equity makes fresh highs (a
       fixed ppm share of each new gain, applied with no delay), and fires an
       advisory profit-sweep alert once the gain since the last high-water mark
-      crosses a configured threshold.
+      crosses a configured threshold. Every fresh high-water crossing also
+      ledgers an ``EquityHighWaterMarkAdvanced`` fact carrying the new absolute
+      mark, so :meth:`from_events` can reconstruct the mark *exactly* rather
+      than inferring it from the ratchet.
 
 Every event is a plain, string-discriminated
 :class:`~windbreak.ledger.events.Event` (mirroring
@@ -59,12 +62,13 @@ _PAYLOAD_SCHEMA_VERSION = 1
 #: as twice this many hex characters, so 16 bytes is a 32-character nonce.
 _NONCE_BYTES = 16
 
-#: Event-type discriminators for the five events this module records.
+#: Event-type discriminators for the six events this module records.
 _FLOOR_RAISED_EVENT = "FloorRaised"
 _FLOOR_LOWER_REQUESTED_EVENT = "FloorLowerRequested"
 _FLOOR_LOWER_REFUSED_EVENT = "FloorLowerRefused"
 _FLOOR_LOWER_CONFIRMED_EVENT = "FloorLowerConfirmed"
 _FLOOR_RATCHET_APPLIED_EVENT = "FloorRatchetApplied"
+_EQUITY_HIGH_WATER_MARK_ADVANCED_EVENT = "EquityHighWaterMarkAdvanced"
 
 #: Refusal reasons recorded on a ``FloorLowerRefused`` event.
 _REFUSED_FORBIDDEN_ORIGIN = "forbidden_origin"
@@ -153,17 +157,23 @@ def _pending_from_payload(payload: dict[str, object]) -> PendingFloorLower:
 class FloorGovernance:
     """Governs raises, cool-off-gated lowerings, and the profit ratchet.
 
-    The current floor and any pending lowering are derived from -- and exactly
-    reconstructable via :meth:`from_events` from -- the events recorded through
-    the injected writer. The equity high-water mark is reconstructed only from
-    the ``FloorRatchetApplied`` events a crossing records, so a rebuild recovers
-    it exactly whenever every fresh crossing ratcheted (the ratchet is enabled
-    and each gain cleared one micro of increment); with the ratchet disabled
-    (``ratchet_ppm == 0``) or a sub-increment gain, a rebuilt mark can trail the
-    live one. The divergence is conservative-only -- the floor can move only
-    upward and the profit-sweep advisory is non-blocking -- so it can re-fire an
-    advisory or re-ratchet after a restart but never lowers protection.
-    Persisting the mark independently of the ratchet is tracked as a follow-up.
+    The current floor, the equity high-water mark, and any pending lowering are
+    all derived from -- and exactly reconstructable via :meth:`from_events`
+    from -- the events recorded through the injected writer. Every fresh
+    high-water crossing ledgers an ``EquityHighWaterMarkAdvanced`` event
+    carrying the new *absolute* mark, so replay reconstructs the mark exactly
+    from that event alone, fully decoupled from whether the ratchet fired. The
+    ``FloorRatchetApplied`` events drive only the floor on replay, never the
+    mark.
+
+    Backward-compatibility caveat: histories recorded *before* this fix
+    (issue #125) carry no ``EquityHighWaterMarkAdvanced`` events, so they
+    replay with a zero high-water mark -- a deliberately more conservative
+    fallback than the old ratchet-sum reconstruction. Because the floor moves
+    only upward and the profit-sweep advisory is non-blocking, a zeroed mark
+    can only re-fire that advisory or over-ratchet the floor upward on the next
+    crossing; it can never weaken protection. The ``max(replayed, ratchet_sum)``
+    hybrid was rejected to keep the mark fully decoupled from the ratchet.
     """
 
     def __init__(
@@ -224,10 +234,11 @@ class FloorGovernance:
         The floor and any still-live pending lowering are derived purely from
         ``events``: a lowering that was requested *and* confirmed before the
         replay is not resurrected as pending, and the original ``ready_at``
-        still gates any re-confirmation. The high-water mark is recovered from
-        the ``FloorRatchetApplied`` events only, so with the ratchet disabled or
-        a sub-increment gain it can trail the live mark (conservative-only; see
-        the class docstring).
+        still gates any re-confirmation. The high-water mark is recovered
+        *exactly* -- and independently of the ratchet -- by absolutely setting
+        it from each ``EquityHighWaterMarkAdvanced`` event's ``new_mark_micros``.
+        Pre-#125 histories carrying no such event replay with a zero mark; see
+        the class docstring for that conservative-only backward-compat caveat.
 
         Args:
             events: The event history to replay state from.
@@ -384,7 +395,9 @@ class FloorGovernance:
 
         A no-op unless ``equity`` is strictly above the current high-water mark;
         the ratchet never lowers the floor and never fires twice for the same
-        peak.
+        peak. Every fresh crossing records an ``EquityHighWaterMarkAdvanced``
+        event carrying the new absolute mark -- unconditionally, unlike the
+        ratchet -- so :meth:`from_events` can reconstruct the mark exactly.
 
         Args:
             equity: The observed worst-case equity, in micros.
@@ -394,6 +407,7 @@ class FloorGovernance:
         gain = equity - self._high_water_mark
         self._maybe_advise_profit_sweep(gain)
         self._maybe_ratchet(gain)
+        self._record_mark_advance(self._high_water_mark, equity)
         self._high_water_mark = equity
 
     def _reject_unless_confirmable(
@@ -490,24 +504,42 @@ class FloorGovernance:
             },
         )
 
-    def _absorb_replayed_event(self, event: Event) -> None:
-        """Fold one replayed event into the reconstructed floor/pending state.
+    def _record_mark_advance(
+        self, previous: MoneyMicros, new_mark: MoneyMicros
+    ) -> None:
+        """Record an ``EquityHighWaterMarkAdvanced`` event for a fresh crossing.
 
-        Unrecognized event types (including refusals, which never mutate state)
-        are ignored.
+        The mark is recorded absolutely (not as a delta) so replay can restore
+        it exactly regardless of whether the ratchet fired for this crossing.
+
+        Args:
+            previous: The high-water mark being superseded, in micros.
+            new_mark: The fresh, strictly-higher high-water mark, in micros.
+        """
+        self._record(
+            _EQUITY_HIGH_WATER_MARK_ADVANCED_EVENT,
+            {
+                "previous_mark_micros": previous.value,
+                "new_mark_micros": new_mark.value,
+            },
+        )
+
+    def _absorb_replayed_event(self, event: Event) -> None:
+        """Fold one replayed event into the floor/high-water/pending state.
+
+        ``FloorRatchetApplied`` drives only the floor; the high-water mark is
+        set absolutely from ``EquityHighWaterMarkAdvanced`` alone. Unrecognized
+        event types (including refusals, which never mutate state) are ignored.
 
         Args:
             event: The recorded event to replay.
         """
         payload = event.payload
         event_type = event.event_type
-        if event_type == _FLOOR_RAISED_EVENT:
+        if event_type in (_FLOOR_RAISED_EVENT, _FLOOR_RATCHET_APPLIED_EVENT):
             self._floor = _money(payload, "new_floor_micros")
-        elif event_type == _FLOOR_RATCHET_APPLIED_EVENT:
-            self._floor = _money(payload, "new_floor_micros")
-            self._high_water_mark = self._high_water_mark + _money(
-                payload, "gain_micros"
-            )
+        elif event_type == _EQUITY_HIGH_WATER_MARK_ADVANCED_EVENT:
+            self._high_water_mark = _money(payload, "new_mark_micros")
         elif event_type == _FLOOR_LOWER_REQUESTED_EVENT:
             self._pending = _pending_from_payload(payload)
         elif event_type == _FLOOR_LOWER_CONFIRMED_EVENT:
