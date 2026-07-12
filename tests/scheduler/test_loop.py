@@ -17,15 +17,24 @@ invention for the per-stage seams, kept small on purpose).
 The single most load-bearing fact this module proves (issue #48's own
 "Load-bearing constraint"): composing the *real*, unmodified
 `RiskKernel.evaluate_intent` with the *real* `ApprovalPipeline.approve` via
-`KernelApproval` can never mint a token today, because three SPEC S10.3
-checks are still unconditional-veto stubs (`windbreak/riskkernel/checks.py`)
-and the three reconciliation checks fail closed on a `None` verification
-snapshot. `test_kernel_approval_vetoes_before_minting_any_token` pins the
-*exact* six veto reasons this yields, mirroring
+`KernelApproval` can never mint a token today, because the
+`jurisdiction_product_eligibility` SPEC S10.3 check is still an
+unconditional-veto stub (`windbreak/riskkernel/checks.py`) and the three
+reconciliation checks fail closed on a `None` verification snapshot.
+`test_kernel_approval_vetoes_before_minting_any_token` pins the *exact* four
+veto reasons this yields, mirroring
 `tests/riskkernel/test_checks.py::test_default_checks_over_permissive_context_leaves_only_stubs_vetoing`
 but with `verification=None` (the honest PAPER-loop wiring: no live exchange
 verification cycle runs yet) instead of that test's permissive CLEAN
-snapshot, so the three reconciliation checks join the three stubs.
+snapshot, so the three reconciliation checks join the one remaining stub.
+Issue #110 promoted `exchange_status_ok` / `pipeline_heartbeat_ok` from stub
+to real logic; both pass here because `tests.riskkernel.conftest.make_context`'s
+defaults (a fresh, `OPEN` `exchange_status` and a fresh
+`pipeline_heartbeat_epoch_s`) are deliberately permissive, exactly like every
+other real check's default -- it is `build_evaluation_context`'s *own*,
+separately-pinned fail-closed PAPER wiring
+(`test_build_evaluation_context_fails_closed_on_exchange_status_and_heartbeat`)
+that supplies `None` for both in production.
 """
 
 from __future__ import annotations
@@ -42,19 +51,19 @@ from tests.scheduler.conftest import (
 from windbreak.numeric.types import MoneyMicros
 from windbreak.riskkernel.modes import Mode
 
-#: The six veto reasons a PAPER-mode evaluation with `verification=None` must
+#: The four veto reasons a PAPER-mode evaluation with `verification=None` must
 #: produce today, in the exact SPEC S10.3 check order
 #: (`windbreak/riskkernel/checks.py::_SPEC_10_3_CHECK_NAMES`): the
 #: `jurisdiction_product_eligibility` stub (position 2) fires before the three
 #: reconciliation checks (positions 5-7, each failing closed on the missing
-#: verification snapshot), and the two `#110` stubs fire last (positions 21-22).
+#: verification snapshot). `exchange_status_ok` / `pipeline_heartbeat_ok`
+#: (positions 21-22, issue #110) are real checks now and pass here, since
+#: `tests.riskkernel.conftest.make_context`'s defaults are permissive for both.
 _EXPECTED_VETO_REASONS = (
     "awaiting NormalizedMarket metadata",
     "balance verification stale or missing",
     "position verification stale or missing",
     "open-order verification stale or missing",
-    "blocked on #110 (exchange status feed)",
-    "blocked on #110 (pipeline heartbeat)",
 )
 
 
@@ -66,9 +75,9 @@ def test_kernel_approval_vetoes_before_minting_any_token() -> None:
 
     Composes the real `RiskKernel.evaluate_intent` (for the ledgered audit
     event) with the real `ApprovalPipeline.approve` (for the reserve-and-issue
-    path), over an otherwise fully-permissive context (every one of the 21
+    path), over an otherwise fully-permissive context (every one of the 23
     real SPEC S10.3 checks passes -- `tests.riskkernel.conftest.make_context`'s
-    documented guarantee) except `verification=None`. Exactly the six known
+    documented guarantee) except `verification=None`. Exactly the four known
     reasons veto; the pipeline's `approve` is never reached far enough to
     reserve capital or issue a token.
     """
@@ -125,11 +134,12 @@ def test_kernel_approval_mints_a_token_when_every_check_passes() -> None:
     """Given a context where every one of the 24 checks passes, a token mints.
 
     Proves `KernelApproval` is not *structurally* incapable of approving --
-    only today's stub/verification wiring blocks it -- by stubbing out the
-    three hard-veto checks and supplying a permissive `VerificationSnapshot`
-    (mirroring `tests.riskkernel.conftest`'s own default), so this test does
-    not silently pass for the wrong reason (e.g. a `KernelApproval` that
-    always vetoes).
+    only today's stub/verification wiring blocks it -- by excluding the one
+    remaining hard-veto stub (plus, defensively, the two former #110 stubs,
+    now real checks that already pass given `make_context`'s permissive
+    defaults) and supplying a permissive `VerificationSnapshot` (mirroring
+    `tests.riskkernel.conftest`'s own default), so this test does not silently
+    pass for the wrong reason (e.g. a `KernelApproval` that always vetoes).
     """
     import dataclasses
 
@@ -241,6 +251,32 @@ def test_build_evaluation_context_fails_closed_on_verification_none() -> None:
     )
 
     assert context.verification is None
+
+
+def test_build_evaluation_context_fails_closed_on_exchange_status_and_heartbeat() -> (
+    None
+):
+    """`build_evaluation_context` wires `market.exchange_status`,
+    `market.exchange_status_epoch_s`, and `pipeline_heartbeat_epoch_s` all
+    `None` (issue #110): the PAPER loop honestly has no live exchange-status
+    feed or pipeline-heartbeat source yet, so it must fail closed through
+    `exchange_status_ok` / `pipeline_heartbeat_ok` rather than fabricate a
+    permissive reading -- mirroring `verification=None`'s own fail-closed
+    contract above.
+    """
+    from windbreak.config.schema import WindbreakConfig
+    from windbreak.scheduler.loop import build_evaluation_context
+
+    context = build_evaluation_context(
+        WindbreakConfig(),
+        now_epoch_s=DEFAULT_NOW_EPOCH_S,
+        verification=None,
+        instrument_whitelist=frozenset({DEFAULT_MARKET_TICKER}),
+    )
+
+    assert context.market.exchange_status is None
+    assert context.market.exchange_status_epoch_s is None
+    assert context.pipeline_heartbeat_epoch_s is None
 
 
 def test_build_evaluation_context_stamps_now_epoch_s_verbatim() -> None:

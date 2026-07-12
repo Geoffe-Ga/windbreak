@@ -9,11 +9,13 @@ Three scenarios, per the issue's own test-writing brief:
 1. `test_real_kernel_tick_...` -- a full tick, wired with the *real*,
    unmodified `RiskKernel`/`ApprovalPipeline` (via `KernelApproval`), ledgers
    the full per-stage event sequence and never mints a token when the
-   selector emits an intent (issue #110's three hard-veto stubs plus the
-   `verification=None` reconciliation fail-closed). This test's hard,
+   selector emits an intent (the `jurisdiction_product_eligibility` hard-veto
+   stub, `exchange_status_ok` / `pipeline_heartbeat_ok` failing closed on
+   `build_evaluation_context`'s honest `None` PAPER wiring (issue #110), plus
+   the `verification=None` reconciliation fail-closed). This test's hard,
    unconditional assertions are the ledger *structure* (every stage event
    fires, the chain verifies, and two runs are content-identical); its
-   `IntentVetoed`-carries-the-stub-reasons assertion is *conditional* on the
+   `IntentVetoed`-carries-the-known-reasons assertion is *conditional* on the
    selector having emitted an intent at all. That condition is intentionally
    soft: whether the stock, unmodified forecast pipeline's fixed
    `research_cost_micros` (amortized against the selector's fixed 1-contract
@@ -68,12 +70,14 @@ if TYPE_CHECKING:
 
     from windbreak.config.schema import WindbreakConfig
 
-#: The two `#110` stub veto reasons that must appear whenever the real kernel
-#: vetoes an intent this loop's selector emits (see the module docstring's
-#: "Load-bearing constraint" discussion).
-_STUB_110_REASONS = (
-    "blocked on #110 (exchange status feed)",
-    "blocked on #110 (pipeline heartbeat)",
+#: The two real veto reasons `exchange_status_ok` / `pipeline_heartbeat_ok`
+#: (issue #110) must produce whenever the real kernel vetoes an intent this
+#: loop's selector emits, given `build_evaluation_context`'s honest `None`
+#: PAPER wiring for both fields (see the module docstring's "Load-bearing
+#: constraint" discussion).
+_EXCHANGE_STATUS_AND_HEARTBEAT_REASONS = (
+    "exchange status stale or missing",
+    "pipeline heartbeat stale or missing",
 )
 
 #: The always-present per-tick stage events, regardless of whether the
@@ -175,8 +179,8 @@ def test_real_kernel_tick_ledgers_full_stage_sequence(
             record for record in records if record.event_type == "IntentVetoed"
         )
         reasons = json.loads(vetoed_record.payload_json)["data"]["reasons"]
-        for stub_reason in _STUB_110_REASONS:
-            assert stub_reason in reasons
+        for expected_reason in _EXCHANGE_STATUS_AND_HEARTBEAT_REASONS:
+            assert expected_reason in reasons
 
 
 def test_two_real_kernel_ticks_are_content_deterministic(

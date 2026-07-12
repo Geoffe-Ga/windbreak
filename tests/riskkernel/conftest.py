@@ -26,6 +26,21 @@ dataclasses yet, so constructing `_DEFAULT_LIMITS` below fails collection with
 'require_human_ack_above_micros'` -- the expected Gate 1 RED state for issue
 #34, independent of and in addition to the `ModuleNotFoundError`s above.
 
+Issue #110 (promoting `exchange_status_ok` / `pipeline_heartbeat_ok` from
+stub to real logic) adds a new `ExchangeTradingStatus` enum (`OPEN` / `PAUSED`
+/ `CLOSED`; "unknown/missing" is modeled as `None`, never an enum member),
+two new `MarketView` fields (`exchange_status: ExchangeTradingStatus | None`,
+`exchange_status_epoch_s: int | None`), two new `RiskLimits` ttl fields
+(`exchange_status_ttl_seconds`, `pipeline_heartbeat_ttl_seconds`), and a
+seventh required `EvaluationContext` field,
+`pipeline_heartbeat_epoch_s: int | None` (no default, mirroring the
+`verification` fail-loud precedent above). None of these exist on the real,
+not-yet-updated `context.py` dataclasses yet, so both the `ExchangeTradingStatus`
+import and constructing `_DEFAULT_LIMITS` / `_DEFAULT_MARKET` below fail
+collection with `ImportError` / `TypeError: __init__() got an unexpected
+keyword argument 'exchange_status_ttl_seconds'` -- the expected Gate 1 RED
+state for issue #110, independent of and in addition to the errors above.
+
 Builder-placement choice: unlike the rest of this test suite (where each file
 duplicates its own small `make_intent`, e.g.
 `tests/riskkernel/test_process_isolation.py`'s `_make_intent`),
@@ -73,6 +88,7 @@ from windbreak.riskkernel.checks import OrderIntent
 from windbreak.riskkernel.context import (
     AccountState,
     EvaluationContext,
+    ExchangeTradingStatus,
     FeeBounds,
     MarketView,
     RiskLimits,
@@ -162,7 +178,11 @@ _DEFAULT_VERIFICATION_TTL_SECONDS = 3_600
 #: check's verdict. `require_human_ack_above_micros=None` (issue #34) means
 #: "no threshold configured" -- the permissive default, so `human_ack_satisfied`
 #: approves by default (a `None` threshold never requires an ack) unless a test
-#: deliberately configures one.
+#: deliberately configures one. `exchange_status_ttl_seconds` /
+#: `pipeline_heartbeat_ttl_seconds` (issue #110) match the other freshness
+#: ttls, so `exchange_status_ok` / `pipeline_heartbeat_ok` pass by default
+#: given `_DEFAULT_MARKET`'s fresh `exchange_status_epoch_s` and
+#: `make_context`'s fresh `pipeline_heartbeat_epoch_s` default.
 _DEFAULT_LIMITS = RiskLimits(
     floor=MoneyMicros(0),
     instrument_whitelist=frozenset({DEFAULT_MARKET_TICKER}),
@@ -184,6 +204,8 @@ _DEFAULT_LIMITS = RiskLimits(
     rounding_buffer=MoneyMicros(0),
     verification_ttl_seconds=_DEFAULT_VERIFICATION_TTL_SECONDS,
     require_human_ack_above_micros=None,
+    exchange_status_ttl_seconds=3_600,
+    pipeline_heartbeat_ttl_seconds=3_600,
 )
 
 #: The permissive default `AccountState`: flat $1,000 equity, zero
@@ -208,13 +230,18 @@ _DEFAULT_ACCOUNT = AccountState(
 
 #: The permissive default `MarketView`: quote/forecast/clock all stamped at
 #: `DEFAULT_NOW_EPOCH_S` (zero age, zero skew) and ample visible depth, so
-#: freshness/skew/participation checks pass by default.
+#: freshness/skew/participation checks pass by default. `exchange_status`
+#: defaults to `ExchangeTradingStatus.OPEN` with a fresh
+#: `exchange_status_epoch_s` (issue #110), so `exchange_status_ok` passes by
+#: default too.
 _DEFAULT_MARKET = MarketView(
     quote_snapshot_epoch_s=DEFAULT_NOW_EPOCH_S,
     forecast_epoch_s=DEFAULT_NOW_EPOCH_S,
     visible_depth=ContractCentis(10_000_000),
     exchange_clock_epoch_s=DEFAULT_NOW_EPOCH_S,
     open_position=None,
+    exchange_status=ExchangeTradingStatus.OPEN,
+    exchange_status_epoch_s=DEFAULT_NOW_EPOCH_S,
 )
 
 #: The permissive default `FeeBounds`: both bounds present (zero), so
@@ -277,10 +304,13 @@ _FEES_FIELDS = frozenset(f.name for f in dataclasses.fields(FeeBounds))
 #: `_DEFAULT_VERIFICATION_SNAPSHOT`, a permissive CLEAN snapshot, so every
 #: pre-issue-#32 test keeps passing `balance_reconciliation` /
 #: `position_reconciliation` / `open_order_reconciliation` unless it
-#: deliberately overrides `verification`), and the issue #34
+#: deliberately overrides `verification`), the issue #34
 #: `acknowledged_intent_ids` set (defaulting to an empty `frozenset()`, mirroring
 #: `used_intent_ids`'s fail-loud-but-test-permissive treatment) for the
-#: `human_ack_satisfied` check.
+#: `human_ack_satisfied` check, and the issue #110
+#: `pipeline_heartbeat_epoch_s` field (defaulting to `DEFAULT_NOW_EPOCH_S`, a
+#: fresh reading, so `pipeline_heartbeat_ok` passes by default unless a test
+#: deliberately overrides it) for that same check.
 _CONTEXT_FIELDS = frozenset(
     {
         "mode",
@@ -289,6 +319,7 @@ _CONTEXT_FIELDS = frozenset(
         "used_idempotency_keys",
         "verification",
         "acknowledged_intent_ids",
+        "pipeline_heartbeat_epoch_s",
     }
 )
 
@@ -308,7 +339,8 @@ def make_context(**overrides: object) -> EvaluationContext:
         **overrides: Field name to value, for any field of `RiskLimits`,
             `AccountState`, `MarketView`, `FeeBounds`, or `EvaluationContext`
             itself (`mode`, `now_epoch_s`, `used_intent_ids`,
-            `used_idempotency_keys`, `verification`).
+            `used_idempotency_keys`, `verification`, `acknowledged_intent_ids`,
+            `pipeline_heartbeat_epoch_s`).
 
     Returns:
         A fully populated `EvaluationContext`.
@@ -350,12 +382,18 @@ def make_context(**overrides: object) -> EvaluationContext:
     used_idempotency_keys = overrides.get("used_idempotency_keys", frozenset())
     verification = overrides.get("verification", _DEFAULT_VERIFICATION_SNAPSHOT)
     acknowledged_intent_ids = overrides.get("acknowledged_intent_ids", frozenset())
+    pipeline_heartbeat_epoch_s = overrides.get(
+        "pipeline_heartbeat_epoch_s", DEFAULT_NOW_EPOCH_S
+    )
     assert isinstance(mode, Mode)
     assert isinstance(now_epoch_s, int)
     assert isinstance(used_intent_ids, frozenset)
     assert isinstance(used_idempotency_keys, frozenset)
     assert verification is None or isinstance(verification, VerificationSnapshot)
     assert isinstance(acknowledged_intent_ids, frozenset)
+    assert pipeline_heartbeat_epoch_s is None or isinstance(
+        pipeline_heartbeat_epoch_s, int
+    )
     return EvaluationContext(
         mode=mode,
         limits=limits,
@@ -367,4 +405,5 @@ def make_context(**overrides: object) -> EvaluationContext:
         used_idempotency_keys=used_idempotency_keys,
         verification=verification,
         acknowledged_intent_ids=acknowledged_intent_ids,
+        pipeline_heartbeat_epoch_s=pipeline_heartbeat_epoch_s,
     )

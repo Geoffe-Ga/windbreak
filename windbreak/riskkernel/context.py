@@ -20,6 +20,7 @@ that depends on a ``None`` field fails closed (vetoes) rather than guessing.
 
 from __future__ import annotations
 
+import enum
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -27,6 +28,31 @@ if TYPE_CHECKING:
     from windbreak.numeric.types import ContractCentis, MoneyMicros, PricePips
     from windbreak.riskkernel.modes import Mode
     from windbreak.riskkernel.verification import VerificationSnapshot
+
+
+class ExchangeTradingStatus(enum.Enum):
+    """The exchange's trading status, as the kernel's ``exchange_status_ok`` reads it.
+
+    This mirrors 1:1 the connector's
+    :attr:`windbreak.connector.models.ExchangeStatus.status`
+    ``Literal["open", "paused", "closed"]`` domain, but is deliberately **not**
+    imported from the connector: keeping the kernel's own enum preserves the
+    SPEC S5 Process-B trust boundary (the kernel context never imports connector
+    types) and keeps this context module all-int-epoch, free of any ``datetime``
+    the connector models carry. "Unknown" or "missing" is modeled as ``None`` on
+    :class:`MarketView` -- never as an enum member here -- so the absence of a
+    status can only ever fail closed (veto), never masquerade as a tradable
+    state. Only :attr:`OPEN` is tradable.
+
+    Attributes:
+        OPEN: The exchange is open for trading -- the sole tradable status.
+        PAUSED: The exchange has paused trading; not tradable.
+        CLOSED: The exchange is closed; not tradable.
+    """
+
+    OPEN = "open"
+    PAUSED = "paused"
+    CLOSED = "closed"
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +138,12 @@ class MarketView:
             ``None``.
         open_position: The current open position, in contract-centis, or
             ``None`` if flat / unknown.
+        exchange_status: The exchange's trading status, or ``None`` when the
+            datum is unavailable; ``exchange_status_ok`` fails closed on the
+            ``None`` (an unknown status can never read as tradable). Issue #110.
+        exchange_status_epoch_s: Epoch second the exchange status was observed,
+            or ``None``; ``exchange_status_ok`` fails closed when it is ``None``
+            or older than ``exchange_status_ttl_seconds``. Issue #110.
     """
 
     quote_snapshot_epoch_s: int | None
@@ -119,6 +151,8 @@ class MarketView:
     visible_depth: ContractCentis | None
     exchange_clock_epoch_s: int | None
     open_position: ContractCentis | None
+    exchange_status: ExchangeTradingStatus | None
+    exchange_status_epoch_s: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,6 +191,12 @@ class RiskLimits:
             which an order needs a human acknowledgement, in micros, or ``None``
             when no human-ack gate is configured (the permissive default, under
             which ``human_ack_satisfied`` always approves). Issue #34.
+        exchange_status_ttl_seconds: Max admissible age of the exchange-status
+            feed, in seconds, before ``exchange_status_ok`` treats it as stale
+            and fails closed (issue #110).
+        pipeline_heartbeat_ttl_seconds: Max admissible age of the pipeline
+            heartbeat, in seconds, before ``pipeline_heartbeat_ok`` treats it as
+            stale and fails closed (issue #110).
     """
 
     floor: MoneyMicros
@@ -179,6 +219,8 @@ class RiskLimits:
     rounding_buffer: MoneyMicros
     verification_ttl_seconds: int
     require_human_ack_above_micros: MoneyMicros | None
+    exchange_status_ttl_seconds: int
+    pipeline_heartbeat_ttl_seconds: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,6 +252,11 @@ class EvaluationContext:
             acknowledgement, for the ``human_ack_satisfied`` check (issue #34).
             Required with no production default: a forgotten wiring must fail
             loudly, never open.
+        pipeline_heartbeat_epoch_s: The last pipeline liveness beat, in epoch
+            seconds, or ``None``, for the ``pipeline_heartbeat_ok`` check
+            (issue #110). Required with no production default so a forgotten
+            wiring fails loudly (the check fails closed on ``None``), never open
+            -- the SPEC threat T5 dead-man's switch.
     """
 
     mode: Mode
@@ -222,3 +269,4 @@ class EvaluationContext:
     used_idempotency_keys: frozenset[str]
     verification: VerificationSnapshot | None
     acknowledged_intent_ids: frozenset[str]
+    pipeline_heartbeat_epoch_s: int | None
