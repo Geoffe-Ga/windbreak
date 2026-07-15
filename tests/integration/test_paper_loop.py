@@ -39,7 +39,18 @@ Three scenarios, per the issue's own test-writing brief:
    wiring `build_paper_deps` assembles -- not a production bypass, since the
    real Gateway still verifies the token's signature and the real exchange
    still fills the order.
-4. `test_tracer_invariant_research_ceiling_ledgers_only_config_loaded` -- with
+4. `test_run_single_tick_weekly_report_wires_live_forecast`
+   (issue #188, RED -- today `run_single_tick` still calls
+   `render_weekly_report(today=report_date, evaluation=None, costs=None)`
+   verbatim, so this test fails with an `AssertionError`: the on-disk report
+   it writes still shows the bare `No data yet.` placeholder under both new
+   sections, never the tick's own `forecast_id` or cost total) --
+   `run_single_tick` must fold the *real* ledger (via
+   `windbreak.scheduler.weekly_data.weekly_report_body`) into the weekly
+   report it writes instead: the on-disk report's `## Evaluation` section
+   must name the tick's own `forecast_id`, and the `## Cost meter` section's
+   total must equal that forecast's ledgered `research_cost_micros`.
+5. `test_tracer_invariant_research_ceiling_ledgers_only_config_loaded` -- with
    `mode_ceiling: research` (even with every PAPER flag supplied), `windbreak
    run` never wires the PAPER loop: the ledger at `--ledger-path` holds
    exactly one `ConfigLoaded` record (issue #74's unconditional
@@ -217,6 +228,67 @@ def test_two_real_kernel_ticks_are_content_deterministic(
     pairs_a = read_event_type_payload_pairs(deps_a.store.read_all())
     pairs_b = read_event_type_payload_pairs(deps_b.store.read_all())
     assert pairs_a == pairs_b
+
+
+#: `windbreak.forecast.pipeline`'s private `_RESEARCH_COST_MICROS` stub cost
+#: for every forecast the offline pipeline produces (triage-only, full, or
+#: abstained alike) -- mirrored locally rather than imported, matching
+#: `tests/forecast/test_budget.py::_FULL_RUN_RESEARCH_COST_MICROS`'s own
+#: established convention for pinning this private constant's value.
+_EXPECTED_RESEARCH_COST_MICROS = 3_000_000
+
+
+def test_run_single_tick_weekly_report_wires_live_forecast(
+    books_dir: Path,
+    cassette_path: Path,
+    report_dir: Path,
+    paper_config: WindbreakConfig,
+    research_tools_factory,
+    tmp_path: Path,
+) -> None:
+    """The on-disk weekly report `run_single_tick` writes carries the tick's
+    own forecast under the Evaluation section and a Cost meter total equal
+    to that forecast's ledgered `research_cost_micros` (issue #188):
+    `run_single_tick` must fold the *real* ledger through
+    `windbreak.scheduler.weekly_data.weekly_report_body`, not the #55
+    `evaluation=None, costs=None` placeholder that still hardcodes the
+    report body today.
+    """
+    deps = _build_deps(
+        books_dir=books_dir,
+        cassette_path=cassette_path,
+        ledger_path=ledger_path_for(tmp_path),
+        report_dir=report_dir,
+        config=paper_config,
+        research_tools_factory=research_tools_factory,
+    )
+
+    from windbreak.scheduler.loop import run_single_tick
+
+    outcome = run_single_tick(deps, beat=1)
+
+    records = deps.store.read_all()
+    forecast_record = next(
+        record for record in records if record.event_type == "ForecastCreated"
+    )
+    forecast_payload = json.loads(forecast_record.payload_json)["data"]
+    assert forecast_payload["forecast_id"] == outcome.forecast_id
+    assert "research_cost_micros" in forecast_payload, (
+        "ForecastCreated payload is still the pre-#188 shape: "
+        f"{sorted(forecast_payload)}"
+    )
+    assert forecast_payload["research_cost_micros"] == _EXPECTED_RESEARCH_COST_MICROS
+    assert forecast_payload["market_price_baseline_pips"] > 0
+
+    report_files = list(report_dir.glob("weekly-*.md"))
+    assert len(report_files) == 1
+    body = report_files[0].read_text(encoding="utf-8")
+
+    evaluation_section = body.split("## Evaluation", 1)[1].split("## Cost meter", 1)[0]
+    assert outcome.forecast_id in evaluation_section
+
+    cost_section = body.split("## Cost meter", 1)[1]
+    assert str(_EXPECTED_RESEARCH_COST_MICROS) in cost_section
 
 
 def test_fill_leg_via_doubled_approval_seam_reaches_a_terminal_gateway_state(

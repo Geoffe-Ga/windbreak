@@ -269,6 +269,34 @@ def test_mean_brier_raises_value_error_on_empty_resolved_set() -> None:
         mean_brier(unresolved_only, window=_WINDOW)
 
 
+def test_empty_resolved_set_raises_the_dedicated_no_resolved_forecasts_error() -> None:
+    """The empty-resolved guard raises `NoResolvedForecastsError` specifically
+    (issue #188), not a bare `ValueError` -- so the registry's `gated_compute`
+    choke point can catch it by type (mirroring the existing
+    `EmptyCohortError` adapter) and map it to the `UNDEFINED` sentinel rather
+    than crashing the whole report. It must still subclass `ValueError` so
+    every pre-existing `pytest.raises(ValueError)` expectation (including the
+    one directly above) keeps passing unchanged.
+    """
+    from windbreak.evaluation.metrics import NoResolvedForecastsError, mean_brier
+
+    unresolved_only = EvaluationInputs(
+        forecasts=(
+            _forecast(
+                forecast_id="fc-unresolved",
+                market_ticker="MKT-UNRESOLVED",
+                probability_ppm=500_000,
+                baseline_pips=5_000,
+            ),
+        ),
+        resolutions={},
+    )
+
+    assert issubclass(NoResolvedForecastsError, ValueError)
+    with pytest.raises(NoResolvedForecastsError):
+        mean_brier(unresolved_only, window=_WINDOW)
+
+
 def test_mean_brier_excludes_forecasts_with_no_matching_resolution() -> None:
     """A forecast whose ticker has no entry in `resolutions` never enters the
     metric (S13.6): adding one alongside a resolved forecast leaves the

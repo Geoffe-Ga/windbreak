@@ -86,7 +86,15 @@ def test_screen_decision_recorded_populates_event_type_and_payload() -> None:
 
 
 def test_forecast_created_populates_event_type_and_payload() -> None:
-    """`ForecastCreated`'s constructor derives the Event contract."""
+    """`ForecastCreated`'s constructor derives the Event contract.
+
+    Issue #188 adds `research_cost_micros` and `market_price_baseline_pips`
+    (the two fields the weekly evaluation/cost-meter fold reads verbatim off
+    the ledgered payload) and bumps the event's own
+    `payload_schema_version` to `2` -- the first M0-family event whose schema
+    version is not the module-wide `1` -- so a v1-shaped row already on disk
+    is distinguishable from a v2 one without inspecting the payload's keys.
+    """
     from windbreak.ledger.events import ForecastCreated
 
     event = ForecastCreated(
@@ -96,6 +104,8 @@ def test_forecast_created_populates_event_type_and_payload() -> None:
         probability_ppm=520_000,
         eligible_for_live=False,
         abstention_reason="no_verified_citations",
+        research_cost_micros=3_000_000,
+        market_price_baseline_pips=4600,
     )
 
     assert event.event_type == "ForecastCreated"
@@ -105,7 +115,37 @@ def test_forecast_created_populates_event_type_and_payload() -> None:
         "probability_ppm": 520_000,
         "eligible_for_live": False,
         "abstention_reason": "no_verified_citations",
+        "research_cost_micros": 3_000_000,
+        "market_price_baseline_pips": 4600,
     }
+    assert event.payload_schema_version == 2
+
+
+def test_forecast_created_schema_version_two_sibling_stays_one() -> None:
+    """`ForecastCreated` alone is stamped `payload_schema_version == 2`; a
+    sibling PAPER-loop event (`EquitySampled`) stays on the module-wide `1`
+    (issue #188): `_derive_typed_event` gains an optional `schema_version`
+    override that only `ForecastCreated` supplies, so every other concrete
+    event -- unmodified -- keeps stamping the shared default.
+    """
+    from windbreak.ledger.events import EquitySampled, ForecastCreated
+
+    forecast_event = ForecastCreated(
+        component="scheduler",
+        forecast_id="fc-0001",
+        market_ticker="MKT-DEEP",
+        probability_ppm=520_000,
+        eligible_for_live=False,
+        abstention_reason=None,
+        research_cost_micros=1_000_000,
+        market_price_baseline_pips=4500,
+    )
+    sibling_event = EquitySampled(
+        component="scheduler", equity_micros=0, floor_micros=0, epoch_s=1
+    )
+
+    assert forecast_event.payload_schema_version == 2
+    assert sibling_event.payload_schema_version == 1
 
 
 def test_selector_decision_recorded_populates_event_type_and_payload() -> None:
@@ -232,7 +272,9 @@ def test_event_types_registry_round_trips_screen_decision_recorded() -> None:
 
 
 def test_event_types_registry_round_trips_forecast_created() -> None:
-    """A registry lookup plus persisted `data` reconstructs `ForecastCreated`."""
+    """A registry lookup plus persisted `data` reconstructs `ForecastCreated`,
+    including its two issue #188 cost/baseline fields.
+    """
     from windbreak.ledger.events import EVENT_TYPES, ForecastCreated
 
     original = ForecastCreated(
@@ -242,8 +284,12 @@ def test_event_types_registry_round_trips_forecast_created() -> None:
         probability_ppm=520_000,
         eligible_for_live=True,
         abstention_reason=None,
+        research_cost_micros=2_500_000,
+        market_price_baseline_pips=4700,
     )
     envelope = json.loads(original.envelope_json)
+
+    assert envelope["schema_version"] == 2
 
     rebuilt_cls = EVENT_TYPES[original.event_type]
     rebuilt = rebuilt_cls(component=envelope["component"], **envelope["data"])

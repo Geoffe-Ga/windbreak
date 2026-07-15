@@ -77,6 +77,20 @@ EDGE_BUCKET_EDGES_PPM = (
     1_000_000,
 )
 
+
+class NoResolvedForecastsError(ValueError):
+    """Raised when a metric is asked to score an empty resolved set (#188).
+
+    A dedicated :class:`ValueError` subclass for the "no resolved forecasts"
+    guard, so the registry's ``gated_compute`` choke point can catch it by type
+    (mirroring the existing
+    :class:`~windbreak.evaluation.cohorts.EmptyCohortError` adapter) and map it
+    to the ``UNDEFINED`` sentinel rather than crashing a whole-ledger fold that
+    has no resolutions yet. Subclassing :class:`ValueError` keeps every
+    pre-existing ``pytest.raises(ValueError)`` expectation passing unchanged.
+    """
+
+
 #: ``floor(ln(2) * 10**18)``: natural log of 2 scaled by 1e18 for the integer
 #: log-score. ``ln(2) = 0.693147180559945309417232...``; truncating at 18
 #: fractional decimal digits gives ``693147180559945309``. The residual error is
@@ -177,7 +191,9 @@ def _scored_pairs(
             continue
         pairs.append(_scored_pair(forecast, outcome))
     if not pairs:
-        raise ValueError("no resolved forecasts to score (empty resolved set)")
+        raise NoResolvedForecastsError(
+            "no resolved forecasts to score (empty resolved set)"
+        )
     return tuple(pairs)
 
 

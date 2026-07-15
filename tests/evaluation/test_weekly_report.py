@@ -24,19 +24,40 @@ Pins issue #55's weekly-report extension of the #48 stub
   `windbreak.reports.weekly.maybe_write_weekly`, passing the rendered body
   through; calling it twice within the same ISO week returns the same
   already-written file untouched.
+
+Issue #188 extracts the tail of `run_evaluation` (gate -> power -> cohorts ->
+abstentions -> tracks) into a new public
+`build_evaluation_report(inputs: EvaluationInputs) ->
+EvaluationReport`, so the scheduler's weekly fold can build a report straight
+from a whole-ledger fold's `EvaluationInputs` without going through the
+fixture-file loader. It must set `power=None` (catching the new
+`windbreak.evaluation.metrics.NoResolvedForecastsError`) when every forecast
+is unresolved, and `_render_cost_meter` gains a `total_research_cost_micros`
+line plus the three denominator counts, so a real (if still pre-resolution)
+`CostMeter` renders observably differently from the bare `costs=None`
+fallback even when every per-unit `MoneyMicros` field is `n/a`.
 """
 
 from __future__ import annotations
 
+import json
 from datetime import date
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from windbreak.evaluation.registry import Track
 from windbreak.evaluation.report import EvaluationReport, TrackReport
 from windbreak.numeric.types import MoneyMicros
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from collections.abc import Mapping
+
+#: The epic-wide known-answer fixture shared by issues #49-#55, reused here
+#: (issue #188) to pin `build_evaluation_report`'s byte-identical extraction
+#: from `run_evaluation`'s tail.
+_SYNTHETIC_FIXTURE = (
+    Path(__file__).resolve().parent / "fixtures" / "synthetic_known_answer.json"
+)
 
 
 def _empty_evaluation_report() -> EvaluationReport:
@@ -231,3 +252,242 @@ def test_generate_weekly_report_writes_a_new_file_the_following_iso_week(
     assert first != second
     assert first.exists()
     assert second.exists()
+
+
+# ---------------------------------------------------------------------------
+# 4. build_evaluation_report: extracted from run_evaluation's tail (issue #188).
+# ---------------------------------------------------------------------------
+
+
+def _unresolved_inputs(count: int) -> object:
+    """Build `EvaluationInputs` carrying `count` forecasts, none resolved.
+
+    Args:
+        count: How many distinct, temporally-admissible-but-unresolved
+            forecasts to build.
+
+    Returns:
+        The typed `EvaluationInputs`, with an empty `resolutions` mapping and
+        a `TemporalContext` that admits every forecast past the deployment
+        gate (so each is rejected for `UNRESOLVED`, not `PRE_DEPLOYMENT`).
+    """
+    from windbreak.evaluation.registry import EvaluationInputs, FixtureForecast
+    from windbreak.evaluation.temporal import TemporalContext
+    from windbreak.numeric.types import ProbabilityPpm
+
+    forecasts = tuple(
+        FixtureForecast(
+            forecast_id=f"fc-{index}",
+            market_ticker=f"MKT-{index}",
+            probability_ppm=ProbabilityPpm(500_000),
+            eligible_for_live=True,
+            abstention_reason=None,
+            traded=False,
+            baseline_executable_price_pips=5_000,
+            created_sequence=index + 1,
+        )
+        for index in range(count)
+    )
+    return EvaluationInputs(
+        forecasts=forecasts,
+        resolutions={},
+        temporal=TemporalContext(deployment_sequence=0, resolution_sequences={}),
+    )
+
+
+def test_build_evaluation_report_over_unresolved_inputs_sets_power_none() -> None:
+    """`power` is `None` when every forecast is unresolved (issue #188): the
+    metrics-level `NoResolvedForecastsError` the bootstrap/power path raises
+    on an empty resolved set is caught here, exactly as the forecast-track
+    metrics' own `gated_compute` adapter catches it, rather than crashing
+    `build_evaluation_report` outright.
+    """
+    from windbreak.evaluation.report import build_evaluation_report
+
+    report = build_evaluation_report(_unresolved_inputs(3))
+
+    assert report.power is None
+
+
+def test_build_report_unresolved_ledgers_one_rejection_per_forecast() -> None:
+    """All N unresolved forecasts are ledgered as rejections, none silently
+    dropped.
+    """
+    from windbreak.evaluation.report import build_evaluation_report
+
+    report = build_evaluation_report(_unresolved_inputs(3))
+
+    assert len(report.rejections) == 3
+    assert {rejection.forecast_id for rejection in report.rejections} == {
+        "fc-0",
+        "fc-1",
+        "fc-2",
+    }
+
+
+def test_build_report_unresolved_forecast_track_all_undefined() -> None:
+    """Every forecast-track metric renders the `UNDEFINED` sentinel over an
+    all-unresolved fold, never a raised exception (issue #188's
+    `NoResolvedForecastsError` -> `UNDEFINED` adapter at the registry choke
+    point).
+    """
+    from windbreak.evaluation.cohorts import UNDEFINED
+    from windbreak.evaluation.registry import Track as RegistryTrack
+    from windbreak.evaluation.report import build_evaluation_report
+
+    report = build_evaluation_report(_unresolved_inputs(2))
+
+    forecast_track = next(
+        track for track in report.tracks if track.name == RegistryTrack.FORECAST.value
+    )
+    assert forecast_track.metrics, "expected at least one forecast-track metric"
+    for metric in forecast_track.metrics:
+        assert metric.value is UNDEFINED, f"{metric.name} = {metric.value!r}"
+
+
+def _inputs_from_fixture_payload(payload: Mapping[str, Any]) -> object:
+    """Build typed `EvaluationInputs` from the shared fixture, via public API
+    only (mirrors `run_evaluation`'s own internal, private loader) so this
+    test does not reach into `windbreak.evaluation.report`'s private helpers.
+
+    Args:
+        payload: The decoded known-answer fixture payload.
+
+    Returns:
+        The typed `EvaluationInputs`, including the fixture's temporal
+        context.
+    """
+    from windbreak.evaluation.registry import EvaluationInputs, FixtureForecast
+    from windbreak.evaluation.resolution import (
+        resolutions_from_fixture,
+        settlement_events_from_fixture,
+    )
+    from windbreak.evaluation.temporal import (
+        TemporalContext,
+        deployment_sequence_from_fixture,
+        resolution_sequences_from_events,
+    )
+    from windbreak.numeric.types import ProbabilityPpm
+
+    forecasts = tuple(
+        FixtureForecast(
+            forecast_id=entry["forecast_id"],
+            market_ticker=entry["market_ticker"],
+            probability_ppm=ProbabilityPpm(entry["probability_ppm"]),
+            eligible_for_live=entry["eligible_for_live"],
+            abstention_reason=entry["abstention_reason"],
+            traded=entry["traded"],
+            baseline_executable_price_pips=entry["baseline_executable_price_pips"],
+            correlation_group_id=entry.get("correlation_group_id"),
+            created_sequence=entry.get("created_sequence"),
+        )
+        for entry in payload["forecasts"]
+    )
+    resolutions = resolutions_from_fixture(payload)
+    resolution_sequences = resolution_sequences_from_events(
+        settlement_events_from_fixture(payload)
+    )
+    deployment_sequence = deployment_sequence_from_fixture(payload)
+    temporal = TemporalContext(
+        deployment_sequence=deployment_sequence,
+        resolution_sequences=resolution_sequences,
+    )
+    return EvaluationInputs(
+        forecasts=forecasts, resolutions=resolutions, temporal=temporal
+    )
+
+
+def test_build_report_matches_run_evaluation_over_fixture() -> None:
+    """`build_evaluation_report`, fed the identical typed inputs `run_evaluation`
+    itself builds from the shared known-answer fixture, renders byte-for-byte
+    the same report text (issue #188): extracting the function from
+    `run_evaluation`'s tail must change structure, never content.
+    """
+    from windbreak.evaluation.report import build_evaluation_report, run_evaluation
+
+    payload = json.loads(_SYNTHETIC_FIXTURE.read_text(encoding="utf-8"))
+    inputs = _inputs_from_fixture_payload(payload)
+
+    direct_report = build_evaluation_report(inputs)
+    loaded_report = run_evaluation(fixture_path=_SYNTHETIC_FIXTURE)
+
+    assert direct_report.render_text() == loaded_report.render_text()
+
+
+# ---------------------------------------------------------------------------
+# 5. _render_cost_meter: total + counts make a wired meter observably
+#    different from `costs=None`, even when every per-unit field is `n/a`
+#    (issue #188).
+# ---------------------------------------------------------------------------
+
+
+def _zero_denominator_cost_meter() -> object:
+    """Build a `CostMeter` with a non-zero total but every count at `0`.
+
+    Returns:
+        A `CostMeter` whose three per-unit `MoneyMicros` fields are all
+        `None` (rendering `n/a`) -- exactly what
+        `windbreak.evaluation.costs.aggregate_research_costs` returns for a
+        whole-ledger fold before any market has resolved or any trade has
+        been taken -- while `total_research_cost_micros` is a distinct,
+        non-zero, greppable value.
+    """
+    from windbreak.evaluation.costs import CostMeter
+
+    return CostMeter(
+        total_research_cost_micros=4_200_007,
+        resolved_forecast_count=0,
+        profitable_trade_count=0,
+        trade_count=0,
+        cost_per_resolved_forecast_micros=None,
+        cost_per_profitable_trade_micros=None,
+        cost_adjusted_expectancy_micros=None,
+    )
+
+
+def test_cost_meter_prints_total_when_all_per_unit_na() -> None:
+    """The Cost meter section prints `total_research_cost_micros` even when
+    every per-unit field is `n/a` -- otherwise a real, wired-but-pre-resolution
+    meter would render byte-identically to the three bare `n/a` lines a
+    meter with genuinely zero research spend would also produce, losing the
+    one piece of information (total spend already incurred) this state
+    actually carries.
+    """
+    from windbreak.evaluation.report import render_weekly_report
+
+    costs = _zero_denominator_cost_meter()
+    today = date(2024, 3, 4)
+
+    body = render_weekly_report(today=today, evaluation=None, costs=costs)
+    cost_section = body.split("## Cost meter", 1)[1]
+
+    assert str(costs.total_research_cost_micros) in cost_section
+    assert cost_section.count("n/a") == 3
+
+
+def test_render_weekly_report_cost_meter_prints_the_three_denominator_counts() -> None:
+    """`resolved_forecast_count`, `profitable_trade_count`, and `trade_count`
+    each render as text in the Cost meter section, not just the three
+    per-unit `MoneyMicros` fields.
+    """
+    from windbreak.evaluation.costs import CostMeter
+    from windbreak.evaluation.report import render_weekly_report
+
+    costs = CostMeter(
+        total_research_cost_micros=9_000_003,
+        resolved_forecast_count=601,
+        profitable_trade_count=402,
+        trade_count=1103,
+        cost_per_resolved_forecast_micros=MoneyMicros(1_500_000),
+        cost_per_profitable_trade_micros=MoneyMicros(2_250_000),
+        cost_adjusted_expectancy_micros=MoneyMicros(300_000),
+    )
+    today = date(2024, 3, 4)
+
+    body = render_weekly_report(today=today, evaluation=None, costs=costs)
+    cost_section = body.split("## Cost meter", 1)[1]
+
+    assert "601" in cost_section
+    assert "402" in cost_section
+    assert "1103" in cost_section
+    assert "9000003" in cost_section
