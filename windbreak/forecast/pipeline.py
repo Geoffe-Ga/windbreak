@@ -35,9 +35,14 @@ from windbreak.forecast.ensemble import aggregate_votes
 from windbreak.forecast.providers import (
     DEFAULT_VOTE_ENSEMBLE,
     FixtureVoteProvider,
-    ProviderResponseRejectedError,
-    ProviderVersionDriftError,
 )
+from windbreak.forecast.providers.base import (
+    ProviderHTTPError,
+    ProviderRateLimitedError,
+    ProviderTimeoutError,
+    ProviderVoteError,
+)
+from windbreak.forecast.providers.retry import is_retryable_status
 from windbreak.forecast.pubdate import extract_publication_date
 from windbreak.forecast.records import (
     Citation,
@@ -112,6 +117,21 @@ ABSTENTION_NO_VERIFIED_CITATIONS: Final = "no_verified_citations"
 #: response-side injection screen (SPEC S8.5), leaving nothing to aggregate.
 ABSTENTION_ALL_VOTES_DISCARDED: Final = "all_votes_discarded"
 
+#: Abstention reason stamped when at least one vote survived but the surviving
+#: count falls below the required ensemble quorum (``min_ensemble_votes``), so
+#: aggregating over too few members would be less trustworthy than abstaining.
+ABSTENTION_ENSEMBLE_QUORUM_NOT_MET: Final = "ensemble_quorum_not_met"
+
+#: Abstention reason stamped when zero votes survived *and* every discard was a
+#: transport-class fault (timeout / rate-limit / retryable HTTP status): no
+#: provider could be reached at all, distinct from providers that responded but
+#: were screen-rejected (:data:`ABSTENTION_ALL_VOTES_DISCARDED`).
+ABSTENTION_PROVIDER_UNAVAILABLE: Final = "provider_unavailable"
+
+#: The default minimum surviving ensemble votes a full record needs; below this
+#: the run abstains with :data:`ABSTENTION_ENSEMBLE_QUORUM_NOT_MET`.
+DEFAULT_MIN_ENSEMBLE_VOTES: Final = 2
+
 #: Event type ledgered when one model vote is discarded as injection-tainted.
 FORECAST_OUTPUT_DISCARDED_EVENT: Final = "FORECAST_OUTPUT_DISCARDED"
 
@@ -141,15 +161,43 @@ _ABSTENTION_RATIONALE_NO_VERIFIED_CITATIONS_MD: Final = (
 )
 
 #: Deterministic rationale stamped when citations *were* verified but every
-#: ensemble vote was discarded by the response-side injection screen (SPEC
-#: S8.5). This path must never borrow the no-verified-citations rationale: it
-#: would misreport why the engine abstained in the exact scenario S8.5 adds.
+#: ensemble vote was rejected or discarded for a non-transport reason. This is a
+#: catch-all bucket: the response-side injection screen (SPEC S8.5),
+#: forecaster-version drift, a cost overrun, a malformed response, or a
+#: non-retryable provider HTTP status (e.g. 4xx) can all land here, so the prose
+#: must name the whole set rather than claim the injection screen alone. It must
+#: never borrow the no-verified-citations rationale: that would misreport why the
+#: engine abstained in the exact scenario S8.5 adds.
 _ABSTENTION_RATIONALE_ALL_VOTES_DISCARDED_MD: Final = (
     "## Abstained forecast\n\n"
     "The full pipeline ran and citations were independently verified, but "
-    "every ensemble vote was discarded by the response-side injection screen, "
-    "leaving nothing to aggregate, so the engine abstained. This record is "
-    "live-ineligible.\n"
+    "every ensemble vote was rejected or discarded (response-side injection "
+    "screen, forecaster-version drift, cost overrun, or a non-retryable provider "
+    "error), leaving nothing to aggregate, so the engine abstained. This record "
+    "is live-ineligible.\n"
+)
+
+#: Deterministic rationale stamped when at least one vote survived but too few
+#: did to meet the required ensemble quorum. Truthful about the shortfall: some
+#: members survived, but fewer than the ensemble quorum required, so the engine
+#: abstained rather than trust an under-quorum aggregation.
+_ABSTENTION_RATIONALE_ENSEMBLE_QUORUM_NOT_MET_MD: Final = (
+    "## Abstained forecast\n\n"
+    "The full pipeline ran and citations were independently verified, but "
+    "fewer ensemble members survived the response-side screen than the required "
+    "ensemble quorum, so the engine abstained rather than aggregate over too "
+    "few votes. This record is live-ineligible.\n"
+)
+
+#: Deterministic rationale stamped when zero votes survived and every discard
+#: was a transport-class fault: no provider could be reached at all (distinct
+#: from providers that responded but were screen-rejected).
+_ABSTENTION_RATIONALE_PROVIDER_UNAVAILABLE_MD: Final = (
+    "## Abstained forecast\n\n"
+    "The full pipeline ran and citations were independently verified, but every "
+    "ensemble member failed with a transport-class fault (timeout, rate-limit, "
+    "or a retryable HTTP status), so no provider could be reached and the engine "
+    "abstained. This record is live-ineligible.\n"
 )
 
 #: Maps each abstention reason to its human-readable rationale, so the audit
@@ -157,6 +205,10 @@ _ABSTENTION_RATIONALE_ALL_VOTES_DISCARDED_MD: Final = (
 _ABSTENTION_RATIONALE_BY_REASON: Final[Mapping[str, str]] = {
     ABSTENTION_NO_VERIFIED_CITATIONS: _ABSTENTION_RATIONALE_NO_VERIFIED_CITATIONS_MD,
     ABSTENTION_ALL_VOTES_DISCARDED: _ABSTENTION_RATIONALE_ALL_VOTES_DISCARDED_MD,
+    ABSTENTION_ENSEMBLE_QUORUM_NOT_MET: (
+        _ABSTENTION_RATIONALE_ENSEMBLE_QUORUM_NOT_MET_MD
+    ),
+    ABSTENTION_PROVIDER_UNAVAILABLE: _ABSTENTION_RATIONALE_PROVIDER_UNAVAILABLE_MD,
 }
 
 
@@ -604,6 +656,60 @@ def _build_provider(
     return provider_factory(member)
 
 
+def _is_transport_failure(error: ProviderVoteError) -> bool:
+    """Return whether a discarded vote's failure means no provider was reached.
+
+    A discard is *transport-class* -- meaning the provider could not be reached
+    or answered only with a transient, retryable condition -- iff it is a
+    timeout, a rate-limit, or an HTTP error whose status
+    :func:`~windbreak.forecast.providers.retry.is_retryable_status` accepts
+    (``429`` or ``5xx``). This is the pipeline-classification twin of the retry
+    layer's :func:`~windbreak.forecast.providers.retry._is_retryable` predicate:
+    a *non-retryable* HTTP status (a ``4xx`` such as 400/403/404) means the
+    provider **was** reached and responded, so it is deliberately *not*
+    transport-class -- classifying it as such would stamp a zero-survivor run
+    ``provider_unavailable`` and ledger a rationale claiming "no provider could
+    be reached", which a 4xx response makes factually false. Every screen-side
+    rejection (malformed / version-drift / response-rejected) and every cost
+    overrun is likewise non-transport.
+
+    Args:
+        error: The caught, discarded provider-vote failure to classify.
+
+    Returns:
+        ``True`` iff ``error`` is a transport-class fault, else ``False``.
+    """
+    return isinstance(error, ProviderTimeoutError | ProviderRateLimitedError) or (
+        isinstance(error, ProviderHTTPError) and is_retryable_status(error.status_code)
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _VoteCollection:
+    """The outcome of driving every ensemble member's provider once.
+
+    Bundles the surviving forecasts with the aggregate cost and per-discard
+    transport classification of the *discarded* votes, so :func:`run_pipeline`
+    can both charge the failed spend and classify a zero/under-quorum-survivor
+    abstention -- while :func:`collect_model_votes` keeps its narrower,
+    forecasts-only contract.
+
+    Attributes:
+        forecasts: The surviving provider forecasts, in call order.
+        discarded_cost_micros: The summed ``cost_micros`` of every discarded
+            vote's failure, charged into the research budget even though those
+            votes never reach aggregation.
+        discard_transport_flags: Each discarded vote's
+            :func:`_is_transport_failure` result, in discard order, used to
+            distinguish a transport-only wipeout (no provider reached) from a
+            screen-side or non-retryable-HTTP one.
+    """
+
+    forecasts: tuple[ProviderForecast, ...]
+    discarded_cost_micros: int
+    discard_transport_flags: tuple[bool, ...]
+
+
 def _collect_provider_forecasts(
     market: NormalizedMarket,
     baseline: BaselineQuoteSnapshot,
@@ -613,21 +719,20 @@ def _collect_provider_forecasts(
     recorder: _DiscardRecorder | None,
     members: tuple[EnsembleMemberLike, ...],
     provider_factory: Callable[[EnsembleMemberLike], ForecastProvider] | None,
-) -> tuple[ProviderForecast, ...]:
-    """Drive each member's provider into a surviving-forecast tuple.
+) -> _VoteCollection:
+    """Drive each member's provider into a :class:`_VoteCollection`.
 
     One provider per member (see :func:`_build_provider`) produces one forecast;
-    a response the provider rejects
-    (:class:`~windbreak.forecast.providers.ProviderResponseRejectedError`) is
-    *discarded* -- never trusted, never retried -- and, when a recorder is wired,
-    ledgered with a fingerprint-only payload. A provider-reported forecaster-
-    version drift under the strict policy
-    (:class:`~windbreak.forecast.providers.ProviderVersionDriftError`) is treated
-    identically -- both errors expose ``failure_code`` and
-    ``response_fingerprint`` -- so one drifted vote is dropped and ledgered
-    exactly like a screened-out response rather than crashing the whole run
-    (#189). The result holds between zero and ``len(members)`` surviving
-    forecasts, in call order.
+    any per-vote failure crossing the seam
+    (:class:`~windbreak.forecast.providers.base.ProviderVoteError` -- a
+    screen-side rejection, a version drift, or a transport-class timeout/
+    rate-limit/HTTP/cost-overrun fault) is *discarded* rather than crashing the
+    whole run (#189, #193). A discarded vote is ledgered (when a recorder is
+    wired) with a fingerprint-only payload, its ``cost_micros`` accumulated for
+    the budget seam, and its :func:`_is_transport_failure` classification
+    collected so the caller can tell a transport wipeout (no provider reached)
+    from a screen-side or non-retryable-HTTP rejection. The result holds between
+    zero and ``len(members)`` surviving forecasts, in call order.
 
     Args:
         market: The market under forecast.
@@ -640,25 +745,34 @@ def _collect_provider_forecasts(
             default fixture provider.
 
     Returns:
-        The surviving provider forecasts, in call order.
+        The surviving forecasts plus the discarded votes' aggregate cost and
+        per-discard transport-class flags.
     """
     forecasts: list[ProviderForecast] = []
+    discarded_cost_micros = 0
+    discard_transport_flags: list[bool] = []
     for index, member in enumerate(members):
         provider = _build_provider(provider_factory, transport, member)
         try:
             forecast = provider.forecast(market, baseline, index, quotes)
-        except (ProviderResponseRejectedError, ProviderVersionDriftError) as rejected:
+        except ProviderVoteError as failed:
+            discarded_cost_micros += failed.cost_micros
+            discard_transport_flags.append(_is_transport_failure(failed))
             if recorder is not None:
                 recorder.record_discard(
                     market_ticker=market.ticker,
                     member=member,
                     vote_index=index,
-                    failure=rejected.failure_code,
-                    response_fingerprint=rejected.response_fingerprint,
+                    failure=failed.failure_code,
+                    response_fingerprint=failed.response_fingerprint,
                 )
             continue
         forecasts.append(forecast)
-    return tuple(forecasts)
+    return _VoteCollection(
+        forecasts=tuple(forecasts),
+        discarded_cost_micros=discarded_cost_micros,
+        discard_transport_flags=tuple(discard_transport_flags),
+    )
 
 
 def collect_model_votes(
@@ -693,7 +807,9 @@ def collect_model_votes(
     surviving vote's ``probability_ppm`` is parsed
     from its response (SPEC S6.3), not derived from the baseline, while its
     fingerprint records provider drift (T14). The returned tuple therefore holds
-    between zero and ``len(ensemble)`` votes.
+    between zero and ``len(ensemble)`` votes. This stage never charges the failed
+    votes' cost: the discarded spend is owned by :func:`run_pipeline`, which holds
+    the budget seam and charges it there.
 
     Args:
         market: The market under forecast.
@@ -721,7 +837,7 @@ def collect_model_votes(
     """
     recorder = _build_discard_recorder(ledger, created_at)
     members = _resolve_vote_ensemble(ensemble)
-    forecasts = _collect_provider_forecasts(
+    collection = _collect_provider_forecasts(
         market,
         baseline,
         transport=transport,
@@ -730,7 +846,7 @@ def collect_model_votes(
         members=members,
         provider_factory=provider_factory,
     )
-    return tuple(_build_model_vote(forecast) for forecast in forecasts)
+    return tuple(_build_model_vote(forecast) for forecast in collection.forecasts)
 
 
 def aggregate_median(votes: tuple[ModelVote, ...]) -> VoteAggregate:
@@ -983,6 +1099,54 @@ def _build_abstention_record(
     )
 
 
+def _all_transport_discards(flags: tuple[bool, ...]) -> bool:
+    """Return whether every discard was a transport-class fault (≥1 discard).
+
+    Args:
+        flags: Each discarded vote's :func:`_is_transport_failure` result, in
+            discard order.
+
+    Returns:
+        ``True`` iff at least one vote was discarded and every discard was
+        transport-class.
+    """
+    return bool(flags) and all(flags)
+
+
+def _vote_shortfall_reason(
+    vote_count: int,
+    min_ensemble_votes: int,
+    discard_transport_flags: tuple[bool, ...],
+) -> str | None:
+    """Classify a vote shortfall into its abstention reason, or ``None``.
+
+    The zero-survivor case splits by *why* every vote was lost: an all-transport
+    wipeout means no provider could be reached
+    (:data:`ABSTENTION_PROVIDER_UNAVAILABLE`), whereas any non-transport discard
+    in the mix -- a screen-side rejection *or* a non-retryable HTTP response,
+    where the provider was reached and answered -- keeps the pre-existing
+    :data:`ABSTENTION_ALL_VOTES_DISCARDED`. With survivors present but below
+    quorum, the run abstains :data:`ABSTENTION_ENSEMBLE_QUORUM_NOT_MET`; at or
+    above quorum there is no shortfall and the run proceeds to full aggregation.
+
+    Args:
+        vote_count: The number of surviving votes.
+        min_ensemble_votes: The minimum surviving votes a full record requires.
+        discard_transport_flags: Each discarded vote's
+            :func:`_is_transport_failure` result, in discard order.
+
+    Returns:
+        The abstention reason to stamp, or ``None`` when quorum is met.
+    """
+    if vote_count == 0:
+        if _all_transport_discards(discard_transport_flags):
+            return ABSTENTION_PROVIDER_UNAVAILABLE
+        return ABSTENTION_ALL_VOTES_DISCARDED
+    if vote_count < min_ensemble_votes:
+        return ABSTENTION_ENSEMBLE_QUORUM_NOT_MET
+    return None
+
+
 def _live_gate_open(canary_gate: CanaryGate | None, created_at: datetime) -> bool:
     """Return whether the canary gate permits live eligibility for a record.
 
@@ -1216,6 +1380,229 @@ def _charge_research(
         budget.charge_forecast(cost_micros, market_ticker=market.ticker, at=created_at)
 
 
+def _open_budget_day(budget: ResearchBudget | None, created_at: datetime) -> int | None:
+    """Open the budget's UTC day and return stage 5's page ceiling.
+
+    Args:
+        budget: The research budget, or ``None`` for the no-op tracer path.
+        created_at: The run's creation instant selecting the budget day.
+
+    Returns:
+        The budget's ``max_pages`` ceiling bounding stage 5's fetches, or
+        ``None`` when no budget is wired (an unbounded fetch, exactly as before).
+
+    Raises:
+        DailyBudgetExhaustedError: If ``budget`` is supplied and its UTC day is
+            already exhausted; raised before any research.
+    """
+    if budget is None:
+        return None
+    budget.ensure_day_open(at=created_at)
+    return budget.max_pages
+
+
+def _verified_quotes(
+    verdicts: tuple[CitationVerdict, ...],
+) -> tuple[ResearchQuote, ...]:
+    """Thread only the *verified* citations' quotes into the vote prompts.
+
+    Args:
+        verdicts: Every gathered citation's verification verdict.
+
+    Returns:
+        One :class:`ResearchQuote` per verified verdict (SPEC S8.5), in verdict
+        order; an unverified citation contributes no quote.
+    """
+    return tuple(
+        ResearchQuote(url=verdict.citation.url, text=verdict.citation.quoted_text)
+        for verdict in verdicts
+        if verdict.verified
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _VoteBundle:
+    """The vote stage's survivors paired with any quorum-shortfall verdict.
+
+    Attributes:
+        votes: The surviving ensemble votes, in call order, ready to aggregate.
+        forecasts: The surviving provider forecasts backing ``votes``, whose
+            provider-reported citations land in the record's audit trail.
+        shortfall_reason: The abstention reason when too few votes survived to
+            aggregate over (see :func:`_vote_shortfall_reason`), or ``None`` when
+            the quorum is met and aggregation may proceed.
+    """
+
+    votes: tuple[ModelVote, ...]
+    forecasts: tuple[ProviderForecast, ...]
+    shortfall_reason: str | None
+
+
+def _collect_votes(
+    market: NormalizedMarket,
+    baseline: BaselineQuoteSnapshot,
+    *,
+    transport: LlmTransport,
+    quotes: tuple[ResearchQuote, ...],
+    created_at: datetime,
+    min_ensemble_votes: int,
+    ledger: ForecastLedgerWriter | None,
+    budget: ResearchBudget | None,
+    ensemble: tuple[EnsembleMemberLike, ...] | None,
+    provider_factory: Callable[[EnsembleMemberLike], ForecastProvider] | None,
+) -> _VoteBundle:
+    """Drive the vote stage, charge its spend, and classify any shortfall.
+
+    Collects one forecast per ensemble member (discarding per-vote failures),
+    charges the run's full research spend -- the fixed stub cost plus every
+    surviving *and* discarded vote's cost -- into ``budget``, builds the model
+    votes, and decides whether the survivor count clears ``min_ensemble_votes``.
+
+    Args:
+        market: The market under forecast.
+        baseline: The baseline quote snapshot the votes are struck against.
+        transport: The LLM transport the default fixture provider votes through.
+        quotes: The sanitized, verified web quotes threaded into each vote prompt.
+        created_at: The run's creation instant, bucketing the budget spend.
+        min_ensemble_votes: The minimum surviving votes a full record requires.
+        ledger: The ledger writer for vote-discard events, or ``None``.
+        budget: The research budget to charge, or ``None`` for a no-op.
+        ensemble: The vote ensemble to drive, or ``None`` for the pinned default.
+        provider_factory: The caller's provider factory, or ``None`` for the
+            default fixture provider.
+
+    Returns:
+        The surviving votes and forecasts paired with the shortfall abstention
+        reason, which is ``None`` when the quorum is met.
+
+    Raises:
+        PerForecastBudgetExceededError: If the run's research cost exceeds the
+            per-forecast ceiling.
+    """
+    collection = _collect_provider_forecasts(
+        market,
+        baseline,
+        transport=transport,
+        quotes=quotes,
+        recorder=_build_discard_recorder(ledger, created_at),
+        members=_resolve_vote_ensemble(ensemble),
+        provider_factory=provider_factory,
+    )
+    forecasts = collection.forecasts
+    provider_cost_micros = sum(forecast.cost_micros for forecast in forecasts)
+    _charge_research(
+        budget,
+        _RESEARCH_COST_MICROS + provider_cost_micros + collection.discarded_cost_micros,
+        market,
+        created_at,
+    )
+    votes = tuple(_build_model_vote(forecast) for forecast in forecasts)
+    shortfall_reason = _vote_shortfall_reason(
+        len(votes), min_ensemble_votes, collection.discard_transport_flags
+    )
+    return _VoteBundle(
+        votes=votes, forecasts=forecasts, shortfall_reason=shortfall_reason
+    )
+
+
+def _aggregate_into_record(
+    bundle: _VoteBundle,
+    *,
+    market: NormalizedMarket,
+    baseline: BaselineQuoteSnapshot,
+    created_at: datetime,
+    question_hash: str,
+    citations: tuple[Citation, ...],
+    criteria: str,
+    counterpoints: str,
+    base_rate_ppm: int,
+    source_notes: tuple[str, ...],
+    canary_gate: CanaryGate | None,
+    verified_count: int,
+    min_verified_citations: int,
+    calibration_map: CalibrationMap | None,
+    ledger: ForecastLedgerWriter | None,
+    provider_gate: ProviderTrackRecordGate | None,
+) -> ForecastRecord:
+    """Aggregate the surviving votes into the final, live-gated record.
+
+    Runs the median aggregation, calibration, baseline shrinkage, and bound
+    clamp into the point estimate, then assembles the schema-valid record. A
+    wired ``calibration_map`` is applied (ledgering the ppm transition) after
+    temporal-integrity is enforced; a wired ``provider_gate`` holds the run back
+    from live eligibility (ledgering a hold) when any voting provider is
+    unproven. Live eligibility is the AND of the canary gate staying open, the
+    provider gate staying open, and the verified citation count clearing
+    ``min_verified_citations`` (SPEC S8.8).
+
+    Args:
+        bundle: The surviving votes and forecasts from the vote stage.
+        market: The market under forecast.
+        baseline: The baseline quote snapshot the forecast is struck against.
+        created_at: The run's creation instant.
+        question_hash: The normalized-question hash.
+        citations: The verified supporting citations; the surviving forecasts'
+            provider-reported citations are appended for the audit trail.
+        criteria: The extracted resolution criteria, for the rationale.
+        counterpoints: The adversarial counterargument, for the rationale.
+        base_rate_ppm: The outside-view base rate the estimate shrinks toward.
+        source_notes: The per-citation source-quality notes.
+        canary_gate: The optional canary drift gate ANDed into live eligibility.
+        verified_count: The independently-verified citation count.
+        min_verified_citations: The minimum verified citations for live
+            eligibility.
+        calibration_map: The optional fitted calibration map; ``None`` is the
+            byte-identical identity that records nothing.
+        ledger: The forecast-event ledger writer, or ``None`` to record nothing;
+            carries the calibration-applied and provider-gate-held events.
+        provider_gate: The optional per-provider track-record gate ANDed into
+            live eligibility; ``None`` means no gate.
+
+    Returns:
+        The produced, immutable, live-gated forecast record.
+
+    Raises:
+        TemporalIntegrityError: If ``calibration_map`` is trained after
+            ``created_at`` (a future-dated map fails the whole run closed).
+    """
+    aggregate = aggregate_median(bundle.votes)
+    coherence_sum = normalize_coherence(market)
+    calibrated_ppm = _apply_and_record_calibration(
+        aggregate.probability_ppm, calibration_map, ledger, created_at
+    )
+    shrunk_ppm = shrink_toward_baseline(calibrated_ppm, base_rate_ppm)
+    probability_ppm = _clamp_between(
+        shrunk_ppm, aggregate.ci_low_ppm, aggregate.ci_high_ppm
+    )
+    rationale = _build_rationale(criteria, counterpoints)
+    # Computed as a statement (never short-circuited) so a PROVIDER_GATE_HELD is
+    # ledgered even when the canary gate also blocks the run.
+    provider_gate_ok = _provider_gate_open(
+        provider_gate, bundle.votes, ledger, created_at
+    )
+    return build_forecast_record(
+        market=market,
+        baseline=baseline,
+        created_at=created_at,
+        question_hash=question_hash,
+        probability_ppm=probability_ppm,
+        aggregate=aggregate,
+        votes=bundle.votes,
+        citations=citations + _reported_citations(bundle.forecasts),
+        source_notes=source_notes,
+        rationale=rationale,
+        coherence_sum=coherence_sum,
+        eligible_for_live=_full_run_eligible_for_live(
+            canary_gate=canary_gate,
+            provider_gate_ok=provider_gate_ok,
+            created_at=created_at,
+            verified_count=verified_count,
+            min_verified_citations=min_verified_citations,
+            coherence_sum=coherence_sum,
+        ),
+    )
+
+
 def run_pipeline(
     market: NormalizedMarket,
     baseline: BaselineQuoteSnapshot,
@@ -1224,6 +1611,7 @@ def run_pipeline(
     created_at: datetime,
     research_tools: ResearchTools,
     min_verified_citations: int = DEFAULT_MIN_VERIFIED_CITATIONS,
+    min_ensemble_votes: int = DEFAULT_MIN_ENSEMBLE_VOTES,
     ledger: ForecastLedgerWriter | None = None,
     budget: ResearchBudget | None = None,
     canary_gate: CanaryGate | None = None,
@@ -1244,12 +1632,18 @@ def run_pipeline(
     :data:`ABSTENTION_NO_VERIFIED_CITATIONS` -- returning a live-ineligible
     record *before* the vote stage, so ``transport`` is never touched. Only the
     *verified* citations' sanitized quotes are threaded into the vote prompts
-    (SPEC S8.5). Each vote response is itself injection-screened; a discarded
-    vote is ledgered through ``ledger``, and if *every* vote is discarded the
-    run abstains with :data:`ABSTENTION_ALL_VOTES_DISCARDED` rather than
-    aggregating over zero votes. Otherwise live eligibility is gated on the
-    verified count meeting ``min_verified_citations`` *and* the canary gate not
-    blocking the record.
+    (SPEC S8.5). Each vote response is itself injection-screened, and any
+    transport-class fault (timeout, rate-limit, HTTP, cost overrun) is caught
+    the same way; a discarded vote is ledgered through ``ledger`` and its cost
+    charged into the budget. A vote shortfall then abstains rather than
+    aggregate over too few members (see :func:`_vote_shortfall_reason`): zero
+    survivors from an all-transport wipeout abstains
+    :data:`ABSTENTION_PROVIDER_UNAVAILABLE`; zero survivors with any screen-side
+    rejection abstains :data:`ABSTENTION_ALL_VOTES_DISCARDED`; and survivors
+    below ``min_ensemble_votes`` abstain
+    :data:`ABSTENTION_ENSEMBLE_QUORUM_NOT_MET`. Otherwise live eligibility is
+    gated on the verified count meeting ``min_verified_citations`` *and* the
+    canary gate not blocking the record.
 
     The optional ``ledger``, ``budget``, and ``canary_gate`` seams all default
     to ``None``, a strict no-op: with no ledger, no budget, and no gate (or an
@@ -1272,6 +1666,10 @@ def run_pipeline(
         min_verified_citations: The minimum independently-verified citations a
             record needs to be live-eligible (keyword-only). Abstention on zero
             verified citations takes absolute precedence over this knob.
+        min_ensemble_votes: The minimum surviving ensemble votes a full record
+            requires (keyword-only). With survivors present but below this
+            quorum the run abstains :data:`ABSTENTION_ENSEMBLE_QUORUM_NOT_MET`
+            rather than aggregate over too few members. Must be at least ``1``.
         ledger: The forecast-event ledger writer for vote-discard events, or
             ``None`` to record nothing (keyword-only).
         budget: The optional research budget guarding day/per-forecast spend and
@@ -1306,6 +1704,8 @@ def run_pipeline(
         The produced, immutable forecast record.
 
     Raises:
+        ValueError: If ``min_ensemble_votes`` is below ``1``; a usage error
+            rejected loudly before any stage runs.
         DailyBudgetExhaustedError: If ``budget`` is supplied and the run's UTC
             day is already exhausted; raised before any research.
         PerForecastBudgetExceededError: If ``budget`` is supplied and the run's
@@ -1314,13 +1714,14 @@ def run_pipeline(
             after the forecast's own ``created_at`` (a future-dated map fails the
             whole run closed).
     """
-    if budget is not None:
-        budget.ensure_day_open(at=created_at)
+    if min_ensemble_votes < 1:
+        msg = f"min_ensemble_votes must be at least 1, got {min_ensemble_votes}"
+        raise ValueError(msg)
+    max_pages = _open_budget_day(budget, created_at)
     question_hash = normalize_question(market)
     criteria = extract_resolution_criteria(market)
     base_rate_ppm = outside_view_base_rate(baseline)
     subquestions = decompose_subquestions(market)
-    max_pages = budget.max_pages if budget is not None else None
     citations = bounded_web_research(
         subquestions, tools=research_tools, max_pages=max_pages
     )
@@ -1338,65 +1739,42 @@ def run_pipeline(
         )
     source_notes = assess_source_reliability(verdicts)
     counterpoints = adversarial_counterargument(subquestions)
-    quotes = tuple(
-        ResearchQuote(url=verdict.citation.url, text=verdict.citation.quoted_text)
-        for verdict in verdicts
-        if verdict.verified
-    )
-    forecasts = _collect_provider_forecasts(
+    bundle = _collect_votes(
         market,
         baseline,
         transport=transport,
-        quotes=quotes,
-        recorder=_build_discard_recorder(ledger, created_at),
-        members=_resolve_vote_ensemble(ensemble),
+        quotes=_verified_quotes(verdicts),
+        created_at=created_at,
+        min_ensemble_votes=min_ensemble_votes,
+        ledger=ledger,
+        budget=budget,
+        ensemble=ensemble,
         provider_factory=provider_factory,
     )
-    provider_cost_micros = sum(forecast.cost_micros for forecast in forecasts)
-    _charge_research(
-        budget, _RESEARCH_COST_MICROS + provider_cost_micros, market, created_at
-    )
-    votes = tuple(_build_model_vote(forecast) for forecast in forecasts)
-    if not votes:
+    if bundle.shortfall_reason is not None:
         return _build_abstention_record(
             market=market,
             baseline=baseline,
             created_at=created_at,
             question_hash=question_hash,
             citations=citations,
-            abstention_reason=ABSTENTION_ALL_VOTES_DISCARDED,
+            abstention_reason=bundle.shortfall_reason,
         )
-    aggregate = aggregate_median(votes)
-    coherence_sum = normalize_coherence(market)
-    calibrated_ppm = _apply_and_record_calibration(
-        aggregate.probability_ppm, calibration_map, ledger, created_at
-    )
-    shrunk_ppm = shrink_toward_baseline(calibrated_ppm, base_rate_ppm)
-    probability_ppm = _clamp_between(
-        shrunk_ppm, aggregate.ci_low_ppm, aggregate.ci_high_ppm
-    )
-    rationale = _build_rationale(criteria, counterpoints)
-    # Computed as a statement (never short-circuited) so a PROVIDER_GATE_HELD is
-    # ledgered even when the canary gate also blocks the run.
-    provider_gate_ok = _provider_gate_open(provider_gate, votes, ledger, created_at)
-    return build_forecast_record(
+    return _aggregate_into_record(
+        bundle,
         market=market,
         baseline=baseline,
         created_at=created_at,
         question_hash=question_hash,
-        probability_ppm=probability_ppm,
-        aggregate=aggregate,
-        votes=votes,
-        citations=citations + _reported_citations(forecasts),
+        citations=citations,
+        criteria=criteria,
+        counterpoints=counterpoints,
+        base_rate_ppm=base_rate_ppm,
         source_notes=source_notes,
-        rationale=rationale,
-        coherence_sum=coherence_sum,
-        eligible_for_live=_full_run_eligible_for_live(
-            canary_gate=canary_gate,
-            provider_gate_ok=provider_gate_ok,
-            created_at=created_at,
-            verified_count=verified_count,
-            min_verified_citations=min_verified_citations,
-            coherence_sum=coherence_sum,
-        ),
+        canary_gate=canary_gate,
+        verified_count=verified_count,
+        min_verified_citations=min_verified_citations,
+        calibration_map=calibration_map,
+        ledger=ledger,
+        provider_gate=provider_gate,
     )
