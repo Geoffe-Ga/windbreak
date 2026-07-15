@@ -50,7 +50,7 @@ from windbreak.forecast.sanitize import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
 
     from windbreak.connector.models import NormalizedMarket
     from windbreak.forecast.budget import ResearchBudget
@@ -58,7 +58,12 @@ if TYPE_CHECKING:
     from windbreak.forecast.cassettes import LlmTransport
     from windbreak.forecast.citations import CitationVerdict
     from windbreak.forecast.ensemble import VoteAggregate
-    from windbreak.forecast.providers import EnsembleMemberLike, ProviderForecast
+    from windbreak.forecast.providers import (
+        EnsembleMemberLike,
+        ForecastProvider,
+        ProviderCitation,
+        ProviderForecast,
+    )
     from windbreak.forecast.records import BaselineQuoteSnapshot
     from windbreak.forecast.sandbox import ResearchTools
 
@@ -108,6 +113,15 @@ ABSTENTION_ALL_VOTES_DISCARDED: Final = "all_votes_discarded"
 
 #: Event type ledgered when one model vote is discarded as injection-tainted.
 FORECAST_OUTPUT_DISCARDED_EVENT: Final = "FORECAST_OUTPUT_DISCARDED"
+
+#: ``source_type`` stamped on a citation a provider *reported* (never one this
+#: pipeline independently verified): it carries provider-claimed provenance, so
+#: it is retained for audit but deliberately excluded from the verified-citation
+#: live-eligibility count (SPEC S8.8 stays anchored to verified citations).
+PROVIDER_REPORTED_SOURCE_TYPE: Final = "provider_reported"
+
+#: Sha256 content-hash prefix, matching ``citations.content_hash_of``'s scheme.
+_SHA256_PREFIX: Final = "sha256:"
 
 #: Deterministic rationale stamped on a zero-verified-citation abstention
 #: record (mirrors ``triage._TRIAGE_RATIONALE_MD``).
@@ -549,6 +563,85 @@ def _resolve_vote_ensemble(
     return DEFAULT_VOTE_ENSEMBLE
 
 
+def _build_provider(
+    provider_factory: Callable[[EnsembleMemberLike], ForecastProvider] | None,
+    transport: LlmTransport,
+    member: EnsembleMemberLike,
+) -> ForecastProvider:
+    """Resolve the provider driving one ensemble member's vote.
+
+    With no ``provider_factory`` (the default) the pre-existing network-free
+    :class:`~windbreak.forecast.providers.FixtureVoteProvider` is built over
+    ``transport`` exactly as before -- byte-identical behavior. A supplied
+    factory instead builds the provider from the member alone (an HTTP-backed
+    :class:`~windbreak.forecast.providers.FutureSearchProvider`, say), so
+    ``transport`` is never touched on that path.
+
+    Args:
+        provider_factory: The caller's provider factory, or ``None`` for the
+            default fixture provider.
+        transport: The LLM transport the default fixture provider votes through.
+        member: The ensemble member driving this vote.
+
+    Returns:
+        The provider to obtain this member's forecast from.
+    """
+    if provider_factory is None:
+        return FixtureVoteProvider(transport, member)
+    return provider_factory(member)
+
+
+def _collect_provider_forecasts(
+    market: NormalizedMarket,
+    baseline: BaselineQuoteSnapshot,
+    *,
+    transport: LlmTransport,
+    quotes: tuple[ResearchQuote, ...],
+    recorder: _DiscardRecorder | None,
+    members: tuple[EnsembleMemberLike, ...],
+    provider_factory: Callable[[EnsembleMemberLike], ForecastProvider] | None,
+) -> tuple[ProviderForecast, ...]:
+    """Drive each member's provider into a surviving-forecast tuple.
+
+    One provider per member (see :func:`_build_provider`) produces one forecast;
+    a response the provider rejects
+    (:class:`~windbreak.forecast.providers.ProviderResponseRejectedError`) is
+    *discarded* -- never trusted, never retried -- and, when a recorder is wired,
+    ledgered with a fingerprint-only payload. The result holds between zero and
+    ``len(members)`` surviving forecasts, in call order.
+
+    Args:
+        market: The market under forecast.
+        baseline: The baseline quote snapshot.
+        transport: The LLM transport the default fixture provider votes through.
+        quotes: The sanitized web quotes threaded into each fixture vote prompt.
+        recorder: The discard recorder, or ``None`` to ledger nothing.
+        members: The resolved ensemble members to drive, in order.
+        provider_factory: The caller's provider factory, or ``None`` for the
+            default fixture provider.
+
+    Returns:
+        The surviving provider forecasts, in call order.
+    """
+    forecasts: list[ProviderForecast] = []
+    for index, member in enumerate(members):
+        provider = _build_provider(provider_factory, transport, member)
+        try:
+            forecast = provider.forecast(market, baseline, index, quotes)
+        except ProviderResponseRejectedError as rejected:
+            if recorder is not None:
+                recorder.record_discard(
+                    market_ticker=market.ticker,
+                    member=member,
+                    vote_index=index,
+                    failure=rejected.failure_code,
+                    response_fingerprint=rejected.response_fingerprint,
+                )
+            continue
+        forecasts.append(forecast)
+    return tuple(forecasts)
+
+
 def collect_model_votes(
     market: NormalizedMarket,
     baseline: BaselineQuoteSnapshot,
@@ -558,14 +651,15 @@ def collect_model_votes(
     ledger: ForecastLedgerWriter | None = None,
     created_at: datetime | None = None,
     ensemble: tuple[EnsembleMemberLike, ...] | None = None,
+    provider_factory: Callable[[EnsembleMemberLike], ForecastProvider] | None = None,
 ) -> tuple[ModelVote, ...]:
     """Stage 8: collect the surviving, injection-screened model votes.
 
     This is the only stage that touches the transport seam. It drives one
-    :class:`~windbreak.forecast.providers.FixtureVoteProvider` per ensemble
-    member -- one deterministic ``complete`` call each, so ``len(ensemble)``
-    calls in call order (three by default) -- which screens the response through
-    :func:`windbreak.forecast.sanitize.validate_vote_response` and parses the
+    provider per ensemble member (a
+    :class:`~windbreak.forecast.providers.FixtureVoteProvider` by default, or a
+    caller-supplied one via ``provider_factory``) -- ``len(ensemble)`` calls in
+    call order (three by default) -- screening each response and parsing the
     structured vote. A response that forges a delimiter, lures a tool call, or
     fails schema validation (e.g. a non-integer ``probability_ppm``) raises
     :class:`~windbreak.forecast.providers.ProviderResponseRejectedError`; that
@@ -589,6 +683,10 @@ def collect_model_votes(
         ensemble: The vote ensemble to drive, or ``None`` (keyword-only) for the
             pinned default three-member ensemble. Its length sets the number of
             transport calls, and each member's provenance stamps its vote.
+        provider_factory: An optional factory building the provider for a member
+            (keyword-only). ``None`` (the default) builds a
+            :class:`~windbreak.forecast.providers.FixtureVoteProvider` over
+            ``transport``, byte-identically to before.
 
     Returns:
         The surviving ensemble votes, in call order (0 to ``len(ensemble)``).
@@ -598,23 +696,16 @@ def collect_model_votes(
     """
     recorder = _build_discard_recorder(ledger, created_at)
     members = _resolve_vote_ensemble(ensemble)
-    votes: list[ModelVote] = []
-    for index, member in enumerate(members):
-        provider = FixtureVoteProvider(transport, member)
-        try:
-            forecast = provider.forecast(market, baseline, index, quotes)
-        except ProviderResponseRejectedError as rejected:
-            if recorder is not None:
-                recorder.record_discard(
-                    market_ticker=market.ticker,
-                    member=member,
-                    vote_index=index,
-                    failure=rejected.failure_code,
-                    response_fingerprint=rejected.response_fingerprint,
-                )
-            continue
-        votes.append(_build_model_vote(forecast))
-    return tuple(votes)
+    forecasts = _collect_provider_forecasts(
+        market,
+        baseline,
+        transport=transport,
+        quotes=quotes,
+        recorder=recorder,
+        members=members,
+        provider_factory=provider_factory,
+    )
+    return tuple(_build_model_vote(forecast) for forecast in forecasts)
 
 
 def aggregate_median(votes: tuple[ModelVote, ...]) -> VoteAggregate:
@@ -876,6 +967,87 @@ def _live_gate_open(canary_gate: CanaryGate | None, created_at: datetime) -> boo
     return canary_gate is None or not canary_gate.is_live_blocked(created_at=created_at)
 
 
+def _reported_citation(citation: ProviderCitation) -> Citation:
+    """Map one provider-reported citation into an audit-trail :class:`Citation`.
+
+    The ``content_hash`` is a sha256 over the citation's own reported provenance
+    (its ``{url, publication_date, quoted_text}``) -- a marker of *provider-
+    reported* provenance, explicitly NOT an independently verified content hash;
+    the ``source_type`` is stamped :data:`PROVIDER_REPORTED_SOURCE_TYPE` so this
+    citation is retained for audit yet never counts toward the verified-citation
+    live-eligibility gate (SPEC S8.8).
+
+    Args:
+        citation: The provider-reported citation to map.
+
+    Returns:
+        The audit-trail citation.
+    """
+    publication_iso = (
+        _iso_z(citation.publication_date)
+        if citation.publication_date is not None
+        else None
+    )
+    canonical = json.dumps(
+        {
+            "url": citation.url,
+            "publication_date": publication_iso,
+            "quoted_text": citation.quoted_text,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return Citation(
+        url=citation.url,
+        content_hash=f"{_SHA256_PREFIX}{digest}",
+        quoted_text=citation.quoted_text,
+        publication_date=citation.publication_date,
+        source_type=PROVIDER_REPORTED_SOURCE_TYPE,
+    )
+
+
+def _reported_citations(
+    forecasts: tuple[ProviderForecast, ...],
+) -> tuple[Citation, ...]:
+    """Flatten every surviving forecast's reported citations, in order.
+
+    Args:
+        forecasts: The surviving provider forecasts.
+
+    Returns:
+        Every provider-reported citation mapped to an audit-trail
+        :class:`Citation`, in forecast-then-citation order.
+    """
+    return tuple(
+        _reported_citation(citation)
+        for forecast in forecasts
+        for citation in forecast.citations
+    )
+
+
+def _charge_research(
+    budget: ResearchBudget | None,
+    cost_micros: int,
+    market: NormalizedMarket,
+    created_at: datetime,
+) -> None:
+    """Charge the run's research cost against ``budget`` when one is wired.
+
+    Args:
+        budget: The research budget, or ``None`` for a no-op (the tracer path).
+        cost_micros: The research cost to charge, in micros.
+        market: The market under forecast, for the audit trail.
+        created_at: The run's creation instant, bucketing the spend to a day.
+
+    Raises:
+        PerForecastBudgetExceededError: If ``cost_micros`` exceeds the
+            per-forecast ceiling.
+    """
+    if budget is not None:
+        budget.charge_forecast(cost_micros, market_ticker=market.ticker, at=created_at)
+
+
 def run_pipeline(
     market: NormalizedMarket,
     baseline: BaselineQuoteSnapshot,
@@ -888,6 +1060,7 @@ def run_pipeline(
     budget: ResearchBudget | None = None,
     canary_gate: CanaryGate | None = None,
     ensemble: tuple[EnsembleMemberLike, ...] | None = None,
+    provider_factory: Callable[[EnsembleMemberLike], ForecastProvider] | None = None,
 ) -> ForecastRecord:
     """Run the twelve-stage pipeline into a schema-valid forecast record.
 
@@ -938,6 +1111,15 @@ def run_pipeline(
         ensemble: The vote ensemble to drive the vote stage with, or ``None``
             (keyword-only) for the pinned default three-member ensemble -- the
             default preserves the pre-#184 vote provenance byte-for-byte.
+        provider_factory: An optional factory building the vote provider per
+            member (keyword-only). ``None`` (the default) drives the pre-existing
+            fixture-vote path byte-identically; a supplied factory instead drives
+            each member through a caller's provider (e.g. an HTTP-backed
+            :class:`~windbreak.forecast.providers.FutureSearchProvider`), whose
+            reported citations land in the record as
+            :data:`PROVIDER_REPORTED_SOURCE_TYPE` entries (audit-only, never
+            counted toward live eligibility) and whose reported cost is charged
+            into the run's research budget.
 
     Returns:
         The produced, immutable forecast record.
@@ -960,11 +1142,8 @@ def run_pipeline(
     )
     verdicts = verify_citations(research_tools, citations, as_of=created_at)
     verified_count = count_verified(verdicts)
-    if budget is not None:
-        budget.charge_forecast(
-            _RESEARCH_COST_MICROS, market_ticker=market.ticker, at=created_at
-        )
     if verified_count == 0:
+        _charge_research(budget, _RESEARCH_COST_MICROS, market, created_at)
         return _build_abstention_record(
             market=market,
             baseline=baseline,
@@ -980,15 +1159,20 @@ def run_pipeline(
         for verdict in verdicts
         if verdict.verified
     )
-    votes = collect_model_votes(
+    forecasts = _collect_provider_forecasts(
         market,
         baseline,
         transport=transport,
         quotes=quotes,
-        ledger=ledger,
-        created_at=created_at,
-        ensemble=ensemble,
+        recorder=_build_discard_recorder(ledger, created_at),
+        members=_resolve_vote_ensemble(ensemble),
+        provider_factory=provider_factory,
     )
+    provider_cost_micros = sum(forecast.cost_micros for forecast in forecasts)
+    _charge_research(
+        budget, _RESEARCH_COST_MICROS + provider_cost_micros, market, created_at
+    )
+    votes = tuple(_build_model_vote(forecast) for forecast in forecasts)
     if not votes:
         return _build_abstention_record(
             market=market,
@@ -1014,7 +1198,7 @@ def run_pipeline(
         probability_ppm=probability_ppm,
         aggregate=aggregate,
         votes=votes,
-        citations=citations,
+        citations=citations + _reported_citations(forecasts),
         source_notes=source_notes,
         rationale=rationale,
         coherence_sum=coherence_sum,

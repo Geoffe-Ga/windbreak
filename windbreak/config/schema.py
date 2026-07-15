@@ -205,13 +205,44 @@ def _default_vote_ensemble() -> tuple[EnsembleMemberConfig, ...]:
 
 
 @dataclass(frozen=True, slots=True)
+class FutureSearchProviderSettings:
+    """The FutureSearch research-forecaster provider's config-schema section.
+
+    The config-schema mirror of
+    :class:`windbreak.forecast.providers.futuresearch.FutureSearchProviderConfig`,
+    with SPEC-integer-units-only leaves. ``endpoint_url`` and
+    ``pinned_forecaster_versions`` have no natural real-world default, so -- like
+    :class:`AlertSink` and :class:`ModelRef` elsewhere in this schema -- they
+    default to the repo's "operator must fill this in" placeholder idiom rather
+    than an invented, plausible-looking endpoint/version.
+
+    Attributes:
+        endpoint_url: The forecast endpoint the provider POSTs to.
+        pinned_forecaster_versions: The operator-pinned forecaster versions a
+            reported version must belong to (else drift).
+        api_key_env: The environment variable a live transport reads the API
+            key from.
+        per_call_ceiling_micros: The reported-cost fallback, in micros.
+        reject_on_version_drift: Whether an unpinned reported version rejects
+            (strict) or proceeds with a logged warning.
+    """
+
+    endpoint_url: str = "configured-by-operator"
+    pinned_forecaster_versions: tuple[str, ...] = ("pinned-by-operator",)
+    api_key_env: str = "FUTURESEARCH_API_KEY"
+    per_call_ceiling_micros: int = 2000000
+    reject_on_version_drift: bool = True
+
+
+@dataclass(frozen=True, slots=True)
 class ForecastConfig:
     """Ensemble, triage, budget, and calibration-canary forecasting policy.
 
     ``vote_ensemble`` (issue #184) supersedes the legacy ``ensemble`` field for
     the vote stage: ``ensemble`` remains the triage/promotion ``ModelRef`` set,
     while ``vote_ensemble`` names the per-member provenance the vote stage drives
-    a provider with.
+    a provider with. ``futuresearch`` (issue #189) configures the hosted
+    research-forecaster provider.
     """
 
     ensemble: tuple[ModelRef, ...] = field(default_factory=_default_ensemble)
@@ -223,6 +254,9 @@ class ForecastConfig:
     canary: CanaryConfig = field(default_factory=CanaryConfig)
     vote_ensemble: tuple[EnsembleMemberConfig, ...] = field(
         default_factory=_default_vote_ensemble
+    )
+    futuresearch: FutureSearchProviderSettings = field(
+        default_factory=FutureSearchProviderSettings
     )
 
 
