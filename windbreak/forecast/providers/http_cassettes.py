@@ -25,6 +25,17 @@ envelope's float-rejecting loader -- only a float leaf in the cassette's own
 envelope *structure* is rejected. Request hashing uses the ledger's canonical
 JSON form (sorted keys, no-space separators) over sha256, restated here with
 only the standard library so this module stays dependency-free and float-free.
+
+The record/replay seam is intentionally extended on the *response* side only:
+:class:`HttpResponse` carries a single ``content_type`` media-type string
+(e.g. ``text/html``) so a live-fetch transport
+(:mod:`windbreak.forecast.providers.fetch_live`) can enforce a content-type
+allowlist over a replayed response. This stays secret-free because it is a
+lone, non-secret media type -- *not* a full headers map, which is where an
+``Authorization``/API-key header would otherwise live -- and the request side
+remains header-free, so the hash and the persisted request are unchanged. Older
+cassettes recorded before this field existed replay unchanged: the loader
+back-fills a missing ``content_type`` with the empty string.
 """
 
 from __future__ import annotations
@@ -99,10 +110,15 @@ class HttpResponse:
     Attributes:
         status_code: The HTTP status code.
         body: The raw response body text (the provider's un-parsed JSON).
+        content_type: The response media-type string (e.g. ``text/html``), a
+            single non-secret value -- never a full headers map, so no API-key
+            header can ever be persisted here. Defaults to the empty string so
+            a response (or an older cassette) that reports none replays cleanly.
     """
 
     status_code: int
     body: str
+    content_type: str = ""
 
 
 class HttpTransport(Protocol):
@@ -177,6 +193,7 @@ class RecordingHttpCassette:
             "response": {
                 "status_code": response.status_code,
                 "body": response.body,
+                "content_type": response.content_type,
             },
         }
         self._entries[request.request_hash()] = entry
@@ -223,7 +240,10 @@ class ReplayHttpCassette:
         The file is parsed with a float-rejecting hook, so any float leaf in
         the cassette's envelope structure raises :class:`ValueError`. Each
         top-level key is used verbatim as the replay lookup key, paired with an
-        :class:`HttpResponse` rebuilt from its recorded ``status_code``/``body``.
+        :class:`HttpResponse` rebuilt from its recorded
+        ``status_code``/``body``/``content_type``. A cassette recorded before
+        the ``content_type`` field existed omits it, so it is back-filled with
+        the empty string for backward compatibility.
 
         Args:
             path: The cassette file to load.
@@ -239,6 +259,7 @@ class ReplayHttpCassette:
             key: HttpResponse(
                 status_code=entry["response"]["status_code"],
                 body=entry["response"]["body"],
+                content_type=entry["response"].get("content_type", ""),
             )
             for key, entry in raw.items()
         }

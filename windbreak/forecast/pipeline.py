@@ -37,6 +37,7 @@ from windbreak.forecast.providers import (
     ProviderResponseRejectedError,
     ProviderVersionDriftError,
 )
+from windbreak.forecast.pubdate import extract_publication_date
 from windbreak.forecast.records import (
     Citation,
     ForecastRecord,
@@ -89,10 +90,6 @@ _SUBQUESTION_PREFIXES: tuple[str, ...] = (
     "Recent evidence on",
     "Counter-signal for",
 )
-
-#: Fixed publication date stamped on every fixture-derived citation (no
-#: network fetch, so no real date is available).
-_CITATION_PUBLICATION_DATE = datetime(2024, 1, 1, tzinfo=UTC)
 
 #: Deterministic stub research cost for a full-pipeline run, in micros.
 _RESEARCH_COST_MICROS = 3_000_000
@@ -404,9 +401,13 @@ def bounded_web_research(
     contiguous raw substring), whereas a hidden span, ``<script>``, or forged
     delimiter *inside* the window breaks that substring property -- so the
     citation fails to verify and the run fails closed (abstains) rather than
-    prompting an LLM with poisoned text. The resulting citations are
-    deterministic (the fixture transports derive URL and content from their
-    inputs) and integer-free.
+    prompting an LLM with poisoned text. Each citation's ``publication_date`` is
+    :func:`windbreak.forecast.pubdate.extract_publication_date` run over the
+    *raw* fetched content (before sanitization strips its ``<script>`` blocks),
+    so a page carrying a real JSON-LD/meta date is stamped with that
+    timezone-aware date and a dateless page degrades to ``None`` -- never a
+    fabricated constant. The resulting citations are deterministic (the fixture
+    transports derive URL and content from their inputs) and integer-free.
 
     Args:
         subquestions: The decomposed subquestions to research.
@@ -447,7 +448,7 @@ def bounded_web_research(
                 quoted_text=extract_quote(
                     sanitize_content(content), max_words=MAX_QUOTE_WORDS
                 ),
-                publication_date=_CITATION_PUBLICATION_DATE,
+                publication_date=extract_publication_date(content),
                 source_type="research_note",
             )
         )

@@ -1,4 +1,4 @@
-"""Tests for windbreak.forecast.providers.http_cassettes (issue #189).
+"""Tests for windbreak.forecast.providers.http_cassettes (issue #189, #192).
 
 Pins `HttpRequest.request_hash()` determinism (a stable sha256 hex digest over
 canonical JSON of `{method, url, body}`, independent of any environment
@@ -10,6 +10,14 @@ structural proof a stage never reaches a live network, and the two committed
 hash-independent structural checks -- mirroring
 `tests/forecast/test_cassettes.py`'s LLM-side test suite over the HTTP-shaped
 seam this module adds for the hosted FutureSearch provider.
+
+Issue #192 adds a single non-secret `HttpResponse.content_type` media-type
+string leaf (never a headers map -- there is still nowhere on either dataclass
+for API-key material to live): `RecordingHttpCassette` persists it, and
+`ReplayHttpCassette.from_path` loads it with a back-compat default of `""`
+when an older, pre-#192 cassette file's recorded response omits the key
+entirely -- so no previously-committed cassette fixture is invalidated by this
+field's addition.
 """
 
 from __future__ import annotations
@@ -56,15 +64,19 @@ def _request(**overrides: object) -> HttpRequest:
 class _FakeHttpTransport:
     """A minimal deterministic `HttpTransport` returning one fixed response."""
 
-    def __init__(self, body: str, *, status_code: int = 200) -> None:
+    def __init__(
+        self, body: str, *, status_code: int = 200, content_type: str = ""
+    ) -> None:
         """Store the fixed response every `send` call returns.
 
         Args:
             body: The fixed raw response body text.
             status_code: The fixed HTTP status code.
+            content_type: The fixed response media-type string.
         """
         self._body = body
         self._status_code = status_code
+        self._content_type = content_type
         self.calls: list[HttpRequest] = []
 
     def send(self, request: HttpRequest) -> HttpResponse:
@@ -74,10 +86,11 @@ class _FakeHttpTransport:
             request: The HTTP request to record.
 
         Returns:
-            `HttpResponse(self._status_code, self._body)`, verbatim.
+            `HttpResponse(self._status_code, self._body, self._content_type)`,
+            verbatim.
         """
         self.calls.append(request)
-        return HttpResponse(self._status_code, self._body)
+        return HttpResponse(self._status_code, self._body, self._content_type)
 
 
 # --- HttpRequest: no headers field, hashable, hash determinism -------------------
@@ -164,6 +177,110 @@ def test_forbidden_live_http_transport_always_raises() -> None:
 
     with pytest.raises(LiveCallForbiddenError):
         transport.send(_request())
+
+
+# --- HttpResponse: content_type field (issue #192) --------------------------------
+
+
+def test_http_response_content_type_defaults_to_empty_string() -> None:
+    """`HttpResponse.content_type` defaults to `""` when not supplied, so every
+    pre-#192 call site constructing `HttpResponse(status_code, body)`
+    positionally keeps working unchanged.
+    """
+    response = HttpResponse(200, "some body")
+
+    assert response.content_type == ""
+
+
+def test_http_response_content_type_can_be_set() -> None:
+    """`HttpResponse.content_type` carries the caller-supplied media-type
+    string verbatim.
+    """
+    response = HttpResponse(200, "<html></html>", "text/html; charset=utf-8")
+
+    assert response.content_type == "text/html; charset=utf-8"
+
+
+def test_http_response_is_frozen() -> None:
+    """Mutating a constructed `HttpResponse` raises."""
+    response = HttpResponse(200, "some body", "text/html")
+
+    with pytest.raises((dataclasses.FrozenInstanceError, AttributeError)):
+        response.content_type = "application/json"  # type: ignore[misc]
+
+
+def test_http_response_content_type_field_declared_on_the_dataclass() -> None:
+    """`content_type` is a real dataclass field (not e.g. a headers mapping):
+    the field set is exactly `{status_code, body, content_type}`, so there is
+    still nowhere on `HttpResponse` for a headers/API-key structure to live.
+    """
+    field_names = {field.name for field in dataclasses.fields(HttpResponse)}
+
+    assert field_names == {"status_code", "body", "content_type"}
+
+
+# --- RecordingHttpCassette persists content_type; replay round-trips it ----------
+
+
+def test_recording_http_cassette_persists_content_type_to_disk(tmp_path: Path) -> None:
+    """The persisted cassette file's response entry carries the recorded
+    `content_type` string verbatim.
+    """
+    cassette_path = tmp_path / "cassette.json"
+    cassette = RecordingHttpCassette(
+        transport=_FakeHttpTransport("body-1", content_type="text/html"),
+        path=cassette_path,
+    )
+
+    cassette.send(_request())
+
+    raw = json.loads(cassette_path.read_text(encoding="utf-8"))
+    entry = next(iter(raw.values()))
+    assert entry["response"]["content_type"] == "text/html"
+
+
+def test_recording_then_replay_round_trip_preserves_content_type(
+    tmp_path: Path,
+) -> None:
+    """A recorded `content_type` survives a full record -> replay round trip."""
+    cassette_path = tmp_path / "cassette.json"
+    recorder = RecordingHttpCassette(
+        transport=_FakeHttpTransport("body-2", content_type="application/json"),
+        path=cassette_path,
+    )
+    request = _request(body='{"ticker": "CONTENT-TYPE-ROUND-TRIP"}')
+    recorder.send(request)
+
+    replay = ReplayHttpCassette.from_path(cassette_path)
+
+    assert replay.send(request) == HttpResponse(200, "body-2", "application/json")
+
+
+def test_from_path_backcompat_missing_content_type_defaults_to_empty_string(
+    tmp_path: Path,
+) -> None:
+    """A pre-#192 cassette file whose recorded response omits `content_type`
+    entirely still loads, defaulting the field to `""` rather than raising --
+    so no previously-committed cassette fixture is invalidated by this field's
+    addition.
+    """
+    request = _request()
+    legacy_entry = {
+        request.request_hash(): {
+            "request": {
+                "method": request.method,
+                "url": request.url,
+                "body": request.body,
+            },
+            "response": {"status_code": 200, "body": "legacy body"},
+        }
+    }
+    cassette_path = tmp_path / "legacy_cassette.json"
+    cassette_path.write_text(json.dumps(legacy_entry), encoding="utf-8")
+
+    replay = ReplayHttpCassette.from_path(cassette_path)
+
+    assert replay.send(request) == HttpResponse(200, "legacy body", "")
 
 
 # --- RecordingHttpCassette -> ReplayHttpCassette round-trip ----------------------

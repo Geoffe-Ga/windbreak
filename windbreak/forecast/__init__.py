@@ -116,6 +116,7 @@ from windbreak.forecast.triage import (
     InMemoryTriageLedger,
     TriageEvent,
     TriageLedgerWriter,
+    TriageModel,
     TriagePrior,
     run_triaged_pipeline,
 )
@@ -192,6 +193,7 @@ __all__ = [
     "SearchTransport",
     "TriageEvent",
     "TriageLedgerWriter",
+    "TriageModel",
     "TriagePrior",
     "VoteAggregate",
     "aggregate_votes",
