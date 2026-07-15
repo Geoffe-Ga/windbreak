@@ -42,14 +42,30 @@ entries:
     * `ReturnToScreener` -- the companion event marking a frozen ticker's
       orders as returned to manual/algorithmic re-screening, `reason` always
       `"market_freeze"`.
+
+Issue #180 (RED -- `GatePlanRegistered`/`GatePlanChanged`/
+`GateComputationMismatch` do not exist in this module yet, so the import
+below fails collection with `ImportError: cannot import name
+'GatePlanRegistered' from 'windbreak.ledger.events'`) moves all three
+evaluation-defined events here, growing `EVENT_TYPES` to 28 entries. The two
+`GatePlan*` events are redesigned as flat, fully-typed frozen dataclasses
+whose constructor fields ARE the flattened payload keys -- the thirteen
+canonical plan keys (`metric_windows` plus the eight int thresholds plus the
+four str identity fields, matching `GatePlan.canonical_dict()`) plus
+`plan_hash`, `paper_clock_start` (and `previous_plan_hash` for
+`GatePlanChanged`) -- so `EVENT_TYPES[t](component=..., **envelope["data"])`
+round-trips by construction, with no separate `plan_dict` wrapper key ever
+appearing in the persisted payload. `GateComputationMismatch` moves verbatim.
 """
 
 from __future__ import annotations
 
+import ast
 import dataclasses
 import itertools
 import json
 import re
+from pathlib import Path
 
 import pytest
 
@@ -64,6 +80,9 @@ from windbreak.ledger.events import (
     EquitySampled,
     Event,
     ForecastCreated,
+    GateComputationMismatch,
+    GatePlanChanged,
+    GatePlanRegistered,
     KillEngaged,
     KillReArmed,
     MarketFreeze,
@@ -92,6 +111,40 @@ _ISO_UTC_MICROSECOND_RE = re.compile(
 
 #: The three key/value pairs canonical_json tests permute the order of.
 _SAMPLE_ITEMS = [("b", 1), ("a", 2), ("c", 3)]
+
+#: Repo root, derived from this test file's own location
+#: (`<root>/tests/ledger/test_ledger_events.py`).
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+#: The module under test itself, scanned for forbidden `windbreak.evaluation`
+#: imports by the acyclicity guard below.
+_LEDGER_EVENTS_PATH = _REPO_ROOT / "windbreak" / "ledger" / "events.py"
+
+#: The thirteen canonical `GatePlan` keys a `GatePlanRegistered`/
+#: `GatePlanChanged` payload flattens in, matching
+#: `GatePlan.canonical_dict()` exactly (issue #180).
+_SAMPLE_PLAN_FIELDS: dict[str, object] = {
+    "metric_windows": [["brier", "all"]],
+    "min_resolved_for_calibration": 150,
+    "promotion_min_resolved": 300,
+    "promotion_min_independent_event_groups": 100,
+    "brier_skill_required_ppm": 10_000,
+    "bootstrap_confidence_ppm": 950_000,
+    "live_rolling_window_size": 100,
+    "live_slippage_ratio_limit_ppm": 1_500_000,
+    "live_brier_degradation_band_ppm": 50_000,
+    "observation_window": "latest_before_close",
+    "baseline_scheme": "executable_price_at_baseline_snapshot",
+    "clustering_scheme": "event_correlation_group",
+    "paper_fill_model_version": "pfm-v1",
+}
+
+#: A 64-hex-char sample plan hash for the round-trip/pin tests below.
+_SAMPLE_PLAN_HASH = "a" * 64
+
+#: A distinct 64-hex-char sample hash standing in for the plan a
+#: `GatePlanChanged` replaced.
+_SAMPLE_PREVIOUS_PLAN_HASH = "b" * 64
 
 
 def test_genesis_prev_hash_is_sixty_four_zero_characters() -> None:
@@ -271,6 +324,9 @@ def test_event_types_registry_maps_type_name_to_class() -> None:
         "EquitySampled": EquitySampled,
         "PositionsSnapshotRecorded": PositionsSnapshotRecorded,
         "DrillCompleted": DrillCompleted,
+        "GatePlanRegistered": GatePlanRegistered,
+        "GatePlanChanged": GatePlanChanged,
+        "GateComputationMismatch": GateComputationMismatch,
     } == EVENT_TYPES
 
 
@@ -462,3 +518,167 @@ def test_event_types_registry_round_trips_return_to_screener() -> None:
     rebuilt = rebuilt_cls(component=envelope["component"], **envelope["data"])
 
     assert rebuilt == original
+
+
+# --- Issue #180: registry round-trips for the three evaluation-defined -------
+# --- events moved into this module (the two GatePlan events plus the --------
+# --- crosscheck mismatch event) -----------------------------------------------
+
+
+def test_event_types_registry_round_trips_gate_plan_registered() -> None:
+    """A registry lookup plus persisted `data` reconstructs `GatePlanRegistered`.
+
+    The constructor's fields ARE the flattened payload keys, so this
+    round-trips by construction once the class moves into this module.
+    """
+    original = GatePlanRegistered(
+        component="evaluation",
+        **_SAMPLE_PLAN_FIELDS,
+        plan_hash=_SAMPLE_PLAN_HASH,
+        paper_clock_start=1_700_000_000,
+    )
+    envelope = json.loads(original.envelope_json)
+
+    rebuilt_cls = EVENT_TYPES[original.event_type]
+    rebuilt = rebuilt_cls(component=envelope["component"], **envelope["data"])
+
+    assert rebuilt == original
+
+
+def test_event_types_registry_round_trips_gate_plan_changed() -> None:
+    """A registry lookup plus persisted `data` reconstructs `GatePlanChanged`.
+
+    Carries `previous_plan_hash` in addition to `GatePlanRegistered`'s fields.
+    """
+    original = GatePlanChanged(
+        component="evaluation",
+        **_SAMPLE_PLAN_FIELDS,
+        plan_hash=_SAMPLE_PLAN_HASH,
+        paper_clock_start=1_700_000_100,
+        previous_plan_hash=_SAMPLE_PREVIOUS_PLAN_HASH,
+    )
+    envelope = json.loads(original.envelope_json)
+
+    rebuilt_cls = EVENT_TYPES[original.event_type]
+    rebuilt = rebuilt_cls(component=envelope["component"], **envelope["data"])
+
+    assert rebuilt == original
+
+
+def test_event_types_registry_round_trips_gate_computation_mismatch() -> None:
+    """Registry lookup plus persisted `data` reconstructs `GateComputationMismatch`."""
+    original = GateComputationMismatch(
+        component="evaluation",
+        plan_hash=_SAMPLE_PLAN_HASH,
+        tolerance=1,
+        mismatches=[
+            {
+                "name": "brier",
+                "window": "latest_before_close",
+                "python_value": 54_000,
+                "sql_value": 55_000,
+            }
+        ],
+    )
+    envelope = json.loads(original.envelope_json)
+
+    rebuilt_cls = EVENT_TYPES[original.event_type]
+    rebuilt = rebuilt_cls(component=envelope["component"], **envelope["data"])
+
+    assert rebuilt == original
+
+
+def test_gate_plan_registered_payload_is_exactly_the_flattened_plan_dict() -> None:
+    """`GatePlanRegistered`'s persisted `data` is exactly the thirteen plan
+    keys plus `plan_hash`/`paper_clock_start` -- never a separate `plan_dict`
+    wrapper key, and always stamped `schema_version == 1`.
+    """
+    event = GatePlanRegistered(
+        component="evaluation",
+        **_SAMPLE_PLAN_FIELDS,
+        plan_hash=_SAMPLE_PLAN_HASH,
+        paper_clock_start=1_700_000_000,
+    )
+
+    envelope = json.loads(event.envelope_json)
+
+    assert envelope["data"] == {
+        **_SAMPLE_PLAN_FIELDS,
+        "plan_hash": _SAMPLE_PLAN_HASH,
+        "paper_clock_start": 1_700_000_000,
+    }
+    assert "plan_dict" not in envelope["data"]
+    assert envelope["schema_version"] == 1
+
+
+def test_gate_plan_changed_payload_is_exactly_the_flattened_plan_dict() -> None:
+    """`GatePlanChanged`'s persisted `data` is exactly the thirteen plan keys
+    plus `plan_hash`/`paper_clock_start`/`previous_plan_hash` -- never a
+    separate `plan_dict` wrapper key, and always stamped `schema_version == 1`.
+    """
+    event = GatePlanChanged(
+        component="evaluation",
+        **_SAMPLE_PLAN_FIELDS,
+        plan_hash=_SAMPLE_PLAN_HASH,
+        paper_clock_start=1_700_000_100,
+        previous_plan_hash=_SAMPLE_PREVIOUS_PLAN_HASH,
+    )
+
+    envelope = json.loads(event.envelope_json)
+
+    assert envelope["data"] == {
+        **_SAMPLE_PLAN_FIELDS,
+        "plan_hash": _SAMPLE_PLAN_HASH,
+        "paper_clock_start": 1_700_000_100,
+        "previous_plan_hash": _SAMPLE_PREVIOUS_PLAN_HASH,
+    }
+    assert "plan_dict" not in envelope["data"]
+    assert envelope["schema_version"] == 1
+
+
+def _find_evaluation_imports(tree: ast.AST) -> tuple[str, ...]:
+    """Return every `windbreak.evaluation*` import target found in `tree`.
+
+    Uses `ast` (not a text/substring scan) so a `:class:` cross-reference to
+    an evaluation symbol inside a docstring never produces a false positive --
+    only real `import`/`from ... import ...` statements are inspected.
+
+    Args:
+        tree: A parsed module AST.
+
+    Returns:
+        The offending dotted module names found, in AST-traversal order.
+    """
+    found: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            found.extend(
+                alias.name
+                for alias in node.names
+                if alias.name.startswith("windbreak.evaluation")
+            )
+        elif (
+            isinstance(node, ast.ImportFrom)
+            and node.module is not None
+            and node.module.startswith("windbreak.evaluation")
+        ):
+            found.append(node.module)
+    return tuple(found)
+
+
+def test_ledger_events_module_imports_no_evaluation_package() -> None:
+    """`windbreak.ledger.events` never imports `windbreak.evaluation*`.
+
+    Issue #180 moves the two `GatePlan*` events and `GateComputationMismatch`
+    from `windbreak.evaluation.preregistration`/`windbreak.evaluation.crosscheck`
+    into this module; the evaluation package must stay a one-way runtime
+    consumer of `windbreak.ledger.events`, never the reverse, or the two
+    packages would import-cycle. A pure-`ast` scan (never a text/substring
+    scan, which would false-positive on a docstring's `:class:` reference to
+    an evaluation symbol) proves the module's actual import statements are
+    clean.
+    """
+    source = _LEDGER_EVENTS_PATH.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    assert _find_evaluation_imports(tree) == ()

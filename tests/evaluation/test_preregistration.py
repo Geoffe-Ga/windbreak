@@ -753,7 +753,7 @@ def test_latest_gate_plan_registration_fails_closed_on_hash_mismatch(
         store.append(
             GatePlanRegistered(
                 component="evaluation",
-                plan_dict=plan.canonical_dict(),
+                **plan.canonical_dict(),
                 plan_hash="0" * 64,
                 paper_clock_start=1_700_000_000,
             )

@@ -35,6 +35,20 @@ writes a full set of empty read models instead of erroring. The test below
 pins the corrected contract: `rebuild()` raises `FileNotFoundError` naming
 the missing path, and neither the ledger file nor any read model is created
 as a side effect of the failed attempt.
+
+Issue #180 pins that a ledger mixing `ConfigLoaded`/`ModeHeartbeat` with the
+three evaluation events moved into `windbreak.ledger.events`
+(`GatePlanRegistered`, `GatePlanChanged`, `GateComputationMismatch`) still
+rebuilds cleanly and that those three events are projection-neutral: `rebuild`
+has no dedicated read model for them (mirroring
+`test_rebuild_skips_unknown_event_types_without_error`'s
+skip-without-erroring contract for genuinely unknown types, but for these
+three *named* types this module simply does not yet project), so
+`config_versions.json`/`mode_history.json` come out byte-identical to a
+control ledger holding only the `ConfigLoaded`/`ModeHeartbeat` rows. The test
+imports the three new event classes locally (mirroring this module's own
+`mode_history_read_model` local-import precedent below) so this single test's
+`ImportError` does not break collection of the rest of the file.
 """
 
 from __future__ import annotations
@@ -604,3 +618,126 @@ def test_mode_history_read_model_projects_mode_heartbeats_in_ledger_order(
     assert [row["mode"] for row in rows] == ["RESEARCH", "PAPER"]
     assert [row["beat"] for row in rows] == [1, 2]
     assert all("created_at" in row for row in rows)
+
+
+# --- Issue #180: the three evaluation-defined events moved into ---------------
+# --- `windbreak.ledger.events` are projection-neutral in `rebuild()` ----------
+
+
+def _append_config_and_mode_heartbeat(store: SqliteLedgerStore) -> None:
+    """Append the two M0 rows shared by the main and control ledgers below.
+
+    Sequence numbers: 1=ConfigLoaded, 2=ModeHeartbeat.
+
+    Args:
+        store: The ledger store to append the fixed sequence into.
+    """
+    store.append(
+        ConfigLoaded(component="pipeline", config_hash="hash-1", diff={"a": 1})
+    )
+    store.append(ModeHeartbeat(component="pipeline", mode="RESEARCH", beat=1))
+
+
+def test_rebuild_config_and_mode_projections_are_neutral_to_moved_evaluation_events(
+    tmp_path: Path,
+) -> None:
+    """`config_versions.json`/`mode_history.json` are unaffected by the three
+    evaluation-defined events moved into `windbreak.ledger.events` (issue #180):
+    `GatePlanRegistered`, `GatePlanChanged`, `GateComputationMismatch`.
+
+    A MAIN ledger holds the same `ConfigLoaded`/`ModeHeartbeat` rows as a
+    CONTROL ledger -- seq 1 and 2 in both -- with the three moved event types
+    appended afterward (seq 3-5), mixing all three into the same ledger.
+    `rebuild()` has no dedicated read model for any of the three, so they fall
+    through the same skip-without-erroring path
+    `test_rebuild_skips_unknown_event_types_without_error` pins for genuinely
+    unknown types: `config_versions.json`/`mode_history.json` come out
+    byte-identical between the two ledgers, proving the three moved types are
+    projection-neutral. Appending the shared rows first (rather than
+    interleaving the three new rows in between them) keeps their `seq` --
+    which the read-model entries carry verbatim -- identical between the two
+    ledgers; each store also gets its own fresh deterministic clock (the same
+    reproducible, call-indexed behavior `deterministic_clock` provides) so
+    the shared seq-1/seq-2 rows carry identical `created_at` timestamps too,
+    despite the main ledger's three extra rows appended afterward.
+
+    The three new classes are imported locally, mirroring this module's own
+    `mode_history_read_model` precedent above, so this single test's
+    `ImportError` -- they do not exist in `windbreak.ledger.events` yet --
+    does not break collection of the rest of this file.
+    """
+    from tests.ledger.conftest import DeterministicClock
+    from windbreak.ledger.events import (
+        GateComputationMismatch,
+        GatePlanChanged,
+        GatePlanRegistered,
+    )
+
+    plan_fields: dict[str, object] = {
+        "metric_windows": [["brier", "all"]],
+        "min_resolved_for_calibration": 150,
+        "promotion_min_resolved": 300,
+        "promotion_min_independent_event_groups": 100,
+        "brier_skill_required_ppm": 10_000,
+        "bootstrap_confidence_ppm": 950_000,
+        "live_rolling_window_size": 100,
+        "live_slippage_ratio_limit_ppm": 1_500_000,
+        "live_brier_degradation_band_ppm": 50_000,
+        "observation_window": "latest_before_close",
+        "baseline_scheme": "executable_price_at_baseline_snapshot",
+        "clustering_scheme": "event_correlation_group",
+        "paper_fill_model_version": "pfm-v1",
+    }
+    plan_hash = "a" * 64
+    previous_plan_hash = "b" * 64
+
+    main_db_path = tmp_path / "main.db"
+    control_db_path = tmp_path / "control.db"
+    main_out = tmp_path / "main_out"
+    control_out = tmp_path / "control_out"
+
+    main_store = SqliteLedgerStore(main_db_path, now=DeterministicClock())
+    _append_config_and_mode_heartbeat(main_store)
+    main_store.append(
+        GatePlanRegistered(
+            component="evaluation",
+            **plan_fields,
+            plan_hash=plan_hash,
+            paper_clock_start=1_700_000_000,
+        )
+    )
+    main_store.append(
+        GatePlanChanged(
+            component="evaluation",
+            **plan_fields,
+            plan_hash=plan_hash,
+            paper_clock_start=1_700_000_100,
+            previous_plan_hash=previous_plan_hash,
+        )
+    )
+    main_store.append(
+        GateComputationMismatch(
+            component="evaluation",
+            plan_hash=plan_hash,
+            tolerance=1,
+            mismatches=[
+                {
+                    "name": "brier",
+                    "window": "latest_before_close",
+                    "python_value": 54_000,
+                    "sql_value": 55_000,
+                }
+            ],
+        )
+    )
+    main_store.close()
+
+    control_store = SqliteLedgerStore(control_db_path, now=DeterministicClock())
+    _append_config_and_mode_heartbeat(control_store)
+    control_store.close()
+
+    rebuild(main_db_path, main_out)
+    rebuild(control_db_path, control_out)
+
+    for name in ("config_versions.json", "mode_history.json"):
+        assert (main_out / name).read_bytes() == (control_out / name).read_bytes()
