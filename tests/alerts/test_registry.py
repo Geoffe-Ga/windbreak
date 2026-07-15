@@ -1,13 +1,15 @@
-"""Tests for windbreak.alerts.registry (issue #14): the SPEC S14 alert catalog.
+"""Tests for windbreak.alerts.registry (issues #14, #186): the alert catalog.
 
-`AlertType` must carry exactly the 14 verbatim alert strings from SPEC
-Section 14, `ALERT_REGISTRY` must give each one a severity and a
-human-readable description, and `cli_token` must give each one a unique,
-shell-safe identifier for the `alert-test` CLI subcommand.
+`AlertType` carries the 14 verbatim alert strings from SPEC Section 14 as a
+strict subset, plus one deliberate internal SPEC T12 addition,
+`GATE_COMPUTATION_MISMATCH` (issue #186), for a total of 15 members.
+`ALERT_REGISTRY` must give each one a severity and a human-readable
+description, and `cli_token` must give each one a unique, shell-safe
+identifier for the `alert-test` CLI subcommand.
 
-None of `windbreak.alerts.registry`'s public names exist yet, so importing
-this module fails at collection with `ModuleNotFoundError` -- the expected
-RED state for issue #14's Gate 1.
+`AlertType.GATE_COMPUTATION_MISMATCH` does not exist yet, so the tests that
+reference it fail at collection or assertion time -- the expected RED state
+for issue #186's Gate 1.
 """
 
 from __future__ import annotations
@@ -63,17 +65,32 @@ _MEMBER_NAME_TO_VALUE = {
     "PROFIT_SWEEP_ADVISORY": "profit-sweep advisory",
     "BACKUP_FAILURE": "backup failure",
     "DISK_HALT": "disk halt",
+    "GATE_COMPUTATION_MISMATCH": "gate computation mismatch",
 }
 
-
-def test_alert_type_has_exactly_14_members() -> None:
-    """SPEC S14 defines exactly 14 alert types -- no more, no fewer."""
-    assert len(AlertType) == 14
+#: The single SPEC T12 addition beyond the closed SPEC S14 set (issue #186).
+_SPEC_T12_EXTRA_ALERTS = frozenset({"gate computation mismatch"})
 
 
-def test_alert_type_values_match_spec_section_14_verbatim() -> None:
-    """Every `AlertType` value is one of SPEC S14's strings, and vice versa."""
-    assert {member.value for member in AlertType} == SPEC_SECTION_14_ALERTS
+def test_alert_type_has_exactly_15_members() -> None:
+    """`AlertType` holds the 14 SPEC S14 members plus 1 SPEC T12 addition."""
+    assert len(AlertType) == 15
+
+
+def test_alert_type_values_are_a_strict_superset_of_spec_section_14() -> None:
+    """Every SPEC S14 string is still present in `AlertType`, verbatim."""
+    assert {member.value for member in AlertType} > SPEC_SECTION_14_ALERTS
+
+
+def test_alert_type_extras_beyond_spec_s14_are_exactly_the_t12_addition() -> None:
+    """The only member beyond the closed SPEC S14 set is the T12 addition.
+
+    Pins the extra precisely so a future stray `AlertType` member (added
+    without updating this fence) trips this test.
+    """
+    extras = {member.value for member in AlertType} - SPEC_SECTION_14_ALERTS
+
+    assert extras == _SPEC_T12_EXTRA_ALERTS
 
 
 @pytest.mark.parametrize(
@@ -118,6 +135,23 @@ def test_alert_registration_is_frozen() -> None:
         registration.severity = AlertSeverity.CRITICAL  # type: ignore[misc]
 
 
+def test_gate_computation_mismatch_is_registered_as_critical() -> None:
+    """`GATE_COMPUTATION_MISMATCH` (SPEC T12, issue #186) is a CRITICAL alert.
+
+    Pins the dual-path gate crosscheck's alert seam: the SQL and Python
+    reference computations disagreeing is always operator-critical.
+    """
+    registration = get_registration(AlertType.GATE_COMPUTATION_MISMATCH)
+
+    assert registration.severity == AlertSeverity.CRITICAL
+    assert registration.description.strip() != ""
+
+
+def test_gate_computation_mismatch_cli_token_is_hyphenated() -> None:
+    """`cli_token` renders the T12 addition as a shell-safe hyphenated word."""
+    assert cli_token(AlertType.GATE_COMPUTATION_MISMATCH) == "gate-computation-mismatch"
+
+
 def test_cli_token_hyphenates_multi_word_member_names() -> None:
     """`cli_token` lowercases and hyphenates the enum member name."""
     assert cli_token(AlertType.HALT_KILL) == "halt-kill"
@@ -133,7 +167,7 @@ def test_cli_token_has_no_spaces_or_slashes(alert_type: AlertType) -> None:
     assert "/" not in token
 
 
-def test_cli_token_is_unique_across_all_14_alert_types() -> None:
+def test_cli_token_is_unique_across_all_alert_types() -> None:
     """No two alert types collide on the same CLI token."""
     tokens = [cli_token(alert_type) for alert_type in AlertType]
 

@@ -24,7 +24,7 @@ from windbreak.alerts.registry import get_registration
 from windbreak.alerts.sinks import LogOnlySink
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from windbreak.alerts.registry import AlertSeverity, AlertType
     from windbreak.alerts.sinks import AlertSink
@@ -213,3 +213,61 @@ class AlertDispatcher:
                 exc,
                 extra={"component": "alerts"},
             )
+
+
+def dispatch_hook(
+    dispatcher: AlertDispatcher, alert_type: AlertType
+) -> Callable[[AlertSeverity, str], None]:
+    """Bind a dispatcher to the crosscheck's alert seam for one alert type.
+
+    The returned callable is the seam
+    :func:`windbreak.evaluation.crosscheck.crosscheck_gates` fires a mismatch
+    into: it takes a severity/message pair and delivers the message through
+    ``dispatcher`` under the pre-bound ``alert_type``. Severity is authoritative
+    from the registry, so a caller-supplied severity that disagrees with the
+    registration is logged as a WARNING and otherwise ignored -- the actual
+    dispatch always uses the registry-derived severity that
+    :meth:`AlertDispatcher.dispatch` looks up itself.
+
+    The closure never raises: the registry lookup and
+    :meth:`AlertDispatcher.dispatch` (which internally isolates every sink and
+    ledger failure) are both non-raising, so ``crosscheck_gates`` can call it
+    uncaught as its documented never-raising ``AlertHook``.
+
+    Args:
+        dispatcher: The dispatcher every alert is delivered through.
+        alert_type: The alert type bound into the returned closure.
+
+    Returns:
+        A ``(severity, message) -> None`` callable that structurally satisfies
+        :class:`windbreak.evaluation.crosscheck.AlertHook` (and
+        :class:`windbreak.evaluation.live_divergence.AlertHook`) without the
+        alerts package importing :mod:`windbreak.evaluation`. This is the
+        producer side of the same structural-satisfaction boundary the
+        :class:`windbreak.forecast.canary.CanaryAlertEmitter` precedent draws
+        from the consumer side (there the consumer declares the protocol a real
+        dispatcher satisfies; here the alerts package hands back a closure that
+        satisfies the consumer's protocol) -- neither side imports the other.
+    """
+    registered_severity = get_registration(alert_type).severity
+
+    def _hook(severity: AlertSeverity, message: str) -> None:
+        """Dispatch ``message`` under the bound alert type, never raising.
+
+        Args:
+            severity: The caller-supplied severity; ignored for dispatch but
+                warned about when it disagrees with the registered severity.
+            message: The alert body to deliver.
+        """
+        if severity is not registered_severity:
+            _LOGGER.warning(
+                "alert hook severity %s disagrees with the registration for %s; "
+                "dispatching at the registered %s",
+                severity,
+                alert_type,
+                registered_severity,
+                extra={"component": "alerts", "alert_type": alert_type.value},
+            )
+        dispatcher.dispatch(alert_type, message)
+
+    return _hook

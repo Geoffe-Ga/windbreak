@@ -1,9 +1,11 @@
 """SPEC Section 14 alert catalog: types, severities, and CLI tokens.
 
-Defines :class:`AlertType` (the 14 verbatim SPEC S14 alert strings),
-:class:`AlertSeverity`, the :data:`ALERT_REGISTRY` mapping each type to a
-severity and human-readable description, and :func:`cli_token`, which derives a
-shell-safe identifier used by the hidden ``alert-test`` CLI subcommand.
+Defines :class:`AlertType` (the 14 verbatim SPEC S14 alert strings plus one
+internal SPEC T12 crosscheck addition, ``GATE_COMPUTATION_MISMATCH``, which is
+not part of the closed S14 set), :class:`AlertSeverity`, the
+:data:`ALERT_REGISTRY` mapping each type to a severity and human-readable
+description, and :func:`cli_token`, which derives a shell-safe identifier used
+by the hidden ``alert-test`` CLI subcommand.
 """
 
 from __future__ import annotations
@@ -45,7 +47,12 @@ _SEVERITY_LOG_LEVELS: Final[Mapping[AlertSeverity, int]] = MappingProxyType(
 
 
 class AlertType(enum.Enum):
-    """The 14 operator alert types defined verbatim in SPEC Section 14."""
+    """Operator alert types: the 14 verbatim SPEC S14 members plus one T12 add.
+
+    The first 14 members are the alert strings defined verbatim in SPEC
+    Section 14. ``GATE_COMPUTATION_MISMATCH`` is an internal SPEC T12 crosscheck
+    addition (issue #186), not part of the closed S14 set.
+    """
 
     MODE_CHANGE = "mode change"
     HALT_KILL = "halt/kill"
@@ -61,6 +68,9 @@ class AlertType(enum.Enum):
     PROFIT_SWEEP_ADVISORY = "profit-sweep advisory"
     BACKUP_FAILURE = "backup failure"
     DISK_HALT = "disk halt"
+    # Internal SPEC T12 crosscheck addition (issue #186), NOT one of the 14
+    # verbatim SPEC S14 members.
+    GATE_COMPUTATION_MISMATCH = "gate computation mismatch"
 
 
 @dataclass(frozen=True)
@@ -134,6 +144,11 @@ ALERT_REGISTRY: Final[Mapping[AlertType, AlertRegistration]] = MappingProxyType(
         AlertType.DISK_HALT: AlertRegistration(
             AlertSeverity.CRITICAL,
             "Free disk space fell below the safe threshold; trading halted.",
+        ),
+        AlertType.GATE_COMPUTATION_MISMATCH: AlertRegistration(
+            AlertSeverity.CRITICAL,
+            "The SQL and Python dual-path gate computations disagreed on at "
+            "least one metric (SPEC T12).",
         ),
     }
 )
