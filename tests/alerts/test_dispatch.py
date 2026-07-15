@@ -1,4 +1,4 @@
-"""Tests for windbreak.alerts.dispatch (issue #14): the alert dispatcher.
+"""Tests for windbreak.alerts.dispatch (issues #14, #186): the alert dispatcher.
 
 `AlertDispatcher` fans a single alert out to every configured sink,
 isolating failures so a broken sink never takes down another sink, the
@@ -14,6 +14,16 @@ caller, or the ledger. These tests pin:
 re-exported from `windbreak.alerts`; none of them exist yet, so importing
 this module fails at collection with `ModuleNotFoundError` -- the expected
 RED state for issue #14's Gate 1.
+
+Issue #186 adds `dispatch_hook(dispatcher, alert_type)`: a factory binding
+`windbreak.evaluation.crosscheck`'s `AlertHook` seam
+(`(severity, message) -> None`) to a real `AlertDispatcher`, whose
+`dispatch(alert_type, message)` derives severity from the registry rather
+than trusting the caller's `severity` argument. `dispatch_hook` does not
+exist yet, so the tests pinning it below import it locally (inside each
+test body) rather than at module scope, so they fail on their own
+`ImportError` without breaking collection of the rest of this
+already-passing suite -- the expected RED state for issue #186's Gate 1.
 """
 
 from __future__ import annotations
@@ -22,6 +32,7 @@ import dataclasses
 import logging
 import re
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -33,6 +44,9 @@ from windbreak.alerts import (
 )
 from windbreak.alerts.registry import AlertSeverity, AlertType, get_registration
 from windbreak.alerts.sinks import LogOnlySink
+
+if TYPE_CHECKING:
+    from windbreak.evaluation.crosscheck import AlertHook
 
 _ISO_UTC = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$")
 
@@ -261,3 +275,92 @@ def test_alert_emitted_is_frozen() -> None:
 
     with pytest.raises(dataclasses.FrozenInstanceError):
         event.message = "y"  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# dispatch_hook (issue #186): binding the crosscheck's AlertHook seam to a
+# real AlertDispatcher.
+# ---------------------------------------------------------------------------
+
+
+def test_dispatch_hook_dispatches_through_the_wrapped_dispatcher(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Calling the returned hook delivers exactly one alert via the ledger.
+
+    The `AlertEmitted` the ledger receives carries the bound `alert_type`,
+    the registry-derived `AlertSeverity.CRITICAL` severity, and the message
+    verbatim. Because the caller-supplied severity agrees with the
+    registration, no severity-disagreement WARNING is logged.
+    """
+    from windbreak.alerts import dispatch_hook
+
+    caplog.set_level(logging.WARNING, logger="windbreak.alerts")
+    sink = _SucceedingSink("a")
+    ledger = _SpyLedgerWriter()
+    dispatcher = AlertDispatcher([sink], ledger_writer=ledger)
+
+    hook = dispatch_hook(dispatcher, AlertType.GATE_COMPUTATION_MISMATCH)
+    hook(AlertSeverity.CRITICAL, "some message")
+
+    assert len(ledger.recorded) == 1
+    event = ledger.recorded[0]
+    assert event.alert_type == AlertType.GATE_COMPUTATION_MISMATCH
+    assert event.severity == AlertSeverity.CRITICAL
+    assert event.message == "some message"
+    assert [
+        record
+        for record in caplog.records
+        if record.name == "windbreak.alerts" and record.levelno == logging.WARNING
+    ] == []
+
+
+def test_dispatch_hook_disagreeing_severity_warns_but_still_dispatches(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A hook-supplied severity that disagrees with the registry never wins.
+
+    Calling the hook with `AlertSeverity.INFO` against
+    `GATE_COMPUTATION_MISMATCH` (registered CRITICAL) logs a WARNING on the
+    `windbreak.alerts` logger, never raises, and still dispatches -- with the
+    registry-derived CRITICAL severity, since `AlertDispatcher.dispatch`
+    always derives severity itself.
+    """
+    from windbreak.alerts import dispatch_hook
+
+    caplog.set_level(logging.WARNING, logger="windbreak.alerts")
+    sink = _SucceedingSink("a")
+    ledger = _SpyLedgerWriter()
+    dispatcher = AlertDispatcher([sink], ledger_writer=ledger)
+    hook = dispatch_hook(dispatcher, AlertType.GATE_COMPUTATION_MISMATCH)
+
+    hook(AlertSeverity.INFO, "some message")
+
+    warnings = [
+        record
+        for record in caplog.records
+        if record.name == "windbreak.alerts" and record.levelno == logging.WARNING
+    ]
+    assert len(warnings) == 1
+    assert len(ledger.recorded) == 1
+    assert ledger.recorded[0].severity == AlertSeverity.CRITICAL
+
+
+def test_dispatch_hook_satisfies_the_crosscheck_alert_hook_protocol() -> None:
+    """A `dispatch_hook` closure structurally satisfies `crosscheck.AlertHook`.
+
+    Mirrors `tests/forecast/test_canary.py`'s structural-satisfaction pattern:
+    a typed assignment pins that mypy accepts the closure as an `AlertHook`
+    without the alerts package importing `windbreak.evaluation`.
+    """
+    from windbreak.alerts import dispatch_hook
+
+    sink = _SucceedingSink("a")
+    ledger = _SpyLedgerWriter()
+    dispatcher = AlertDispatcher([sink], ledger_writer=ledger)
+
+    hook: AlertHook = dispatch_hook(dispatcher, AlertType.GATE_COMPUTATION_MISMATCH)
+
+    assert callable(hook)
+    hook(AlertSeverity.CRITICAL, "structural check")
+    assert len(ledger.recorded) == 1

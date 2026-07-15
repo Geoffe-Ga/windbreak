@@ -71,17 +71,28 @@ Resolved API detail this suite assumes and the implementer must honor: a
 `{"name", "window", "python_value", "sql_value"}` with any sentinel rendered
 by its `.name` (mirroring `windbreak.evaluation.report._format_value`), plus
 top-level `"plan_hash"` and `"tolerance"` keys.
+
+Section 10 (issue #186) is the one exception to every other test's bare
+`_recording_alert_hook` double: it binds `crosscheck_gates`'s `AlertHook`
+seam to a real `windbreak.alerts.AlertDispatcher` via the new
+`windbreak.alerts.dispatch_hook` factory, proving a T12 mismatch reaches
+operators through the real alert system, not just an in-test spy.
+`dispatch_hook` does not exist yet, so that one test imports it locally
+(inside its own body) and fails on its own `ImportError` -- the expected
+RED state for issue #186's Gate 1 -- without breaking collection of this
+already-passing suite.
 """
 
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
 
-from windbreak.alerts.registry import AlertSeverity
+from windbreak.alerts.registry import AlertSeverity, AlertType
 from windbreak.config.schema import EvaluationConfig
 from windbreak.evaluation import cohorts
 from windbreak.evaluation.preregistration import build_gate_plan
@@ -164,6 +175,52 @@ def _recording_alert_hook() -> tuple[list[tuple[AlertSeverity, str]], _AlertHook
         calls.append((severity, message))
 
     return calls, _hook
+
+
+@dataclass
+class _RecordingAlertSink:
+    """A minimal `AlertSink` double recording every delivered call.
+
+    Used only by the `dispatch_hook` wiring test (issue #186) to prove a
+    T12 mismatch reaches operators through a real `AlertDispatcher`, rather
+    than through the bare `_recording_alert_hook` double every other test in
+    this module uses.
+    """
+
+    name: str = "recording"
+    calls: list[tuple[AlertType, AlertSeverity, str]] = field(default_factory=list)
+
+    def send(
+        self, alert_type: AlertType, severity: AlertSeverity, message: str
+    ) -> None:
+        """Record the call without raising.
+
+        Args:
+            alert_type: The kind of alert being delivered.
+            severity: The alert's severity.
+            message: The human-readable alert body.
+        """
+        self.calls.append((alert_type, severity, message))
+
+
+class _RecordingLedgerWriter:
+    """A minimal `LedgerWriter` double recording every emitted-alert event.
+
+    Used only by the `dispatch_hook` wiring test (issue #186), keeping that
+    test fully isolated from `LoggingLedgerWriter`'s real logging output.
+    """
+
+    def __init__(self) -> None:
+        """Initialize with an empty call log."""
+        self.recorded: list[object] = []
+
+    def record(self, event: object) -> None:
+        """Record the event without raising.
+
+        Args:
+            event: The `AlertEmitted` event to record.
+        """
+        self.recorded.append(event)
 
 
 def _forecast(
@@ -915,5 +972,59 @@ def test_crosscheck_gates_a_raising_python_reference_metric_is_not_propagated(
         severity, message = calls[0]
         assert severity is AlertSeverity.CRITICAL
         assert "calibration_slope" in message
+    finally:
+        store.close()
+
+
+# ---------------------------------------------------------------------------
+# 10. End-to-end wiring (issue #186): a mismatch reaches operators through a
+#     real AlertDispatcher via dispatch_hook, not just a bare recording hook.
+# ---------------------------------------------------------------------------
+
+
+def test_crosscheck_gates_mismatch_reaches_operators_through_dispatch_hook(
+    tmp_path: Path,
+) -> None:
+    """A T12 mismatch is delivered through a real `AlertDispatcher`.
+
+    Reuses the corrupted-SQL fixture from section 2, but passes
+    `alert=dispatch_hook(dispatcher, AlertType.GATE_COMPUTATION_MISMATCH)`
+    instead of the bare recording hook every other test in this module uses.
+    Proves the crosscheck's `AlertHook` seam is bound to the real alert
+    system end to end: the recording sink receives exactly one alert typed
+    `GATE_COMPUTATION_MISMATCH` at `CRITICAL` severity, carrying the same
+    mismatch message the bare-hook tests pin, while the
+    `GateComputationMismatch` ledger event is still appended to the
+    crosscheck's own store.
+    """
+    from windbreak.alerts import AlertDispatcher, dispatch_hook
+    from windbreak.evaluation.crosscheck import CrosscheckStatus, crosscheck_gates
+
+    inputs = _main_admitted_inputs()
+    plan = _built_plan()
+    store = _ledger_store(tmp_path)
+    corrupted = _corrupted_computer("brier", 1000)
+    recording_sink = _RecordingAlertSink()
+    recording_writer = _RecordingLedgerWriter()
+    alert_dispatcher = AlertDispatcher(
+        sinks=[recording_sink], ledger_writer=recording_writer
+    )
+    hook = dispatch_hook(alert_dispatcher, AlertType.GATE_COMPUTATION_MISMATCH)
+    try:
+        result = crosscheck_gates(
+            inputs, plan=plan, store=store, alert=hook, sql_path=corrupted
+        )
+
+        assert result.status is CrosscheckStatus.MISMATCH
+
+        assert len(recording_sink.calls) == 1
+        alert_type, severity, message = recording_sink.calls[0]
+        assert alert_type == AlertType.GATE_COMPUTATION_MISMATCH
+        assert severity is AlertSeverity.CRITICAL
+        assert "gate computation mismatch (tolerance=" in message
+
+        records = store.read_all()
+        assert len(records) == 1
+        assert records[-1].event_type == "GateComputationMismatch"
     finally:
         store.close()

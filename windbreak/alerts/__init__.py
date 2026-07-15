@@ -4,7 +4,8 @@ Defines the alert catalog (:class:`AlertType`, :class:`AlertSeverity`,
 :data:`ALERT_REGISTRY`), the delivery channels (:class:`NtfySink`,
 :class:`WebhookSink`, :class:`SmtpSink`, :class:`DesktopSink`,
 :class:`LogOnlySink`), and the :class:`AlertDispatcher` that fans an alert out
-to those channels while isolating failures.
+to those channels while isolating failures. :func:`dispatch_hook` binds a
+dispatcher to the crosscheck's ``(severity, message) -> None`` alert seam.
 
 Example:
     >>> from windbreak.alerts import AlertDispatcher, AlertType, LoggingLedgerWriter
@@ -23,6 +24,7 @@ from windbreak.alerts.dispatch import (
     LedgerWriter,
     LoggingLedgerWriter,
     SinkOutcome,
+    dispatch_hook,
 )
 from windbreak.alerts.registry import (
     ALERT_REGISTRY,
@@ -64,5 +66,6 @@ __all__ = [
     "WebhookSink",
     "WebhookSinkConfig",
     "cli_token",
+    "dispatch_hook",
     "get_registration",
 ]
