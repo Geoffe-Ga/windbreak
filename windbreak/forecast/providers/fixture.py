@@ -14,6 +14,10 @@ citations, and a fingerprint of the raw response.
 The module is stdlib-only and float-free, and -- per the SPEC S8.3 sandbox
 boundary -- never imports ``windbreak.config``: its member is accepted
 structurally via :class:`EnsembleMemberLike`.
+
+The parsed vote's ``abstain`` flag is validated by the sanitize layer but not
+yet acted on here: honoring an abstaining vote (excluding it from aggregation)
+arrives with issue #193.
 """
 
 from __future__ import annotations
