@@ -596,7 +596,10 @@ def _build_approval(
 
     The kernel tracks PAPER mode (so its ledgered evaluation stamps PAPER) with
     ``kill_integration=None`` -- kill wiring is out of scope -- and shares the one
-    ephemeral signing key with the gateway.
+    ephemeral signing key with the gateway. The same hash-chained ``store`` is
+    wired as the kernel's ``gate_plan_store`` (issue #185), so a PAPER ->
+    LIVE_MICRO promotion reads its three thresholds from the pre-registered gate
+    plan on the ledger, failing closed when none is registered.
 
     Args:
         store: The ledger both the kernel and the pipeline record through.
@@ -610,7 +613,12 @@ def _build_approval(
     mode_machine = ModeStateMachine(
         mode_ceiling=Mode.from_config(config.mode_ceiling), mode=Mode.PAPER
     )
-    kernel = RiskKernel(writer, mode_machine=mode_machine, kill_integration=None)
+    kernel = RiskKernel(
+        writer,
+        mode_machine=mode_machine,
+        gate_plan_store=store,
+        kill_integration=None,
+    )
     ledger = ReservationLedger(writer)
     issuer = TokenIssuer.from_key_material(key)
     pipeline = ApprovalPipeline(ledger, issuer, config_hash=config_hash(config))

@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -72,6 +73,9 @@ from windbreak.riskkernel.promotion import (
     build_promotion_gates,
     evaluate_promotion,
 )
+
+if TYPE_CHECKING:
+    from windbreak.ledger.store import LedgerStore
 
 #: ASSUMPTION 1 (see module docstring): `paper_max_drawdown_ppm` must be
 #: strictly below this many ppm (30%) to pass its `LT` criterion.
@@ -938,14 +942,16 @@ def _kernel_at(
     mode: Mode,
     *,
     ceiling: Mode = Mode.LIVE,
-    evaluation_config: EvaluationConfig | None = None,
+    gate_plan_store: LedgerStore | None = None,
 ) -> RiskKernel:
     """Build a `RiskKernel` parked at `mode`, ceilinged at `ceiling`.
 
     Args:
         mode: The starting operating mode.
         ceiling: The configured `mode_ceiling`.
-        evaluation_config: Optional `EvaluationConfig` override.
+        gate_plan_store: The ledger the kernel reads its PAPER gate plan from
+            (issue #185); `None` unless a test deliberately promotes from
+            PAPER, since none of this file's `_kernel_at` callers do.
 
     Returns:
         A `RiskKernel` wired to a fresh `InMemoryKernelLedgerWriter`.
@@ -954,7 +960,7 @@ def _kernel_at(
     return RiskKernel(
         InMemoryKernelLedgerWriter(),
         mode_machine=machine,
-        evaluation_config=evaluation_config,
+        gate_plan_store=gate_plan_store,
     )
 
 

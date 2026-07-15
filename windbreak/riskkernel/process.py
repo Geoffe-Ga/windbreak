@@ -16,6 +16,13 @@ This module wires the Risk Kernel's runtime surface:
 The heartbeat loop is always bounded by ``max_beats`` and/or a stop event --
 there is never an unbounded sleep -- so the process terminates deterministically
 under test and shuts down cleanly on a signal in production.
+
+Promotion gates. The two config-independent gates (RESEARCH -> PAPER and
+LIVE_MICRO -> LIVE) are built eagerly from module constants; the PAPER ->
+LIVE_MICRO gate's three plan-sourced thresholds are read lazily from a
+pre-registered gate plan at promotion time via
+:func:`~windbreak.evaluation.preregistration.latest_gate_plan_registration`,
+failing closed when no readable plan is wired (issue #185).
 """
 
 from __future__ import annotations
@@ -28,7 +35,7 @@ import threading
 import time
 from typing import TYPE_CHECKING, Protocol
 
-from windbreak.config import EvaluationConfig
+from windbreak.evaluation.preregistration import latest_gate_plan_registration
 from windbreak.ledger.events import (
     DemotionTriggerFired,
     Event,
@@ -48,11 +55,13 @@ from windbreak.riskkernel.modes import (
 from windbreak.riskkernel.promotion import (
     OVERRIDE_CEILING,
     SIGNIFICANCE_OVERRIDE_ACK_PHRASE,
+    GatePlanUnavailableError,
     OverrideAcknowledgementError,
-    build_promotion_gates,
+    constant_promotion_gates,
     effective_mode_ceiling,
     evaluate_promotion,
     override_applied_in,
+    paper_gate_from_thresholds,
 )
 from windbreak.riskkernel.verification import VerificationOutcome
 
@@ -60,6 +69,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping, Sequence
     from types import FrameType
 
+    from windbreak.ledger.store import LedgerStore
     from windbreak.riskkernel.context import EvaluationContext
     from windbreak.riskkernel.demotion import DemotionTrigger
     from windbreak.riskkernel.kill import KillIntegration
@@ -222,6 +232,14 @@ class InMemoryKernelLedgerWriter:
 class RiskKernel:
     """The Risk Kernel process: heartbeat loop and ledgered veto evaluation.
 
+    The RESEARCH -> PAPER and LIVE_MICRO -> LIVE promotion gates are pinned to
+    SPEC S10.9 module constants and built eagerly at construction. The PAPER ->
+    LIVE_MICRO gate is instead built lazily on each promotion attempt from the
+    pre-registered, content-addressed gate plan read from ``gate_plan_store``
+    (issue #185); with no readable plan a PAPER promotion fails closed with
+    :class:`~windbreak.riskkernel.promotion.GatePlanUnavailableError` rather than
+    consulting any live :class:`~windbreak.config.EvaluationConfig`.
+
     Attributes:
         ledger_writer: The writer every emitted event is recorded through
             (read-only).
@@ -234,7 +252,7 @@ class RiskKernel:
         *,
         verifier: ReadOnlyVerifier | None = None,
         clock: Callable[[], int] | None = None,
-        evaluation_config: EvaluationConfig | None = None,
+        gate_plan_store: LedgerStore | None = None,
         kill_integration: KillIntegration | None = None,
     ) -> None:
         """Initialize the kernel.
@@ -248,8 +266,12 @@ class RiskKernel:
             clock: A zero-argument callable returning the current epoch second,
                 injected so verification cycles are deterministic under test.
                 Defaults to :func:`_default_clock`.
-            evaluation_config: The promotion-threshold config the gates are
-                built from. Defaults to a stock :class:`EvaluationConfig`.
+            gate_plan_store: The ledger the PAPER -> LIVE_MICRO gate's three
+                plan-sourced thresholds are read from at promotion time (issue
+                #185), or ``None`` to wire no plan source -- in which case a PAPER
+                promotion attempt fails closed with
+                :class:`~windbreak.riskkernel.promotion.GatePlanUnavailableError`.
+                The two constant gates never consult it.
             kill_integration: The kill switch and its trigger adapters (issue
                 #35), or ``None`` to run without kill wiring. When present, its
                 watcher is polled each beat and its monitor is fed each
@@ -265,12 +287,10 @@ class RiskKernel:
         self._verifier = verifier
         self._clock = clock if clock is not None else _default_clock
         self._latest_verification: VerificationSnapshot | None = None
-        config = (
-            evaluation_config if evaluation_config is not None else EvaluationConfig()
-        )
-        self._promotion_gates: Mapping[Mode, PromotionGate] = build_promotion_gates(
-            config
-        )
+        self._gate_plan_store = gate_plan_store
+        # Only the two config-independent gates are built eagerly; the PAPER gate
+        # is built lazily per attempt from the registered plan (issue #185).
+        self._promotion_gates: Mapping[Mode, PromotionGate] = constant_promotion_gates()
         self._override_applied = False
 
     @classmethod
@@ -290,7 +310,7 @@ class RiskKernel:
         ledger_writer: KernelLedgerWriter,
         *,
         mode_machine: ModeStateMachine | None = None,
-        evaluation_config: EvaluationConfig | None = None,
+        gate_plan_store: LedgerStore | None = None,
     ) -> RiskKernel:
         """Rebuild a kernel, replaying durable override and kill state.
 
@@ -315,7 +335,8 @@ class RiskKernel:
             events: The event history to replay override and kill state from.
             ledger_writer: The writer the rebuilt kernel records new events to.
             mode_machine: The operating-mode state machine to adopt.
-            evaluation_config: The promotion-threshold config for the gates.
+            gate_plan_store: The ledger the rebuilt kernel reads its PAPER gate
+                plan from at promotion time (issue #185), or ``None``.
 
         Returns:
             A :class:`RiskKernel` whose override cap and kill state reflect
@@ -325,7 +346,7 @@ class RiskKernel:
         kernel = cls(
             ledger_writer,
             mode_machine=mode_machine,
-            evaluation_config=evaluation_config,
+            gate_plan_store=gate_plan_store,
         )
         kernel._override_applied = override_applied_in(event_history)
         if (
@@ -374,6 +395,14 @@ class RiskKernel:
         PAPER -> LIVE_MICRO promotion succeeds while a later LIVE_MICRO -> LIVE
         attempt still raises ``ModeCeilingExceededError``.
 
+        On the PAPER rung the gate's three plan-sourced thresholds are read
+        lazily from the registered gate plan on *every* attempt (never cached),
+        so a ``GatePlanChanged`` registered between two attempts is picked up by
+        the next one. The remaining evidence -- ``paper_window_days`` and the
+        rest -- stays caller-supplied and must be anchored by the evidence
+        producer to the registered plan's ``paper_clock_start`` (tracked as a
+        separate follow-up).
+
         Args:
             evidence: The promotion-readiness evidence snapshot.
 
@@ -386,15 +415,17 @@ class RiskKernel:
             IllegalModeTransitionError: If the current mode has no promotion
                 gate (a safety mode, or ``LIVE`` at the top of the ladder). No
                 event is recorded in this case.
+            GatePlanUnavailableError: On a PAPER promotion when no readable
+                registered gate plan is available (no store wired, no
+                registration, or a corrupt/tampered one). No event is recorded
+                and the mode is left unchanged (fail-closed).
             ModeCeilingExceededError: If the promotion cleared (on its merits or
                 via the override) but an active ceiling blocks the target rung.
                 The ``PromotionEvaluated`` event is still recorded first, and the
                 mode is left unchanged.
         """
         current = self._mode_machine.mode
-        gate = self._promotion_gates.get(current)
-        if gate is None:
-            raise IllegalModeTransitionError(f"no promotion gate from {current.name}")
+        gate = self._gate_for(current)
         decision = evaluate_promotion(gate, evidence)
         override_bypassed = _override_promotes(gate, decision, self._override_applied)
         self._ledger_writer.record(
@@ -413,6 +444,76 @@ class RiskKernel:
                 effective_ceiling=self.mode_ceiling_effective
             )
         return decision
+
+    def _gate_for(self, current: Mode) -> PromotionGate:
+        """Select the promotion gate for ``current``, failing closed as required.
+
+        The PAPER gate is built lazily from the registered plan (issue #185);
+        every other promotable rung uses its pre-built constant gate.
+
+        Args:
+            current: The mode being promoted from.
+
+        Returns:
+            The :class:`~windbreak.riskkernel.promotion.PromotionGate` guarding
+            the promotion out of ``current``.
+
+        Raises:
+            IllegalModeTransitionError: If ``current`` has no promotion gate (a
+                safety mode, or ``LIVE`` at the top of the ladder).
+            GatePlanUnavailableError: On the PAPER rung when no readable
+                registered gate plan is available.
+        """
+        if current is Mode.PAPER:
+            return self._paper_gate_from_registered_plan()
+        gate = self._promotion_gates.get(current)
+        if gate is None:
+            raise IllegalModeTransitionError(f"no promotion gate from {current.name}")
+        return gate
+
+    def _paper_gate_from_registered_plan(self) -> PromotionGate:
+        """Build the PAPER -> LIVE_MICRO gate from the registered plan (fail-closed).
+
+        Reads the latest registration from the wired plan store and stamps its
+        three plan-sourced thresholds into the gate. Never falls back to a live
+        config: an absent store, an empty ledger, or an unreadable
+        (corrupt/tampered) registration each raises
+        :class:`~windbreak.riskkernel.promotion.GatePlanUnavailableError` before
+        any event is recorded.
+
+        Returns:
+            The ten-criterion PAPER -> LIVE_MICRO
+            :class:`~windbreak.riskkernel.promotion.PromotionGate`.
+
+        Raises:
+            GatePlanUnavailableError: If no store is wired, the ledger holds no
+                registration, or the latest registration is unreadable (the
+                underlying ``ValueError``/``TypeError`` is chained as
+                ``__cause__``).
+        """
+        store = self._gate_plan_store
+        if store is None:
+            raise GatePlanUnavailableError(
+                "no gate plan store wired; promotion blocked (fail-closed)"
+            )
+        try:
+            registration = latest_gate_plan_registration(store)
+        except (ValueError, TypeError) as err:
+            raise GatePlanUnavailableError(
+                "registered gate plan is unreadable; promotion blocked (fail-closed)"
+            ) from err
+        if registration is None:
+            raise GatePlanUnavailableError(
+                "no registered gate plan; promotion blocked (fail-closed)"
+            )
+        plan = registration.plan
+        return paper_gate_from_thresholds(
+            promotion_min_resolved=plan.promotion_min_resolved,
+            promotion_min_independent_event_groups=(
+                plan.promotion_min_independent_event_groups
+            ),
+            brier_skill_required_ppm=plan.brier_skill_required_ppm,
+        )
 
     def fire_demotion_trigger(self, trigger: DemotionTrigger) -> Mode | None:
         """Fire a demotion trigger, ledgering the firing and any transition.

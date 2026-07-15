@@ -37,6 +37,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from windbreak.config import EvaluationConfig
+from windbreak.evaluation.preregistration import build_gate_plan, register_gate_plan
 from windbreak.ledger.events import (
     EVENT_TYPES,
     Event,
@@ -44,6 +46,7 @@ from windbreak.ledger.events import (
     SignificanceOverrideApplied,
     canonical_json,
 )
+from windbreak.ledger.store import SqliteLedgerStore
 from windbreak.riskkernel.modes import Mode, ModeCeilingExceededError, ModeStateMachine
 from windbreak.riskkernel.process import InMemoryKernelLedgerWriter, RiskKernel
 from windbreak.riskkernel.promotion import (
@@ -56,7 +59,10 @@ from windbreak.riskkernel.promotion import (
 )
 
 if TYPE_CHECKING:
-    from windbreak.config import EvaluationConfig
+    from collections.abc import Iterator
+    from pathlib import Path
+
+    from windbreak.ledger.store import LedgerStore
 
 #: A `GateEvidence` snapshot that satisfies every LIVE_MICRO->LIVE criterion
 #: (the other 14 fields are irrelevant to that gate and left at their
@@ -109,14 +115,16 @@ def _kernel_at(
     mode: Mode,
     *,
     ceiling: Mode = Mode.LIVE,
-    evaluation_config: EvaluationConfig | None = None,
+    gate_plan_store: LedgerStore | None = None,
 ) -> RiskKernel:
     """Build a `RiskKernel` parked at `mode`, ceilinged at `ceiling`.
 
     Args:
         mode: The starting operating mode.
         ceiling: The configured `mode_ceiling`.
-        evaluation_config: Optional `EvaluationConfig` override.
+        gate_plan_store: The ledger the kernel reads its PAPER gate plan from
+            (issue #185); pass the `paper_gate_plan_store` fixture for any
+            test that promotes PAPER->LIVE_MICRO.
 
     Returns:
         A `RiskKernel` wired to a fresh `InMemoryKernelLedgerWriter`.
@@ -125,8 +133,34 @@ def _kernel_at(
     return RiskKernel(
         InMemoryKernelLedgerWriter(),
         mode_machine=machine,
-        evaluation_config=evaluation_config,
+        gate_plan_store=gate_plan_store,
     )
+
+
+@pytest.fixture
+def paper_gate_plan_store(tmp_path: Path) -> Iterator[LedgerStore]:
+    """Provide a `SqliteLedgerStore` with a default-config PAPER gate plan.
+
+    Registers a plan built from the default `EvaluationConfig()` -- whose
+    three plan-sourced thresholds (300/100/10000) match exactly the values
+    `_PAPER_PASSING_EXCEPT_SIGNIFICANCE`/`_PAPER_ALL_PASSING` are tuned
+    against -- so wiring this store into `_kernel_at` (issue #185) changes no
+    existing test's verdict; it only satisfies the new fail-closed
+    precondition that a PAPER promotion attempt must find a registered plan.
+
+    Args:
+        tmp_path: The pytest tmp-path directory the store is rooted in.
+
+    Yields:
+        A `LedgerStore` carrying exactly one `GatePlanRegistered` record.
+    """
+    store = SqliteLedgerStore(tmp_path / "override_paper_gate_plan.db")
+    plan = build_gate_plan(
+        EvaluationConfig(), paper_fill_model_version="override-test-v1"
+    )
+    register_gate_plan(plan, store)
+    yield store
+    store.close()
 
 
 # --- Override constants: sanity ---------------------------------------------------
@@ -259,14 +293,18 @@ def test_override_cap_blocks_live_promotion_but_still_ledgers() -> None:
 # --- Significance bypass: the sole override-rescuable criterion ----------------
 
 
-def test_significance_bypass_promotes_paper_to_live_micro() -> None:
+def test_significance_bypass_promotes_paper_to_live_micro(
+    paper_gate_plan_store: LedgerStore,
+) -> None:
     """Without the override, PAPER evidence failing only the significance
     criterion neither promotes nor bypasses. With the ledgered override
     applied, the identical evidence promotes PAPER -> LIVE_MICRO via the
     bypass -- even though the raw, ledgered decision is still `approved is
     False` (the override changes the kernel's mode, never the evaluation).
     """
-    kernel = _kernel_at(Mode.PAPER, ceiling=Mode.LIVE)
+    kernel = _kernel_at(
+        Mode.PAPER, ceiling=Mode.LIVE, gate_plan_store=paper_gate_plan_store
+    )
 
     without_override = kernel.request_promotion(_PAPER_PASSING_EXCEPT_SIGNIFICANCE)
 
@@ -296,14 +334,18 @@ def test_significance_bypass_promotes_paper_to_live_micro() -> None:
     assert promotion_events[-1].payload["override_bypassed"] is True
 
 
-def test_override_does_not_bypass_a_non_significance_failure() -> None:
+def test_override_does_not_bypass_a_non_significance_failure(
+    paper_gate_plan_store: LedgerStore,
+) -> None:
     """A second, non-overridable failure alongside the significance failure
     blocks the bypass entirely: too few resolved forecasts
     (`resolved_realtime_forecast_count=299`, failing the non-overridable
     `paper_resolved_forecasts` criterion) means the override rescues
     nothing, even though it is active.
     """
-    kernel = _kernel_at(Mode.PAPER, ceiling=Mode.LIVE)
+    kernel = _kernel_at(
+        Mode.PAPER, ceiling=Mode.LIVE, gate_plan_store=paper_gate_plan_store
+    )
     kernel.apply_ledgered_override(SIGNIFICANCE_OVERRIDE_ACK_PHRASE)
     evidence = dataclasses.replace(
         _PAPER_PASSING_EXCEPT_SIGNIFICANCE, resolved_realtime_forecast_count=299
@@ -322,12 +364,16 @@ def test_override_does_not_bypass_a_non_significance_failure() -> None:
     assert events[0].payload["override_bypassed"] is False
 
 
-def test_override_unused_when_significance_passes() -> None:
+def test_override_unused_when_significance_passes(
+    paper_gate_plan_store: LedgerStore,
+) -> None:
     """When the significance criterion itself passes, an active override
     changes nothing: the promotion succeeds on its own merits, and
     `override_bypassed` is `False` because no bypass was needed.
     """
-    kernel = _kernel_at(Mode.PAPER, ceiling=Mode.LIVE)
+    kernel = _kernel_at(
+        Mode.PAPER, ceiling=Mode.LIVE, gate_plan_store=paper_gate_plan_store
+    )
     kernel.apply_ledgered_override(SIGNIFICANCE_OVERRIDE_ACK_PHRASE)
 
     decision = kernel.request_promotion(_PAPER_ALL_PASSING)
@@ -344,13 +390,17 @@ def test_override_unused_when_significance_passes() -> None:
     assert events[0].payload["override_bypassed"] is False
 
 
-def test_cap_still_blocks_live_after_override_bypassed_promotion() -> None:
+def test_cap_still_blocks_live_after_override_bypassed_promotion(
+    paper_gate_plan_store: LedgerStore,
+) -> None:
     """Having reached LIVE_MICRO via the override bypass, the permanent cap
     still blocks LIVE_MICRO -> LIVE: `request_promotion` still ledgers the
     approving LIVE_MICRO->LIVE evaluation, then raises
     `ModeCeilingExceededError`, leaving the mode at LIVE_MICRO.
     """
-    kernel = _kernel_at(Mode.PAPER, ceiling=Mode.LIVE)
+    kernel = _kernel_at(
+        Mode.PAPER, ceiling=Mode.LIVE, gate_plan_store=paper_gate_plan_store
+    )
     kernel.apply_ledgered_override(SIGNIFICANCE_OVERRIDE_ACK_PHRASE)
     kernel.request_promotion(_PAPER_PASSING_EXCEPT_SIGNIFICANCE)
     assert kernel.mode is Mode.LIVE_MICRO

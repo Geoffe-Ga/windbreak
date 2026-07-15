@@ -13,6 +13,17 @@ kernel-level entrypoints (:meth:`RiskKernel.request_promotion` and the ledgered
 significance override) live in :mod:`windbreak.riskkernel.process` and build on
 these primitives.
 
+The PAPER -> LIVE_MICRO gate's three plan-sourced thresholds (resolved-count,
+independent-event-group, and Brier-skill) are no longer read from a live
+:class:`~windbreak.config.EvaluationConfig` at promotion time (issue #185).
+Instead the kernel builds that gate lazily from the pre-registered,
+content-addressed gate plan via :func:`paper_gate_from_thresholds`, failing
+closed with :class:`GatePlanUnavailableError` when no readable plan exists. The
+RESEARCH -> PAPER and LIVE_MICRO -> LIVE gates stay pinned to module constants
+(built eagerly via :func:`constant_promotion_gates`); :func:`build_promotion_gates`
+remains for the pure-evaluation unit suites that still source the PAPER
+thresholds from a config.
+
 Evaluation is table-driven over the :class:`Comparison` enum (see
 :data:`_COMPARATORS`) rather than a branch tree, keeping each function's
 cyclomatic complexity low and making the comparison operators mutation-resistant
@@ -97,6 +108,10 @@ _OVERRIDE_EVENT_TYPE = "SignificanceOverrideApplied"
 
 class OverrideAcknowledgementError(Exception):
     """Raised when the significance-override acknowledgement phrase is wrong."""
+
+
+class GatePlanUnavailableError(Exception):
+    """Raised when promotion cannot read a registered gate plan (fail-closed)."""
 
 
 class Comparison(enum.Enum):
@@ -333,12 +348,28 @@ def _research_to_paper_gate() -> PromotionGate:
     return PromotionGate(source=Mode.RESEARCH, target=Mode.PAPER, criteria=criteria)
 
 
-def _paper_to_live_micro_gate(evaluation: EvaluationConfig) -> PromotionGate:
-    """Build the PAPER -> LIVE_MICRO gate, config-sourcing three thresholds.
+def paper_gate_from_thresholds(
+    *,
+    promotion_min_resolved: int,
+    promotion_min_independent_event_groups: int,
+    brier_skill_required_ppm: int,
+) -> PromotionGate:
+    """Build the PAPER -> LIVE_MICRO gate, stamping three caller-supplied thresholds.
+
+    This is the pure, ledger-free seam the kernel uses to build the PAPER gate
+    lazily from a pre-registered gate plan (issue #185): the three plan-sourced
+    thresholds are parameters, every other criterion is pinned to the SPEC S10.9
+    module constants. :func:`_paper_to_live_micro_gate` delegates here, so the
+    ten-criterion shape has exactly one definition (no drift).
 
     Args:
-        evaluation: The evaluation config supplying the resolved-count,
-            independent-group, and Brier-skill thresholds.
+        promotion_min_resolved: Threshold for the resolved-real-time-forecast
+            count criterion (``paper_resolved_forecasts``).
+        promotion_min_independent_event_groups: Threshold for the
+            independent-event-group count criterion
+            (``paper_independent_event_groups``).
+        brier_skill_required_ppm: Threshold for the Brier-skill floor criterion
+            (``paper_brier_skill``), in parts-per-million.
 
     Returns:
         The ten-criterion PAPER -> LIVE_MICRO :class:`PromotionGate`.
@@ -348,21 +379,21 @@ def _paper_to_live_micro_gate(evaluation: EvaluationConfig) -> PromotionGate:
             criterion_id="paper_resolved_forecasts",
             evidence_field="resolved_realtime_forecast_count",
             comparison=Comparison.GE,
-            threshold=evaluation.promotion_min_resolved,
+            threshold=promotion_min_resolved,
             description="enough resolved real-time forecasts",
         ),
         GateCriterion(
             criterion_id="paper_independent_event_groups",
             evidence_field="independent_event_group_count",
             comparison=Comparison.GE,
-            threshold=evaluation.promotion_min_independent_event_groups,
+            threshold=promotion_min_independent_event_groups,
             description="enough independent event groups",
         ),
         GateCriterion(
             criterion_id="paper_brier_skill",
             evidence_field="brier_skill_ppm",
             comparison=Comparison.GE,
-            threshold=evaluation.brier_skill_required_ppm,
+            threshold=brier_skill_required_ppm,
             description="Brier skill meets the required floor",
         ),
         GateCriterion(
@@ -417,6 +448,30 @@ def _paper_to_live_micro_gate(evaluation: EvaluationConfig) -> PromotionGate:
         ),
     )
     return PromotionGate(source=Mode.PAPER, target=Mode.LIVE_MICRO, criteria=criteria)
+
+
+def _paper_to_live_micro_gate(evaluation: EvaluationConfig) -> PromotionGate:
+    """Build the PAPER -> LIVE_MICRO gate, config-sourcing three thresholds.
+
+    A thin delegate to :func:`paper_gate_from_thresholds` that reads the three
+    plan-sourced thresholds off an :class:`~windbreak.config.EvaluationConfig`,
+    kept so :func:`build_promotion_gates` stays byte-identical for the
+    pure-evaluation unit suites.
+
+    Args:
+        evaluation: The evaluation config supplying the resolved-count,
+            independent-group, and Brier-skill thresholds.
+
+    Returns:
+        The ten-criterion PAPER -> LIVE_MICRO :class:`PromotionGate`.
+    """
+    return paper_gate_from_thresholds(
+        promotion_min_resolved=evaluation.promotion_min_resolved,
+        promotion_min_independent_event_groups=(
+            evaluation.promotion_min_independent_event_groups
+        ),
+        brier_skill_required_ppm=evaluation.brier_skill_required_ppm,
+    )
 
 
 def _live_micro_to_live_gate() -> PromotionGate:
@@ -487,6 +542,26 @@ def build_promotion_gates(evaluation: EvaluationConfig) -> Mapping[Mode, Promoti
     return {
         Mode.RESEARCH: _research_to_paper_gate(),
         Mode.PAPER: _paper_to_live_micro_gate(evaluation),
+        Mode.LIVE_MICRO: _live_micro_to_live_gate(),
+    }
+
+
+def constant_promotion_gates() -> Mapping[Mode, PromotionGate]:
+    """Build the two config-independent promotion gates, keyed by source mode.
+
+    Returns only the RESEARCH -> PAPER and LIVE_MICRO -> LIVE gates, both pinned
+    entirely to SPEC S10.9 module constants. The PAPER -> LIVE_MICRO gate is
+    deliberately absent: the kernel builds it lazily from the registered gate
+    plan at promotion time (issue #185), never eagerly at construction, so no
+    live :class:`~windbreak.config.EvaluationConfig` is consulted to stand a
+    kernel up.
+
+    Returns:
+        A mapping of :class:`Mode` (``RESEARCH`` and ``LIVE_MICRO`` only) to its
+        constant :class:`PromotionGate`.
+    """
+    return {
+        Mode.RESEARCH: _research_to_paper_gate(),
         Mode.LIVE_MICRO: _live_micro_to_live_gate(),
     }
 
