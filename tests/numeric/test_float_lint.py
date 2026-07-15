@@ -3,10 +3,9 @@
 The AST float-lint is the enforcement mechanism behind SPEC S6.1's "no
 floats in the money path" rule: `windbreak/numeric`, `windbreak/ledger`,
 `windbreak/riskkernel`, `windbreak/connector`, `windbreak/screener`,
-`windbreak/forecast`, `windbreak/tokens`, and `windbreak/selector` must never
-contain a float literal,
-a `float`
-annotation (including forward-ref
+`windbreak/forecast`, `windbreak/tokens`, `windbreak/selector`,
+`windbreak/scheduler`, `windbreak/evaluation`, and `windbreak/reports` must
+never contain a float literal, a `float` annotation (including forward-ref
 string annotations), a true-division operator, or a `float(...)` cast. This
 module loads the script directly by path
 (`importlib.util.spec_from_file_location`) because it lives outside the
@@ -22,8 +21,10 @@ probability/money-bearing record fields); issue #31 appends `windbreak/tokens`
 (the shared approval-token package's money-bearing claims fields); issue #43
 appends `windbreak/selector` (the pure Trade Selector's fixed-point
 price/edge/sizing paths); issue #48 appends `windbreak/scheduler` (the always-on
-PAPER loop's scaled-integer equity/floor sampling).
-`EXPECTED_DENYLISTED_PACKAGES` below is updated to the nine entries the
+PAPER loop's scaled-integer equity/floor sampling); issue #187 appends
+`windbreak/evaluation` and `windbreak/reports` (the evaluation harness and
+reporting surface, whose money/probability aggregates are scaled-integer).
+`EXPECTED_DENYLISTED_PACKAGES` below is updated to the eleven entries the
 implementations must append to the
 script's own `DENYLISTED_PACKAGES`; until each append lands,
 `test_denylisted_packages_constant` fails on a tuple mismatch -- the
@@ -64,7 +65,10 @@ LINT_SCRIPT_PATH = REPO_ROOT / "scripts" / "lint_no_floats.py"
 #: Selector, whose price/edge/sizing paths are fixed-point per SPEC S9.1),
 #: bringing the total to eight. Issue #48 appends `windbreak/scheduler` (the
 #: always-on PAPER loop, whose equity/floor sampling is scaled-integer money),
-#: bringing the total to nine.
+#: bringing the total to nine. Issue #187 appends `windbreak/evaluation` and
+#: `windbreak/reports` (the evaluation harness and reporting surface, whose
+#: money/probability aggregates stay scaled-integer), bringing the total to
+#: eleven.
 EXPECTED_DENYLISTED_PACKAGES = (
     "windbreak/numeric",
     "windbreak/ledger",
@@ -75,6 +79,8 @@ EXPECTED_DENYLISTED_PACKAGES = (
     "windbreak/tokens",
     "windbreak/selector",
     "windbreak/scheduler",
+    "windbreak/evaluation",
+    "windbreak/reports",
 )
 
 
@@ -99,7 +105,7 @@ def lint_module() -> types.ModuleType:
 
 
 def test_denylisted_packages_constant(lint_module: types.ModuleType) -> None:
-    """The script's denylist must cover exactly the nine money-path packages."""
+    """The script's denylist must cover exactly the eleven money-path packages."""
     assert lint_module.DENYLISTED_PACKAGES == EXPECTED_DENYLISTED_PACKAGES
 
 

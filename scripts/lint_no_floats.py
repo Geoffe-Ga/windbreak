@@ -86,6 +86,11 @@ if TYPE_CHECKING:
 #: always-on PAPER composition root, whose tick computes equity/positions in
 #: scaled-integer micros/centis (SPEC S6.1) -- a strengthening of the gate over
 #: the new money-handling package, never a weakening.
+#: Issue #187 extends the path with the ``windbreak/evaluation`` and
+#: ``windbreak/reports`` packages -- the evaluation harness and its reporting
+#: surface, whose money/probability aggregates stay on the scaled-integer money
+#: path (SPEC S6.1) -- promoting their exact-integer discipline from convention
+#: to lint enforcement.
 DENYLISTED_PACKAGES: tuple[str, ...] = (
     "windbreak/numeric",
     "windbreak/ledger",
@@ -96,6 +101,8 @@ DENYLISTED_PACKAGES: tuple[str, ...] = (
     "windbreak/tokens",
     "windbreak/selector",
     "windbreak/scheduler",
+    "windbreak/evaluation",
+    "windbreak/reports",
 )
 
 FLOAT_LITERAL_CODE = "FLOAT-001"
