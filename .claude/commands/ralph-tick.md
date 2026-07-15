@@ -126,7 +126,7 @@ merge a pending/failing PR). The helper keys CI off the `gh pr checks` **exit
 code** (`0`=green, `8`=pending, else=failed) and only honours an LGTM verdict
 posted **after** the PR's HEAD commit (stale-verdict guard):
 ```bash
-STATUS=$(scripts/ralph/pr-ready.sh "$PR_NUM")   # ready | behind | pending | ci-failed | awaiting-review
+STATUS=$(scripts/ralph/pr-ready.sh "$PR_NUM")   # ready | behind | comments | comments-behind | changes-requested | pending | ci-failed | awaiting-review
 ```
 Read the PR's comments once for context (which issue it closes, verdict text):
 ```bash
@@ -156,16 +156,28 @@ Then act on `$STATUS`:
   A clean sync → dispatch its `ralph-worker` to re-clear Gate 2 locally and push;
   it re-merges on a later wake once green. `SYNC-CONFLICT` → that lane drops to
   Gate 1 (worker resolves the conflict as a root-cause change, re-greens, pushes).
-- **`awaiting-review` with a fresh non-LGTM verdict — triage it, don't just
-  wait** (owner directive 2026-07-05): read the verdict comment posted after
-  HEAD. **`CHANGES_REQUESTED` always blocks** → Step 2 (`address-feedback`).
-  **`COMMENTS` with zero blocking findings** (no 🔴/BLOCKING items, no
-  insufficient-testing flag) may merge exactly like an LGTM once CI is green
-  and the PR is up-to-date — file the non-blocking nits as backlog issues (or
-  leave them to the groom gate) so the pipeline keeps flowing. `COMMENTS`
-  **with** any blocking finding → Step 2 (`address-feedback`). Merging is
-  NEVER allowed with failing or pending CI — all-green + fresh verdict is the
-  floor, no exceptions.
+- **`comments`** (fresh `COMMENTS` verdict + CI green + `mergeStateStatus`
+  `CLEAN`) **— triage it, don't just wait** (owner directive 2026-07-05). The
+  helper has already confirmed the verdict is a fresh `COMMENTS` (not "no
+  verdict"), so read the verdict body only to judge its *contents*: **`COMMENTS`
+  with zero blocking findings** (no 🔴/BLOCKING items, no insufficient-testing
+  flag) merges exactly like `ready` — file the non-blocking nits as backlog
+  issues (or leave them to the groom gate) so the pipeline keeps flowing, then
+  run the same merge + close + `release` + state-bump block as `ready` above.
+  `COMMENTS` **with** any blocking finding → Step 2 (`address-feedback`). Merging
+  is NEVER allowed with failing or pending CI — the helper only emits `comments`
+  once CI is green, so an all-green + fresh verdict floor holds with no
+  exceptions.
+- **`comments-behind`** (fresh `COMMENTS` + green but `mergeStateStatus`
+  `BEHIND`). Same as `behind`: **do not merge stale.** Sync it
+  (`scripts/ralph/fleet.sh sync "$ISSUE_N" || echo "SYNC-CONFLICT $ISSUE_N"`) and
+  let CI re-run; a later wake re-emits `comments` (or `ready`) once it is green
+  and up-to-date, and you triage the verdict body then.
+- **`changes-requested`** (fresh `CHANGES_REQUESTED`, or any fresh verdict that
+  is neither LGTM nor COMMENTS). **Always blocks** → Step 2 (`address-feedback`).
+  No verdict re-read needed to distinguish this from "no verdict": the helper
+  only emits `changes-requested` when a fresh, non-LGTM/non-COMMENTS verdict is
+  actually on the PR.
 - **`pending`** / **`awaiting-review`** (no fresh verdict yet) — CI is still
   running or the reviewer hasn't posted for this HEAD. Leave the lane; its
   Step 5 subscription wakes you when CI or the verdict changes. **Exception — missing review usually means a merge
@@ -194,7 +206,8 @@ into that PR's worktree only if it needs a fix (re-attach a worktree with
 `scripts/ralph/fleet.sh assign "$N" "<slug>"` if reconcile removed it — `assign`
 reuses the existing branch):
 
-- **Gate 4 failed** (`CHANGES_REQUESTED`/`COMMENTS`): worker runs the
+- **Gate 4 failed** (`changes-requested`, or `comments` **with** blocking
+  findings — a clean `COMMENTS` merges in Step 1 instead): worker runs the
   **`address-feedback`** flow in the worktree — triage, TDD fix loop dispatching
   the specialist that owns each comment, re-clear Gate 2 + Gate 2.5, push, reply,
   resolve threads.
@@ -286,7 +299,7 @@ for all of them. Arrange, in this order of preference:
    for the whole session that polls every in-flight Ralph PR (via
    `gh pr list --author "@me"` + `scripts/ralph/pr-ready.sh`) every ~90s and
    emits one event line per **state transition** — `PR#N:<old→new status>`
-   (`ready`/`behind`/`pending`/`ci-failed`/`awaiting-review`) — and one line
+   (`ready`/`behind`/`comments`/`comments-behind`/`changes-requested`/`pending`/`ci-failed`/`awaiting-review`) — and one line
    when a PR **disappears** (merged or closed, incl. `iteration-trigger.yml`
    auto-merges: "slot may be free, run a tick to release+refill"). Design
    rules learned the hard way (2026-07-05 incident — monitor went silent for

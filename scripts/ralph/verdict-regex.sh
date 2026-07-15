@@ -34,8 +34,14 @@
 # decoration (emoji/whitespace/newline) between `verdict` and `lgtm`. That stays
 # safe: a stray "LGTM" in prose never matches (it is keyed to the verdict line),
 # and a non-LGTM token like COMMENTS/CHANGES_REQUESTED puts a letter right after
-# the emoji, breaking the non-alphanumeric run before any later "LGTM". Only the
-# LGTM matcher widens; `VERDICT_RE` (comment selection) keeps its strict
+# the emoji, breaking the non-alphanumeric run before any later "LGTM".
+# `VERDICT_COMMENTS_RE` is the exact mirror of `VERDICT_LGTM_RE` for the
+# `COMMENTS` token: same emoji/newline-tolerant `[^a-zA-Z0-9]+` separator, so
+# `## Verdict\n💬 COMMENTS`, `## Verdict: 💬 COMMENTS`, `## Verdict: COMMENTS`,
+# and `**Verdict:** COMMENTS` all match, and the same prose-guard property holds
+# — the run stops at the first alphanumeric char, so a stray "comments" word in
+# later prose (after an LGTM/CHANGES_REQUESTED line) never matches. The two
+# token matchers widen; `VERDICT_RE` (comment selection) keeps its strict
 # `[:*\s]` class unchanged. Backslashes are doubled because this text is spliced
 # into a jq string literal, where `\s` is an invalid escape and must reach the
 # regex engine as `\\s` (the negated class `[^a-zA-Z0-9]` has no backslash, so
@@ -44,11 +50,14 @@
 # are SINGLE-quoted (not folded into the surrounding double quotes) so their
 # `\\s` survives verbatim: inside double quotes bash would collapse `\\s` → `\s`,
 # which jq then rejects as an invalid escape — the class must stay `[:*\\s]`.
-# VERDICT_RE and VERDICT_LGTM_RE are consumed by the scripts that source this
-# fragment (pr-ready.sh uses both; assert-review-posted.sh uses VERDICT_RE), so
-# a standalone shellcheck of this file cannot see their use — silence SC2034.
+# VERDICT_RE, VERDICT_LGTM_RE, and VERDICT_COMMENTS_RE are consumed by the
+# scripts that source this fragment (pr-ready.sh uses all three;
+# assert-review-posted.sh uses VERDICT_RE), so a standalone shellcheck of this
+# file cannot see their use — silence SC2034.
 readonly VERDICT_PREFIX_RE='(?im)^\\s*(?:#{1,6}\\s+|\\*\\*)?verdict'
 # shellcheck disable=SC2034
 readonly VERDICT_RE="${VERDICT_PREFIX_RE}"'[:*\\s]'
 # shellcheck disable=SC2034
 readonly VERDICT_LGTM_RE="${VERDICT_PREFIX_RE}"'[^a-zA-Z0-9]+lgtm'
+# shellcheck disable=SC2034
+readonly VERDICT_COMMENTS_RE="${VERDICT_PREFIX_RE}"'[^a-zA-Z0-9]+comments'
