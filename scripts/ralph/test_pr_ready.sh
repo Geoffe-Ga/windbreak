@@ -8,6 +8,14 @@
 # verdict only counts when it is fresher than the PR's HEAD commit (stale-verdict
 # guard). We put a fake, arg-aware `gh` on PATH and assert every classification.
 #
+# Issue #129 (RED): pr-ready.sh's token vocabulary is being widened from
+# ready|behind|pending|ci-failed|awaiting-review to also emit `comments` (fresh
+# COMMENTS verdict + CLEAN), `comments-behind` (fresh COMMENTS + BEHIND), and
+# `changes-requested` (a fresh verdict-bearing comment that is neither LGTM nor
+# COMMENTS, derived by elimination). The cases below pin that vocabulary; they
+# fail against the CURRENT pr-ready.sh, which knows none of the three new
+# tokens, until the implementation lands.
+#
 # Run:  bash scripts/ralph/test_pr_ready.sh
 set -euo pipefail
 
@@ -30,7 +38,10 @@ mkdir -p "$BIN"
 #   CHECKS_EC     — exit code `gh pr checks` should return (0 green / 8 pending / other failed)
 #   MERGE_STATE   — mergeStateStatus (CLEAN / BEHIND / ...)
 #   HEAD_DATE     — RFC3339 committedDate of the PR HEAD commit
-#   VERDICT       — the "<createdAt>|<isLGTM>" scalar the verdict jq resolves to
+#   VERDICT       — the "<createdAt>|<isLGTM>|<isCOMMENTS>" scalar the verdict
+#                   jq resolves to (widened to 3 fields for issue #129 — the
+#                   third field lets a scalar-stub case pin a fresh COMMENTS
+#                   verdict without going through the real regex)
 #   COMMENTS_JSON — raw `--json comments` payload; when set, the stub runs the
 #                   REAL jq with pr-ready.sh's own `--jq` expression against it,
 #                   so the production verdict regex is genuinely exercised
@@ -49,7 +60,7 @@ case "$args" in
       for a in "$@"; do [[ "$prev" == "--jq" ]] && expr="$a"; prev="$a"; done
       printf '%s' "$COMMENTS_JSON" | jq -rc "$expr"
     else
-      printf '%s\n' "${VERDICT:-|false}"
+      printf '%s\n' "${VERDICT:-|false|false}"
     fi ;;
   *)                        echo '' ;;
 esac
@@ -79,23 +90,42 @@ check "exit 2 → ci-failed" "ci-failed" \
 
 # --- ready: green + CLEAN + fresh LGTM -------------------------------------
 check "green + CLEAN + fresh LGTM → ready" "ready" \
-  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" run 100)"
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true|false" run 100)"
 
 # --- behind: green + fresh LGTM but not up-to-date -------------------------
 check "green + BEHIND + fresh LGTM → behind" "behind" \
-  "$(CHECKS_EC=0 MERGE_STATE=BEHIND HEAD_DATE=$H VERDICT="$FRESH|true" run 100)"
+  "$(CHECKS_EC=0 MERGE_STATE=BEHIND HEAD_DATE=$H VERDICT="$FRESH|true|false" run 100)"
 
 # --- stale-verdict guard: an LGTM older than HEAD does NOT count ------------
 check "green + CLEAN + STALE LGTM → awaiting-review" "awaiting-review" \
-  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$STALE|true" run 100)"
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$STALE|true|false" run 100)"
 
 # --- no verdict yet → awaiting-review --------------------------------------
 check "green + CLEAN + no verdict → awaiting-review" "awaiting-review" \
-  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="|false" run 100)"
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="|false|false" run 100)"
 
-# --- fresh but non-LGTM verdict (e.g. changes requested) → awaiting-review --
-check "green + CLEAN + fresh non-LGTM → awaiting-review" "awaiting-review" \
-  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|false" run 100)"
+# --- RED (#129): fresh CHANGES_REQUESTED (neither LGTM nor COMMENTS) is now
+# derived by elimination → changes-requested, not the old awaiting-review ----
+check "green + CLEAN + fresh CHANGES_REQUESTED → changes-requested" "changes-requested" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|false|false" run 100)"
+
+# --- RED (#129): fresh COMMENTS verdict gets its own token, distinct from
+# both LGTM and changes-requested --------------------------------------------
+check "green + CLEAN + fresh COMMENTS → comments" "comments" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|false|true" run 100)"
+
+# --- RED (#129): fresh COMMENTS + BEHIND → comments-behind ------------------
+check "green + BEHIND + fresh COMMENTS → comments-behind" "comments-behind" \
+  "$(CHECKS_EC=0 MERGE_STATE=BEHIND HEAD_DATE=$H VERDICT="$FRESH|false|true" run 100)"
+
+# --- stale-verdict guard applies to COMMENTS too ----------------------------
+check "green + CLEAN + STALE COMMENTS → awaiting-review" "awaiting-review" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$STALE|false|true" run 100)"
+
+# --- CI precedence: pending short-circuits BEFORE any verdict parsing, even
+# with a fresh COMMENTS verdict sitting on the PR ----------------------------
+check "exit 8 → pending (even with a fresh COMMENTS verdict)" "pending" \
+  "$(CHECKS_EC=8 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|false|true" run 100)"
 
 # --- REAL jq: exercise the production verdict regex against real bodies ----
 # The verdict `claude-code-review.yml` posts is `## Verdict: <X>` at the END of a
@@ -112,10 +142,25 @@ if command -v jq >/dev/null 2>&1; then
        run 100)"
 
   # `**Verdict:** CHANGES_REQUESTED` whose prose mentions "LGTM" must NOT count as
-  # LGTM — the exact false-positive a whole-body match would cause.
-  check "real CHANGES_REQUESTED w/ 'LGTM' in prose → awaiting-review" "awaiting-review" \
+  # LGTM — the exact false-positive a whole-body match would cause. RED (#129):
+  # a fresh non-LGTM/non-COMMENTS verdict is now changes-requested by
+  # elimination, not the old awaiting-review.
+  check "real CHANGES_REQUESTED w/ 'LGTM' in prose → changes-requested" "changes-requested" \
     "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H \
        COMMENTS_JSON="$(cj '{"createdAt":"'"$FRESH"'","body":"Not ready for LGTM yet.\n\n**Verdict:** CHANGES_REQUESTED\n"}')" \
+       run 100)"
+
+  # RED (#129): `**Verdict:** COMMENTS` must classify as comments, not the old
+  # awaiting-review / a false LGTM.
+  check "real **Verdict:** COMMENTS (fresh) → comments" "comments" \
+    "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H \
+       COMMENTS_JSON="$(cj '{"createdAt":"'"$FRESH"'","body":"Some notes here.\n\n**Verdict:** COMMENTS\n"}')" \
+       run 100)"
+
+  # RED (#129): canonical single-line `## Verdict: COMMENTS` → comments.
+  check "real ## Verdict: COMMENTS (fresh, single line) → comments" "comments" \
+    "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H \
+       COMMENTS_JSON="$(cj '{"createdAt":"'"$FRESH"'","body":"## Summary\nfeedback\n\n## Verdict: COMMENTS\n"}')" \
        run 100)"
 
   # No verdict-bearing comment at all → awaiting-review.
@@ -151,6 +196,12 @@ if command -v jq >/dev/null 2>&1; then
        COMMENTS_JSON="$(cj '{"createdAt":"'"$FRESH"'","body":"## Verdict: ✅ LGTM\n"}')" \
        run 100)"
 
+  # RED (#129): same-line emoji COMMENTS variant → comments.
+  check "real ## Verdict: 💬 COMMENTS (fresh, same line) → comments" "comments" \
+    "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H \
+       COMMENTS_JSON="$(cj '{"createdAt":"'"$FRESH"'","body":"## Verdict: 💬 COMMENTS\n"}')" \
+       run 100)"
+
   # Latest-verdict-wins across the emoji-prefixed format: a stale
   # CHANGES_REQUESTED followed by a fresh LGTM must still resolve to ready.
   check "real latest-verdict-wins across emoji format (LGTM after CR) → ready" "ready" \
@@ -158,24 +209,58 @@ if command -v jq >/dev/null 2>&1; then
        COMMENTS_JSON="$(cj '{"createdAt":"'"$STALE"'","body":"## Verdict\n🔴 CHANGES_REQUESTED\n"},{"createdAt":"'"$FRESH"'","body":"## Verdict\n✅ LGTM\n"}')" \
        run 100)"
 
-  # Guard: emoji-prefixed CHANGES_REQUESTED must never read as LGTM.
-  check "real ## Verdict\\n🔴 CHANGES_REQUESTED (fresh) → awaiting-review" "awaiting-review" \
+  # Guard: emoji-prefixed CHANGES_REQUESTED must never read as LGTM. RED (#129):
+  # retokened from awaiting-review — a fresh non-LGTM/non-COMMENTS verdict is
+  # now changes-requested by elimination.
+  check "real ## Verdict\\n🔴 CHANGES_REQUESTED (fresh) → changes-requested" "changes-requested" \
     "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H \
        COMMENTS_JSON="$(cj '{"createdAt":"'"$FRESH"'","body":"## Verdict\n🔴 CHANGES_REQUESTED\n"}')" \
        run 100)"
 
-  # Guard: emoji-prefixed COMMENTS must never read as LGTM.
-  check "real ## Verdict\\n💬 COMMENTS (fresh) → awaiting-review" "awaiting-review" \
+  # Guard: emoji-prefixed COMMENTS must never read as LGTM. RED (#129): this is
+  # the real-world PR #225/#230 posting format — retokened from awaiting-review
+  # to the new dedicated comments token.
+  check "real ## Verdict\\n💬 COMMENTS (fresh) → comments" "comments" \
     "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H \
        COMMENTS_JSON="$(cj '{"createdAt":"'"$FRESH"'","body":"## Verdict\n💬 COMMENTS\n"}')" \
        run 100)"
 
   # Prose guard: the widened separator class must still stop at the first
   # alphanumeric character after the emoji, so a stray "LGTM" later in the
-  # body's prose never reactivates the match.
-  check "real prose 'LGTM' after emoji CHANGES_REQUESTED → awaiting-review" "awaiting-review" \
+  # body's prose never reactivates the match. RED (#129): retokened from
+  # awaiting-review — this is a fresh CHANGES_REQUESTED, resolved by
+  # elimination.
+  check "real prose 'LGTM' after emoji CHANGES_REQUESTED → changes-requested" "changes-requested" \
     "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H \
        COMMENTS_JSON="$(cj '{"createdAt":"'"$FRESH"'","body":"## Verdict\n🔴 CHANGES_REQUESTED\n\nAn LGTM will come after fixes.\n"}')" \
+       run 100)"
+
+  # RED (#129): prose guard the other direction — a stray "comments" word after
+  # an LGTM verdict line must not flip the classification to comments.
+  check "real prose 'comments' word after LGTM → ready (not comments)" "ready" \
+    "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H \
+       COMMENTS_JSON="$(cj '{"createdAt":"'"$FRESH"'","body":"## Verdict\n✅ LGTM\n\nSee comments below.\n"}')" \
+       run 100)"
+
+  # RED (#129): same prose guard for CHANGES_REQUESTED — a stray "comments"
+  # word in prose must not flip changes-requested to comments.
+  check "real prose 'comments' word after CHANGES_REQUESTED → changes-requested (not comments)" "changes-requested" \
+    "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H \
+       COMMENTS_JSON="$(cj '{"createdAt":"'"$FRESH"'","body":"## Verdict\n🔴 CHANGES_REQUESTED\n\nAddressed in comments.\n"}')" \
+       run 100)"
+
+  # RED (#129): latest-verdict-wins — a fresh COMMENTS posted after a stale
+  # LGTM must resolve to comments, not ready.
+  check "real latest-verdict-wins (COMMENTS after stale LGTM) → comments" "comments" \
+    "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H \
+       COMMENTS_JSON="$(cj '{"createdAt":"'"$STALE"'","body":"## Verdict: LGTM\n"},{"createdAt":"'"$FRESH"'","body":"## Verdict: COMMENTS\n"}')" \
+       run 100)"
+
+  # RED (#129): latest-verdict-wins the other direction — a fresh LGTM posted
+  # after a stale COMMENTS must resolve to ready, not comments.
+  check "real latest-verdict-wins (LGTM after stale COMMENTS) → ready" "ready" \
+    "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H \
+       COMMENTS_JSON="$(cj '{"createdAt":"'"$STALE"'","body":"## Verdict: COMMENTS\n"},{"createdAt":"'"$FRESH"'","body":"## Verdict: LGTM\n"}')" \
        run 100)"
 
   # Freshness guard intact under the new emoji-prefixed format: a stale LGTM
@@ -202,8 +287,8 @@ check "pending verdict identical from \$WORK vs a subdirectory (cwd guard)" \
   "$(CHECKS_EC=8 run 100)" "$(CHECKS_EC=8 run_sub 100)"
 
 check "ready verdict identical from \$WORK vs a subdirectory (cwd guard)" \
-  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" run 100)" \
-  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" run_sub 100)"
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true|false" run 100)" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true|false" run_sub 100)"
 
 # --- summary ---------------------------------------------------------------
 echo
