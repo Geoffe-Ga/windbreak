@@ -22,24 +22,41 @@ poll- or event-driven with no unbounded waits: the fleet drives them one beat
 at a time. :class:`KillIntegration` bundles the switch and its adapters into
 the single value the Risk Kernel process consumes.
 
-**Wiring status (issue #35, follow-up tracked in #144):** these adapters are
-fully built and tested here, but they are *not yet composed into the live
-``windbreak run`` process* -- ``windbreak/main.py`` never constructs a
-:class:`~windbreak.riskkernel.process.RiskKernel` or a :class:`KillIntegration`,
-and ``process.main()`` does not yet pass ``kill_integration=``. Until that
-wiring lands, ``windbreak kill`` writes a ``KILL`` file that no running kernel
-polls, so it does *not* halt a live deployment; the ``KILL`` file's presence is
-one signal a wired watcher *will* act on once composed.
+**Wiring status (issue #35, composed in #144):** these adapters are now
+composed into the live ``windbreak run`` process. ``windbreak/main.py``'s
+``_build_risk_kernel`` builds a :class:`KillSwitch` + :class:`KillFileWatcher`
+over ``ops.state_dir`` and a :class:`ReconciliationMismatchMonitor`, bundles
+them into a :class:`KillIntegration`, and hands it to the
+:class:`~windbreak.riskkernel.process.RiskKernel` that ``_run_riskkernel``
+drives from ``windbreak run --process riskkernel`` -- the production
+entrypoint per the ``systemd``/``docker-compose`` deploy configs. That
+kernel's :meth:`KillFileWatcher.poll_once` runs every beat, so
+``windbreak kill --state-dir DIR`` now halts a running kernel whenever
+``DIR`` is that kernel's configured ``ops.state_dir``. Three edges remain
+open: the :class:`ReconciliationMismatchMonitor` is composed from the
+configured threshold but ``_build_risk_kernel`` wires **no verifier**, so the
+kernel's per-beat verification cycle no-ops and the monitor is never fed --
+the ``AUTO_RECONCILIATION`` auto-kill is thus composed-but-dormant in
+production until a verifier is wired (tracked as issue #236), leaving the
+operator ``KILL`` file as today's live trigger; ``windbreak/riskkernel/
+process.py``'s ``main()`` (reachable only via ``python -m
+windbreak.riskkernel``, a dev-only path) still runs without kill wiring; and
+replaying an existing ``KILLED`` state from the ledger on startup is not yet
+wired into that composition (tracked as issue #235) -- until then, the on-disk
+``KILL`` file below remains the mechanism that survives a restart.
 
-**Durable kill state (issue #123):** kill state is no longer only process
-memory, and the ``KILL`` file is no longer the sole interim restart measure. The
+**Durable kill state (issue #123):** kill state need not live only in process
+memory, and the ``KILL`` file need not be the sole interim restart measure. The
 kill/re-arm ledger is authoritative: :func:`kill_state_in` folds a recorded
 history into a :class:`ReplayedKillState`, and :meth:`KillSwitch.from_events`
 (with :meth:`~windbreak.riskkernel.process.RiskKernel.from_events`) rebuilds a
 switch already at its restored kill sequence and, on an unrearmed history, a
-kernel already ``KILLED``. Ledger replay is thus the *primary* durable
-mechanism; the ``KILL`` file is belt-and-suspenders, so an operator's ``KILL``
-drop survives even a ledger-less restart.
+kernel already ``KILLED``. Ledger replay is thus designed to be the *primary*
+durable mechanism, with the ``KILL`` file as belt-and-suspenders -- but
+``_build_risk_kernel`` does not yet call ``from_events`` on startup (that
+composition is issue #235), so today the on-disk ``KILL`` file is what
+actually survives a ``windbreak run`` restart in production; an operator's
+``KILL`` drop is not lost, it just isn't yet replayed from the ledger.
 
 Everything on this path is float-free (SPEC S6.1): epoch seconds and kill
 sequence numbers are ``int`` only.
@@ -195,12 +212,19 @@ class AlertDispatcherProtocol(Protocol):
     without inheritance.
     """
 
-    def dispatch(self, alert_type: AlertType, message: str) -> None:
+    def dispatch(self, alert_type: AlertType, message: str) -> object:
         """Dispatch one operator alert.
 
         Args:
             alert_type: The alert type to fire.
             message: The human-readable alert body.
+
+        Returns:
+            An implementation-defined value the kill switch ignores. Typed
+            ``object`` so both the real
+            :class:`~windbreak.alerts.dispatch.AlertDispatcher` (which returns
+            an ``AlertEmitted`` record) and a ``None``-returning test double
+            structurally satisfy this seam.
         """
         ...
 

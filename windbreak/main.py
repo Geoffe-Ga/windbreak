@@ -48,6 +48,8 @@ if TYPE_CHECKING:
 
     from windbreak.config import ConfigLoadEvent, ScreenerConfig, WindbreakConfig
     from windbreak.dashboard.app import DashboardStatus
+    from windbreak.riskkernel.kill import KillIntegration
+    from windbreak.riskkernel.process import RiskKernel
 
 #: Operating mode reported in every heartbeat line. Matches the RESEARCH state
 #: of the SPEC mode machine; windbreak ships research-only for now.
@@ -1191,6 +1193,150 @@ def _run_heartbeat(args: argparse.Namespace) -> int:
     return 0
 
 
+def _build_risk_kernel(
+    config: WindbreakConfig,
+) -> tuple[RiskKernel, KillIntegration]:
+    """Compose a live :class:`RiskKernel` wired to its :class:`KillIntegration`.
+
+    The kill switch, its file watcher, its reconciliation-mismatch monitor, and
+    the kernel are all built over **one shared**
+    :class:`~windbreak.riskkernel.modes.ModeStateMachine`: the switch drives that
+    machine to ``KILLED`` and the kernel reads its mode from the same object, so
+    a kill from any trigger is immediately visible to the kernel's evaluation.
+    Two independent machines would let the kernel keep approving after a kill --
+    the exact defect this wiring closes -- so the single-machine invariant is
+    load-bearing, not incidental.
+
+    The kernel imports are local (mirroring :func:`_run_drill` /
+    :func:`_build_paper_on_beat`) so the RESEARCH heartbeat path never imports
+    the kernel eagerly. ``ops.state_dir`` is created up front, fail-closed: a
+    build that cannot create its state directory raises ``OSError`` before any
+    kernel loop is entered, so a mis-provisioned deployment never runs blind.
+
+    Args:
+        config: The loaded configuration. ``ops.state_dir`` roots the kill/re-arm
+            file protocol, ``mode_ceiling`` caps the shared machine, and
+            ``risk.kill_after_consecutive_mismatches`` sets the auto-kill
+            threshold.
+
+    Returns:
+        The composed kernel and the kill integration it shares, so a caller can
+        drive both (e.g. observe the monitor) against the one machine.
+
+    Raises:
+        OSError: If ``ops.state_dir`` cannot be created (fail-closed startup).
+    """
+    from windbreak.riskkernel.kill import (
+        KillFileWatcher,
+        KillIntegration,
+        KillSwitch,
+        ReconciliationMismatchMonitor,
+    )
+    from windbreak.riskkernel.modes import Mode, ModeStateMachine
+    from windbreak.riskkernel.process import LoggingKernelLedgerWriter, RiskKernel
+
+    state_dir = Path(config.ops.state_dir).expanduser()
+    state_dir.mkdir(parents=True, exist_ok=True)
+    machine = ModeStateMachine(mode_ceiling=Mode.from_config(config.mode_ceiling))
+    writer = LoggingKernelLedgerWriter()
+    switch = KillSwitch(
+        machine,
+        writer,
+        AlertDispatcher(sinks=[], ledger_writer=LoggingLedgerWriter()),
+        state_dir=state_dir,
+    )
+    watcher = KillFileWatcher(switch, state_dir)
+    monitor = ReconciliationMismatchMonitor(
+        switch, threshold=config.risk.kill_after_consecutive_mismatches
+    )
+    integration = KillIntegration(switch=switch, watcher=watcher, monitor=monitor)
+    kernel = RiskKernel(writer, mode_machine=machine, kill_integration=integration)
+    return kernel, integration
+
+
+def _kernel_heartbeat_interval(args: argparse.Namespace) -> int:
+    """Map the CLI's float ``--heartbeat-interval`` onto the kernel's int seconds.
+
+    The shared ``run`` flag parses as a float, but the ``riskkernel`` package is
+    float-free (SPEC S6.1) and :meth:`RiskKernel.run` takes whole seconds, so the
+    fractional value is rounded up here -- the one float/int seam -- keeping every
+    ``windbreak/riskkernel/`` call float-free.
+
+    Args:
+        args: Parsed ``run`` arguments carrying ``heartbeat_interval``.
+
+    Returns:
+        The heartbeat interval in whole seconds (ceiling of the float value).
+    """
+    interval_seconds: float = args.heartbeat_interval
+    return math.ceil(interval_seconds)
+
+
+def _run_riskkernel(args: argparse.Namespace) -> int:
+    """Compose and drive the live Risk Kernel for ``--process riskkernel`` (#144).
+
+    Reuses :func:`_load_and_ledger_config`'s config-load front half, then builds
+    the kernel and its kill integration via :func:`_build_risk_kernel` -- catching
+    an uncreatable state dir (``OSError``) or a bad mode ceiling (``ValueError``)
+    as a fatal error that logs ``FATAL`` and returns 1 *before* the loop is
+    entered, so a fail-closed startup emits no heartbeat. This is the routing
+    divergence (issue #144) from the RESEARCH heartbeat loop the other
+    ``--process`` choices run: it drives a real :class:`RiskKernel` whose file
+    watcher polls ``ops.state_dir`` for a ``KILL`` file each beat.
+
+    Args:
+        args: Parsed ``run`` arguments carrying ``config``, ``process`` (always
+            ``riskkernel`` when routed here), ``heartbeat_interval``, and
+            ``max_beats``.
+
+    Returns:
+        The process exit code (0 on a clean shutdown, 1 on a fatal config or
+        kernel-build error).
+    """
+    config = _load_and_ledger_config(args)
+    if config is None:
+        return 1
+    try:
+        kernel, _integration = _build_risk_kernel(config)
+    except (OSError, ValueError) as exc:
+        _LOGGER.critical("FATAL: %s", exc)
+        return 1
+    state = ShutdownState()
+    _install_signal_handlers(state)
+    kernel.run(
+        max_beats=args.max_beats,
+        heartbeat_interval=_kernel_heartbeat_interval(args),
+        stop_event=state.stop_event,
+    )
+    _LOGGER.info(
+        "shutdown reason=%s",
+        _shutdown_reason(state, args),
+        extra={"component": args.process},
+    )
+    return 0
+
+
+def _shutdown_reason(state: ShutdownState, args: argparse.Namespace) -> str:
+    """Resolve the shutdown reason logged after a bounded process loop returns.
+
+    Mirrors :func:`run_loop`'s reason selection so a diverging process (dashboard,
+    riskkernel) logs the same parity line: a signal name recorded on ``state``
+    wins; otherwise an exhausted ``--max-beats`` budget reports ``max_beats`` and
+    a bare stop reports the generic ``signal`` reason.
+
+    Args:
+        state: Shared shutdown state whose ``reason`` (a signal name, if any) the
+            handler recorded.
+        args: Parsed ``run`` arguments carrying ``max_beats``.
+
+    Returns:
+        The shutdown reason string to log.
+    """
+    if state.reason is not None:
+        return state.reason
+    return _REASON_MAX_BEATS if args.max_beats is not None else _REASON_SIGNAL
+
+
 def _run_dashboard(args: argparse.Namespace) -> int:
     """Serve the authenticated loopback dashboard until shutdown (issue #79).
 
@@ -1229,11 +1375,12 @@ def _run_dashboard(args: argparse.Namespace) -> int:
 
 
 def _run_run_command(args: argparse.Namespace) -> int:
-    """Route the ``run`` command to its dashboard or heartbeat handler.
+    """Route the ``run`` command to its per-process handler.
 
-    The ``dashboard`` process diverges to the loopback dashboard server (issue
-    #79); every other ``--process`` choice runs the RESEARCH heartbeat loop
-    (issue #15).
+    Two ``--process`` choices diverge from the shared RESEARCH heartbeat loop
+    (issue #15): ``dashboard`` serves the loopback dashboard server (issue #79),
+    and ``riskkernel`` composes and drives a live :class:`RiskKernel` with its
+    kill-switch wiring (issue #144). Every other choice runs the heartbeat loop.
 
     Args:
         args: Parsed ``run`` arguments carrying ``process``.
@@ -1243,6 +1390,8 @@ def _run_run_command(args: argparse.Namespace) -> int:
     """
     if args.process == "dashboard":
         return _run_dashboard(args)
+    if args.process == "riskkernel":
+        return _run_riskkernel(args)
     return _run_heartbeat(args)
 
 

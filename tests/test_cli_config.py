@@ -164,7 +164,11 @@ def test_run_with_config_and_process_composes_load_and_component(
     Pins the integration of the `--config` loader (issue #11) with the
     `--process` component flag (issue #15) in a single invocation: the config
     diagnostics still fire (``config loaded`` + hash) and every heartbeat and
-    shutdown JSON record carries the requested, non-default component.
+    shutdown JSON record carries the requested, non-default component. Uses
+    ``order_gateway`` -- a still-``run_loop``-backed process -- because
+    ``riskkernel`` now diverges to a real ``RiskKernel`` emitting ``beat=``
+    (issue #144); the generic config+component composition this test pins is
+    unchanged by that divergence.
     """
     exit_code = main(
         [
@@ -172,7 +176,7 @@ def test_run_with_config_and_process_composes_load_and_component(
             "--config",
             str(_SPEC16_PATH),
             "--process",
-            "riskkernel",
+            "order_gateway",
             "--heartbeat-interval",
             "0",
             "--max-beats",
@@ -194,8 +198,8 @@ def test_run_with_config_and_process_composes_load_and_component(
     shutdown_payload = next(
         payload for payload in payloads if "shutdown reason=" in str(payload.get("msg"))
     )
-    assert heartbeat_payload["component"] == "riskkernel"
-    assert shutdown_payload["component"] == "riskkernel"
+    assert heartbeat_payload["component"] == "order_gateway"
+    assert shutdown_payload["component"] == "order_gateway"
 
     default_args = build_parser().parse_args(["run"])
     assert default_args.config is None
