@@ -11,9 +11,13 @@ primitives the store hashes over:
   precision, used as each record's ``created_at``.
 
 Each concrete event (:class:`ConfigLoaded`, :class:`ModeHeartbeat`,
-:class:`AlertEmitted`) is a frozen dataclass with an ergonomic, typed
-constructor that derives its ``event_type`` (the class name), its
-``payload_schema_version``, and its ``payload`` dict. The
+:class:`AlertEmitted`, and the growing family of gateway, PAPER-loop, and
+evaluation events -- the three evaluation-defined
+:class:`GatePlanRegistered`/:class:`GatePlanChanged`/
+:class:`GateComputationMismatch` events live here too, per issue #180, so the
+evaluation package stays a one-way, acyclic consumer of this module) is a frozen
+dataclass with an ergonomic, typed constructor that derives its ``event_type``
+(the class name), its ``payload_schema_version``, and its ``payload`` dict. The
 :attr:`Event.envelope_json` property wraps those into the persisted
 envelope ``{"component", "data", "schema_version"}``, and
 :data:`EVENT_TYPES` maps each ``event_type`` string back to its class so a
@@ -902,6 +906,201 @@ class DrillCompleted(Event):
         _derive_typed_event(self, payload)
 
 
+@dataclass(frozen=True)
+class GatePlanRegistered(Event):
+    """Records the first registration of a gate plan into the ledger (issue #13).
+
+    Moved here from :mod:`windbreak.evaluation.preregistration` (issue #180) so
+    the evaluation package stays a one-way runtime consumer of this module. The
+    constructor's fields ARE the flattened payload keys -- the thirteen canonical
+    :meth:`~windbreak.evaluation.preregistration.GatePlan.canonical_dict` keys
+    plus ``plan_hash``/``paper_clock_start`` -- so the persisted payload never
+    carries a separate ``plan_dict`` wrapper and round-trips through
+    ``EVENT_TYPES[event_type](component=..., **data)`` by construction.
+
+    Attributes:
+        metric_windows: The ``[name, window]`` metric/window catalogue, as the
+            JSON list-of-two-element-lists form.
+        min_resolved_for_calibration: Minimum resolved forecasts before
+            calibration statistics are computed.
+        promotion_min_resolved: Minimum resolved forecasts required to promote.
+        promotion_min_independent_event_groups: Minimum independent event groups
+            required to promote.
+        brier_skill_required_ppm: Required Brier skill score, in ppm.
+        bootstrap_confidence_ppm: Bootstrap confidence level, in ppm.
+        live_rolling_window_size: Rolling-window size for the live-divergence
+            gates.
+        live_slippage_ratio_limit_ppm: Live-vs-paper slippage ratio ceiling, in
+            ppm.
+        live_brier_degradation_band_ppm: Allowed LIVE-over-PAPER rolling Brier
+            degradation, in ppm.
+        observation_window: The headline observation window value.
+        baseline_scheme: The named executable-price baseline scheme.
+        clustering_scheme: The named event-correlation clustering scheme.
+        paper_fill_model_version: The paper fill-model version pinned into the
+            plan's identity (SPEC §17.4).
+        plan_hash: The registered plan's content hash.
+        paper_clock_start: The whole-epoch-second instant the paper clock started
+            for this plan.
+    """
+
+    metric_windows: list[list[str]]
+    min_resolved_for_calibration: int
+    promotion_min_resolved: int
+    promotion_min_independent_event_groups: int
+    brier_skill_required_ppm: int
+    bootstrap_confidence_ppm: int
+    live_rolling_window_size: int
+    live_slippage_ratio_limit_ppm: int
+    live_brier_degradation_band_ppm: int
+    observation_window: str
+    baseline_scheme: str
+    clustering_scheme: str
+    paper_fill_model_version: str
+    plan_hash: str
+    paper_clock_start: int
+    event_type: str = field(init=False)
+    payload_schema_version: int = field(init=False)
+    payload: dict[str, object] = field(init=False)
+
+    def __post_init__(self) -> None:
+        """Assemble the flattened payload and derive the base ``Event`` fields."""
+        payload: dict[str, object] = {
+            "metric_windows": self.metric_windows,
+            "min_resolved_for_calibration": self.min_resolved_for_calibration,
+            "promotion_min_resolved": self.promotion_min_resolved,
+            "promotion_min_independent_event_groups": (
+                self.promotion_min_independent_event_groups
+            ),
+            "brier_skill_required_ppm": self.brier_skill_required_ppm,
+            "bootstrap_confidence_ppm": self.bootstrap_confidence_ppm,
+            "live_rolling_window_size": self.live_rolling_window_size,
+            "live_slippage_ratio_limit_ppm": self.live_slippage_ratio_limit_ppm,
+            "live_brier_degradation_band_ppm": self.live_brier_degradation_band_ppm,
+            "observation_window": self.observation_window,
+            "baseline_scheme": self.baseline_scheme,
+            "clustering_scheme": self.clustering_scheme,
+            "paper_fill_model_version": self.paper_fill_model_version,
+            "plan_hash": self.plan_hash,
+            "paper_clock_start": self.paper_clock_start,
+        }
+        _derive_typed_event(self, payload)
+
+
+@dataclass(frozen=True)
+class GatePlanChanged(Event):
+    """Records a change from one registered gate plan to a different one (#13).
+
+    The companion to :class:`GatePlanRegistered`, moved here from
+    :mod:`windbreak.evaluation.preregistration` (issue #180). Carries every field
+    :class:`GatePlanRegistered` does plus ``previous_plan_hash`` linking back to
+    the plan this one replaced; like it, the constructor's fields ARE the
+    flattened payload keys (no ``plan_dict`` wrapper).
+
+    Attributes:
+        metric_windows: The ``[name, window]`` metric/window catalogue, as the
+            JSON list-of-two-element-lists form.
+        min_resolved_for_calibration: Minimum resolved forecasts before
+            calibration statistics are computed.
+        promotion_min_resolved: Minimum resolved forecasts required to promote.
+        promotion_min_independent_event_groups: Minimum independent event groups
+            required to promote.
+        brier_skill_required_ppm: Required Brier skill score, in ppm.
+        bootstrap_confidence_ppm: Bootstrap confidence level, in ppm.
+        live_rolling_window_size: Rolling-window size for the live-divergence
+            gates.
+        live_slippage_ratio_limit_ppm: Live-vs-paper slippage ratio ceiling, in
+            ppm.
+        live_brier_degradation_band_ppm: Allowed LIVE-over-PAPER rolling Brier
+            degradation, in ppm.
+        observation_window: The headline observation window value.
+        baseline_scheme: The named executable-price baseline scheme.
+        clustering_scheme: The named event-correlation clustering scheme.
+        paper_fill_model_version: The paper fill-model version pinned into the
+            plan's identity (SPEC §17.4).
+        plan_hash: The new plan's content hash.
+        paper_clock_start: The whole-epoch-second instant the paper clock reset
+            to on this change (strictly later than the prior registration's).
+        previous_plan_hash: The content hash of the plan this one replaced.
+    """
+
+    metric_windows: list[list[str]]
+    min_resolved_for_calibration: int
+    promotion_min_resolved: int
+    promotion_min_independent_event_groups: int
+    brier_skill_required_ppm: int
+    bootstrap_confidence_ppm: int
+    live_rolling_window_size: int
+    live_slippage_ratio_limit_ppm: int
+    live_brier_degradation_band_ppm: int
+    observation_window: str
+    baseline_scheme: str
+    clustering_scheme: str
+    paper_fill_model_version: str
+    plan_hash: str
+    paper_clock_start: int
+    previous_plan_hash: str
+    event_type: str = field(init=False)
+    payload_schema_version: int = field(init=False)
+    payload: dict[str, object] = field(init=False)
+
+    def __post_init__(self) -> None:
+        """Assemble the flattened payload and derive the base ``Event`` fields."""
+        payload: dict[str, object] = {
+            "metric_windows": self.metric_windows,
+            "min_resolved_for_calibration": self.min_resolved_for_calibration,
+            "promotion_min_resolved": self.promotion_min_resolved,
+            "promotion_min_independent_event_groups": (
+                self.promotion_min_independent_event_groups
+            ),
+            "brier_skill_required_ppm": self.brier_skill_required_ppm,
+            "bootstrap_confidence_ppm": self.bootstrap_confidence_ppm,
+            "live_rolling_window_size": self.live_rolling_window_size,
+            "live_slippage_ratio_limit_ppm": self.live_slippage_ratio_limit_ppm,
+            "live_brier_degradation_band_ppm": self.live_brier_degradation_band_ppm,
+            "observation_window": self.observation_window,
+            "baseline_scheme": self.baseline_scheme,
+            "clustering_scheme": self.clustering_scheme,
+            "paper_fill_model_version": self.paper_fill_model_version,
+            "plan_hash": self.plan_hash,
+            "paper_clock_start": self.paper_clock_start,
+            "previous_plan_hash": self.previous_plan_hash,
+        }
+        _derive_typed_event(self, payload)
+
+
+@dataclass(frozen=True)
+class GateComputationMismatch(Event):
+    """Records that the SQL and Python gate paths disagreed on a crosscheck (#55).
+
+    Moved here verbatim from :mod:`windbreak.evaluation.crosscheck` (issue #180)
+    so the evaluation package stays a one-way runtime consumer of this module.
+
+    Attributes:
+        plan_hash: The gate plan's content hash the run was scored under.
+        tolerance: The integer tolerance the comparison used.
+        mismatches: One entry per disagreeing metric, each shaped
+            ``{"name", "window", "python_value", "sql_value"}`` with any sentinel
+            rendered by its ``.name``.
+    """
+
+    plan_hash: str
+    tolerance: int
+    mismatches: list[dict[str, object]]
+    event_type: str = field(init=False)
+    payload_schema_version: int = field(init=False)
+    payload: dict[str, object] = field(init=False)
+
+    def __post_init__(self) -> None:
+        """Assemble the payload and derive the base ``Event`` fields."""
+        payload: dict[str, object] = {
+            "plan_hash": self.plan_hash,
+            "tolerance": self.tolerance,
+            "mismatches": self.mismatches,
+        }
+        _derive_typed_event(self, payload)
+
+
 #: Maps each event_type string to its class, so a persisted envelope can be
 #: reconstructed as ``EVENT_TYPES[event_type](component=..., **data)``.
 EVENT_TYPES: dict[str, type[Event]] = {
@@ -930,4 +1129,7 @@ EVENT_TYPES: dict[str, type[Event]] = {
     "EquitySampled": EquitySampled,
     "PositionsSnapshotRecorded": PositionsSnapshotRecorded,
     "DrillCompleted": DrillCompleted,
+    "GatePlanRegistered": GatePlanRegistered,
+    "GatePlanChanged": GatePlanChanged,
+    "GateComputationMismatch": GateComputationMismatch,
 }

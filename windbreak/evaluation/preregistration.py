@@ -32,11 +32,13 @@ imports this module, so the graph stays acyclic.
 Event naming. :class:`GatePlanRegistered` and :class:`GatePlanChanged` derive
 their ``event_type`` from the concrete class name (the house convention for
 every ledger event -- never a shouty snake-case variant; the issue's uppercase
-names are pseudocode). These two event types are deliberately *not* yet listed
-in the ledger's central ``EVENT_TYPES`` reconstruction map because
-:mod:`windbreak.ledger.events` is out of this issue's scope; a follow-up issue
-will wire them there. Reconstruction here therefore round-trips through
-:meth:`GatePlan.from_canonical` rather than that map.
+names are pseudocode). Both event classes now live in
+:mod:`windbreak.ledger.events` and are registered in its central ``EVENT_TYPES``
+reconstruction map (issue #180); this module imports them from there, keeping the
+evaluation package a one-way, acyclic runtime consumer of the ledger. Local
+reconstruction still round-trips through :meth:`GatePlan.from_canonical` (which
+strips the registration-only keys and re-validates the plan) rather than that
+map.
 """
 
 from __future__ import annotations
@@ -44,26 +46,28 @@ from __future__ import annotations
 import hashlib
 import json
 import time
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, TypedDict
 
 from windbreak.evaluation.registry import (
     LIVE_ROLLING_WINDOW_SIZE,
     registered_metrics,
 )
-from windbreak.ledger.events import Event, canonical_json
+from windbreak.ledger.events import (
+    GatePlanChanged as GatePlanChanged,  # re-exported (issue #180)
+)
+from windbreak.ledger.events import (
+    GatePlanRegistered as GatePlanRegistered,  # re-exported (issue #180)
+)
+from windbreak.ledger.events import (
+    canonical_json,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
     from windbreak.config.schema import EvaluationConfig
     from windbreak.ledger.store import LedgerRecord, LedgerStore
-
-#: Payload schema version stamped on this module's events. Replicated locally
-#: (rather than imported from :mod:`windbreak.ledger.events`, whose copy is
-#: private and out of this issue's scope) so a payload-shape change here can be
-#: versioned without reaching across the package boundary.
-_SCHEMA_VERSION = 1
 
 #: The named baseline scheme the headline skill metric measures against: the
 #: executable price captured at the baseline snapshot (SPEC §13.6).
@@ -574,83 +578,6 @@ def build_gate_plan(
     )
 
 
-def _derive_typed_event(event: Event, payload: dict[str, object]) -> None:
-    """Populate the derived :class:`~windbreak.ledger.events.Event` fields.
-
-    Replicates :mod:`windbreak.ledger.events`'s private derivation locally (that
-    module is out of this issue's scope): sets ``event_type`` to the concrete
-    class name, ``payload_schema_version`` to this module's schema version, and
-    ``payload`` to the assembled dict, via ``object.__setattr__`` because the
-    events are frozen.
-
-    Args:
-        event: The freshly constructed typed event to populate.
-        payload: The type-specific payload assembled by the subclass.
-    """
-    object.__setattr__(event, "event_type", type(event).__name__)
-    object.__setattr__(event, "payload_schema_version", _SCHEMA_VERSION)
-    object.__setattr__(event, "payload", payload)
-
-
-@dataclass(frozen=True)
-class GatePlanRegistered(Event):
-    """Records the first registration of a gate plan into the ledger.
-
-    Attributes:
-        plan_dict: The registered plan's canonical dict.
-        plan_hash: The registered plan's content hash.
-        paper_clock_start: The whole-epoch-second instant the paper clock
-            started for this plan.
-    """
-
-    plan_dict: dict[str, object]
-    plan_hash: str
-    paper_clock_start: int
-    event_type: str = field(init=False)
-    payload_schema_version: int = field(init=False)
-    payload: dict[str, object] = field(init=False)
-
-    def __post_init__(self) -> None:
-        """Assemble the payload and derive the base ``Event`` fields."""
-        payload: dict[str, object] = {
-            **self.plan_dict,
-            "plan_hash": self.plan_hash,
-            "paper_clock_start": self.paper_clock_start,
-        }
-        _derive_typed_event(self, payload)
-
-
-@dataclass(frozen=True)
-class GatePlanChanged(Event):
-    """Records a change from one registered gate plan to a different one.
-
-    Attributes:
-        plan_dict: The new plan's canonical dict.
-        plan_hash: The new plan's content hash.
-        paper_clock_start: The whole-epoch-second instant the paper clock reset
-            to on this change (strictly later than the prior registration's).
-        previous_plan_hash: The content hash of the plan this one replaced.
-    """
-
-    plan_dict: dict[str, object]
-    plan_hash: str
-    paper_clock_start: int
-    previous_plan_hash: str
-    event_type: str = field(init=False)
-    payload_schema_version: int = field(init=False)
-    payload: dict[str, object] = field(init=False)
-
-    def __post_init__(self) -> None:
-        """Assemble the payload and derive the base ``Event`` fields."""
-        payload: dict[str, object] = {
-            **self.plan_dict,
-            "plan_hash": self.plan_hash,
-            "paper_clock_start": self.paper_clock_start,
-            "previous_plan_hash": self.previous_plan_hash,
-        }
-        _derive_typed_event(self, payload)
-
-
 @dataclass(frozen=True, slots=True)
 class GatePlanRegistration:
     """A reconstructed view of one gate-plan registration.
@@ -680,6 +607,89 @@ def _epoch_now() -> int:
     return int(time.time())
 
 
+class _FlatPlanFields(TypedDict):
+    """The thirteen flat gate-plan fields both registration events carry.
+
+    Mirrors :meth:`GatePlan.canonical_dict` as a precisely-typed mapping so it
+    unpacks straight into the flat
+    :class:`~windbreak.ledger.events.GatePlanRegistered` /
+    :class:`~windbreak.ledger.events.GatePlanChanged` constructors under
+    ``mypy --strict`` -- which rejects unpacking an untyped ``dict[str, object]``
+    (as :meth:`GatePlan.canonical_dict` returns) into typed ``int``/``str``
+    parameters.
+
+    Attributes:
+        metric_windows: The ``[name, window]`` metric/window catalogue, as the
+            JSON list-of-two-element-lists form.
+        min_resolved_for_calibration: Minimum resolved forecasts before
+            calibration statistics are computed.
+        promotion_min_resolved: Minimum resolved forecasts required to promote.
+        promotion_min_independent_event_groups: Minimum independent event groups
+            required to promote.
+        brier_skill_required_ppm: Required Brier skill score, in ppm.
+        bootstrap_confidence_ppm: Bootstrap confidence level, in ppm.
+        live_rolling_window_size: Rolling-window size for the live-divergence
+            gates.
+        live_slippage_ratio_limit_ppm: Live-vs-paper slippage ratio ceiling, in
+            ppm.
+        live_brier_degradation_band_ppm: Allowed LIVE-over-PAPER rolling Brier
+            degradation, in ppm.
+        observation_window: The headline observation window value.
+        baseline_scheme: The named executable-price baseline scheme.
+        clustering_scheme: The named event-correlation clustering scheme.
+        paper_fill_model_version: The pinned paper fill-model version (SPEC §17.4).
+    """
+
+    metric_windows: list[list[str]]
+    min_resolved_for_calibration: int
+    promotion_min_resolved: int
+    promotion_min_independent_event_groups: int
+    brier_skill_required_ppm: int
+    bootstrap_confidence_ppm: int
+    live_rolling_window_size: int
+    live_slippage_ratio_limit_ppm: int
+    live_brier_degradation_band_ppm: int
+    observation_window: str
+    baseline_scheme: str
+    clustering_scheme: str
+    paper_fill_model_version: str
+
+
+def _flat_plan_fields(plan: GatePlan) -> _FlatPlanFields:
+    """Flatten ``plan`` into the precisely-typed shared registration-event fields.
+
+    The values match :meth:`GatePlan.canonical_dict` exactly (so the persisted
+    payload stays byte-identical), but the return type is a
+    :class:`_FlatPlanFields` ``TypedDict`` rather than ``dict[str, object]``, so
+    it unpacks straight into the flat registration-event constructors under
+    ``mypy --strict``.
+
+    Args:
+        plan: The gate plan to flatten.
+
+    Returns:
+        The plan's metric catalogue (as JSON list-of-lists), its eight
+        thresholds, and its four identity strings, precisely typed.
+    """
+    return {
+        "metric_windows": [[name, window] for name, window in plan.metric_windows],
+        "min_resolved_for_calibration": plan.min_resolved_for_calibration,
+        "promotion_min_resolved": plan.promotion_min_resolved,
+        "promotion_min_independent_event_groups": (
+            plan.promotion_min_independent_event_groups
+        ),
+        "brier_skill_required_ppm": plan.brier_skill_required_ppm,
+        "bootstrap_confidence_ppm": plan.bootstrap_confidence_ppm,
+        "live_rolling_window_size": plan.live_rolling_window_size,
+        "live_slippage_ratio_limit_ppm": plan.live_slippage_ratio_limit_ppm,
+        "live_brier_degradation_band_ppm": plan.live_brier_degradation_band_ppm,
+        "observation_window": plan.observation_window,
+        "baseline_scheme": plan.baseline_scheme,
+        "clustering_scheme": plan.clustering_scheme,
+        "paper_fill_model_version": plan.paper_fill_model_version,
+    }
+
+
 def _append_first_registration(
     plan: GatePlan, store: LedgerStore, component: str, now: Callable[[], int]
 ) -> GatePlanRegistration:
@@ -698,7 +708,7 @@ def _append_first_registration(
     store.append(
         GatePlanRegistered(
             component=component,
-            plan_dict=plan.canonical_dict(),
+            **_flat_plan_fields(plan),
             plan_hash=plan.plan_hash,
             paper_clock_start=epoch,
         )
@@ -746,7 +756,7 @@ def _append_changed_registration(
     store.append(
         GatePlanChanged(
             component=component,
-            plan_dict=plan.canonical_dict(),
+            **_flat_plan_fields(plan),
             plan_hash=plan.plan_hash,
             paper_clock_start=new_epoch,
             previous_plan_hash=existing.plan_hash,

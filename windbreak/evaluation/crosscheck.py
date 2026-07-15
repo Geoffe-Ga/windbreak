@@ -28,14 +28,16 @@ and never propagated out.
 
 Event naming follows the house convention (and
 :mod:`windbreak.evaluation.preregistration`): :class:`GateComputationMismatch`
-derives its ``event_type`` from the concrete class name and is deliberately not
-yet listed in the ledger's central ``EVENT_TYPES`` map (a follow-up issue).
+derives its ``event_type`` from the concrete class name. It now lives in
+:mod:`windbreak.ledger.events` and is registered in that module's central
+``EVENT_TYPES`` map (issue #180); this module imports it from there, keeping the
+evaluation package a one-way, acyclic runtime consumer of the ledger.
 """
 
 from __future__ import annotations
 
 import enum
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 from windbreak.alerts.registry import AlertSeverity
@@ -47,7 +49,9 @@ from windbreak.evaluation.registry import (
     registered_metrics,
 )
 from windbreak.evaluation.sql_gates import SqlGateComputer, SqlGateFailure
-from windbreak.ledger.events import Event
+from windbreak.ledger.events import (
+    GateComputationMismatch as GateComputationMismatch,  # re-exported (issue #180)
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -60,11 +64,6 @@ if TYPE_CHECKING:
 #: The inclusive absolute tolerance, in ppm units, within which the SQL and
 #: Python paths' ``int`` values are treated as agreeing.
 INTEGER_ROUNDING_TOLERANCE: int = 1
-
-#: Payload schema version stamped on this module's events. Replicated locally
-#: (rather than imported from the private copy in :mod:`windbreak.ledger.events`)
-#: so a payload-shape change here can be versioned independently.
-_SCHEMA_VERSION = 1
 
 #: The default producing component recorded on any appended mismatch event.
 _DEFAULT_COMPONENT = "evaluation"
@@ -147,52 +146,6 @@ class CrosscheckResult:
     status: CrosscheckStatus
     comparisons: tuple[MetricComparison, ...]
     plan_hash: str
-
-
-def _derive_typed_event(event: Event, payload: dict[str, object]) -> None:
-    """Populate the derived :class:`~windbreak.ledger.events.Event` fields.
-
-    Replicates the ledger module's private derivation locally (that module is out
-    of this issue's scope): sets ``event_type`` to the concrete class name,
-    ``payload_schema_version`` to this module's schema version, and ``payload`` to
-    the assembled dict, via ``object.__setattr__`` because the events are frozen.
-
-    Args:
-        event: The freshly constructed typed event to populate.
-        payload: The type-specific payload assembled by the subclass.
-    """
-    object.__setattr__(event, "event_type", type(event).__name__)
-    object.__setattr__(event, "payload_schema_version", _SCHEMA_VERSION)
-    object.__setattr__(event, "payload", payload)
-
-
-@dataclass(frozen=True)
-class GateComputationMismatch(Event):
-    """Records that the SQL and Python gate paths disagreed on a crosscheck.
-
-    Attributes:
-        plan_hash: The gate plan's content hash the run was scored under.
-        tolerance: The integer tolerance the comparison used.
-        mismatches: One entry per disagreeing metric, each shaped
-            ``{"name", "window", "python_value", "sql_value"}`` with any sentinel
-            rendered by its ``.name``.
-    """
-
-    plan_hash: str
-    tolerance: int
-    mismatches: list[dict[str, object]]
-    event_type: str = field(init=False)
-    payload_schema_version: int = field(init=False)
-    payload: dict[str, object] = field(init=False)
-
-    def __post_init__(self) -> None:
-        """Assemble the payload and derive the base ``Event`` fields."""
-        payload: dict[str, object] = {
-            "plan_hash": self.plan_hash,
-            "tolerance": self.tolerance,
-            "mismatches": self.mismatches,
-        }
-        _derive_typed_event(self, payload)
 
 
 def _render_value(
