@@ -56,6 +56,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from windbreak.alerts import AlertDispatcher, AlertType, LoggingLedgerWriter
+from windbreak.ledger.events import Event
 from windbreak.numeric.types import MoneyMicros
 from windbreak.riskkernel.governance import (
     DEFAULT_FLOOR_LOWER_COOL_OFF_SECONDS,
@@ -74,7 +75,6 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from windbreak.alerts.registry import AlertSeverity
-    from windbreak.ledger.events import Event
 
 #: A very large threshold/floor ceiling so a test that does not care about the
 #: profit-sweep alert never accidentally trips it.
@@ -231,6 +231,75 @@ def _replay(
         clock=_Clock(now),
         cool_off_seconds=cool_off_seconds,
     )
+
+
+@dataclasses.dataclass
+class _ReplayHarness:
+    """A rebuilt `FloorGovernance` plus handles onto its post-replay seams.
+
+    Sibling to `_Harness`, returned by `_replay_with_handles` so a test can
+    inspect what a *rebuilt* instance does next (new events it records, new
+    alerts it fires) -- something the plain `_replay` helper, which discards
+    its writer and dispatcher, cannot expose.
+
+    Attributes:
+        governance: The rebuilt `FloorGovernance` under test.
+        writer: The fresh in-memory ledger writer post-replay activity
+            records new events through.
+        sink: The spy alert sink the rebuilt dispatcher fans out to.
+    """
+
+    governance: FloorGovernance
+    writer: InMemoryKernelLedgerWriter
+    sink: _SpyAlertSink
+
+
+def _replay_with_handles(
+    events: Iterable[Event],
+    *,
+    ratchet_ppm: int = 0,
+    profit_sweep_threshold: MoneyMicros = _NEVER_CROSSED,
+    mode: Mode = Mode.LIVE,
+    mode_ceiling: Mode = Mode.LIVE,
+    now: int = _DEFAULT_NOW,
+    cool_off_seconds: int = DEFAULT_FLOOR_LOWER_COOL_OFF_SECONDS,
+) -> _ReplayHarness:
+    """Rebuild a `FloorGovernance`, exposing its post-replay writer and sink.
+
+    Unlike `_replay` (which wires an empty-sink dispatcher and discards the
+    writer, matching the ~8 existing call sites that only inspect the
+    rebuilt governance's public state), this variant wires a `_SpyAlertSink`
+    and returns the writer alongside the governance, so a test can assert on
+    what a rebuilt instance does *next* -- e.g. whether re-observing the
+    prior peak spuriously re-fires an advisory or re-records a ratchet.
+
+    Args:
+        events: The event history to replay.
+        ratchet_ppm: The profit-ratchet share, in parts per million.
+        profit_sweep_threshold: The profit-sweep advisory threshold, in
+            micros.
+        mode: The rebuilt mode machine's starting operating mode.
+        mode_ceiling: The rebuilt mode machine's ceiling.
+        now: The rebuilt clock's starting epoch second.
+        cool_off_seconds: The floor-lower cool-off, in seconds.
+
+    Returns:
+        A `_ReplayHarness` wrapping the rebuilt governance, its fresh
+        writer, and its spy alert sink.
+    """
+    writer = InMemoryKernelLedgerWriter()
+    sink = _SpyAlertSink()
+    governance = FloorGovernance.from_events(
+        events,
+        ratchet_ppm=ratchet_ppm,
+        profit_sweep_threshold=profit_sweep_threshold,
+        mode_machine=ModeStateMachine(mode_ceiling=mode_ceiling, mode=mode),
+        dispatcher=AlertDispatcher([sink], ledger_writer=LoggingLedgerWriter()),
+        writer=writer,
+        clock=_Clock(now),
+        cool_off_seconds=cool_off_seconds,
+    )
+    return _ReplayHarness(governance=governance, writer=writer, sink=sink)
 
 
 def _events_of_type(writer: InMemoryKernelLedgerWriter, event_type: str) -> list[Event]:
@@ -792,3 +861,214 @@ def test_from_events_replay_does_not_resurrect_an_already_confirmed_lowering() -
 
     assert rebuilt.pending_lower is None
     assert rebuilt.current_floor_micros == MoneyMicros(1_000_000)
+
+
+# --- 11. High-water-mark exact replay (issue #125, RED) ------------------------------
+#
+# `FloorGovernance` reconstructed its equity high-water mark on `from_events`
+# replay *only* from `FloorRatchetApplied.gain_micros` (see the module
+# docstring's now-superseded "conservative-only" note). Whenever a fresh
+# crossing recorded no ratchet event -- `ratchet_ppm == 0`, or a gain that
+# floors to a zero increment -- the rebuilt mark trailed the live one, so a
+# later equity observation at or below the true prior peak could look like a
+# *fresh* crossing on the rebuilt instance and spuriously re-fire the
+# profit-sweep advisory or re-ratchet the floor after a restart.
+#
+# The fix: `observe_equity` records a new `"EquityHighWaterMarkAdvanced"`
+# event (`previous_mark_micros`, `new_mark_micros`, both absolute) on *every*
+# fresh crossing, independent of the ratchet; replay reconstructs
+# `_high_water_mark` absolutely from that event alone, and
+# `FloorRatchetApplied` no longer touches it on replay (it still drives
+# `_floor`). These tests pin that post-fix behavior and must fail against the
+# pre-fix implementation.
+
+
+def test_from_events_replay_with_ratchet_disabled_is_exact_on_replay() -> None:
+    """Issue #125 (headline): with `ratchet_ppm=0`, no `FloorRatchetApplied`
+    was ever recorded, so a pre-fix replay reconstructs the high-water mark
+    as `MoneyMicros(0)` -- trailing the true peak. Re-observing the exact
+    prior peak on the rebuilt instance must be a *total* no-op: no advisory,
+    no ratchet event, no high-water-mark event.
+    """
+    harness = _build(
+        initial_floor=MoneyMicros(0),
+        ratchet_ppm=0,
+        profit_sweep_threshold=MoneyMicros(1_000_000),
+    )
+    harness.governance.observe_equity(MoneyMicros(2_000_000))
+
+    rebuilt = _replay_with_handles(
+        harness.writer.events,
+        ratchet_ppm=0,
+        profit_sweep_threshold=MoneyMicros(1_000_000),
+    )
+    rebuilt.governance.observe_equity(MoneyMicros(2_000_000))
+
+    assert rebuilt.sink.calls == []
+    assert _events_of_type(rebuilt.writer, "FloorRatchetApplied") == []
+    assert _events_of_type(rebuilt.writer, "EquityHighWaterMarkAdvanced") == []
+
+
+def test_from_events_replay_of_a_sub_increment_gain_is_exact_on_replay() -> None:
+    """Issue #125: even with the ratchet enabled, a gain that floors to a
+    zero increment (`_ppm_of(100, 1) == 0`) records no `FloorRatchetApplied`,
+    so a pre-fix replay trails the true peak by exactly that gain.
+    Re-observing the same peak on the rebuilt instance must not re-ratchet
+    and must not spuriously refire the profit-sweep advisory.
+    """
+    harness = _build(
+        initial_floor=MoneyMicros(0),
+        ratchet_ppm=1,
+        profit_sweep_threshold=MoneyMicros(50),
+    )
+    harness.governance.observe_equity(MoneyMicros(100))
+    assert _events_of_type(harness.writer, "FloorRatchetApplied") == []
+
+    rebuilt = _replay_with_handles(
+        harness.writer.events, ratchet_ppm=1, profit_sweep_threshold=MoneyMicros(50)
+    )
+    rebuilt.governance.observe_equity(MoneyMicros(100))
+
+    assert rebuilt.sink.calls == []
+    assert _events_of_type(rebuilt.writer, "FloorRatchetApplied") == []
+    assert _events_of_type(rebuilt.writer, "EquityHighWaterMarkAdvanced") == []
+
+
+def test_observe_equity_records_hwm_advanced_event_each_crossing() -> None:
+    """Issue #125: every fresh high-water-mark crossing records an absolute
+    `EquityHighWaterMarkAdvanced` event -- independent of whether the ratchet
+    fires -- carrying the exact previous and new absolute marks.
+    """
+    harness = _build(initial_floor=MoneyMicros(0), ratchet_ppm=0)
+
+    harness.governance.observe_equity(MoneyMicros(1_000_000))
+    harness.governance.observe_equity(MoneyMicros(3_000_000))
+
+    advanced = _events_of_type(harness.writer, "EquityHighWaterMarkAdvanced")
+    assert len(advanced) == 2
+    assert advanced[0].payload["previous_mark_micros"] == 0
+    assert advanced[0].payload["new_mark_micros"] == 1_000_000
+    assert advanced[1].payload["previous_mark_micros"] == 1_000_000
+    assert advanced[1].payload["new_mark_micros"] == 3_000_000
+
+
+def test_observe_equity_records_no_high_water_mark_event_on_a_non_crossing() -> None:
+    """Issue #125: re-observing equal-or-lower equity never records a second
+    `EquityHighWaterMarkAdvanced` -- only a genuinely fresh crossing does.
+    """
+    harness = _build(initial_floor=MoneyMicros(0), ratchet_ppm=0)
+    harness.governance.observe_equity(MoneyMicros(2_000_000))
+
+    harness.governance.observe_equity(MoneyMicros(2_000_000))
+    harness.governance.observe_equity(MoneyMicros(1_000_000))
+
+    assert len(_events_of_type(harness.writer, "EquityHighWaterMarkAdvanced")) == 1
+
+
+def test_from_events_replay_with_ratchet_enabled_still_exact_and_floor_matches() -> (
+    None
+):
+    """Issue #125: a second crossing whose gain floors to a zero increment
+    leaves no `FloorRatchetApplied` trace for it, so replay must still
+    recover the exact absolute high-water mark (not just the sum of ratchet
+    gains) even with the ratchet enabled -- proving dropping the mark from
+    the ratchet branch doesn't break floor replay, and the new event's
+    absolute-set semantics don't double-count.
+    """
+    harness = _build(
+        initial_floor=MoneyMicros(0),
+        ratchet_ppm=500_000,
+        profit_sweep_threshold=MoneyMicros(0),
+    )
+    harness.governance.observe_equity(MoneyMicros(1_000_000))
+    harness.governance.observe_equity(MoneyMicros(1_000_001))
+    live_floor = harness.governance.current_floor_micros
+
+    rebuilt = _replay_with_handles(
+        harness.writer.events,
+        ratchet_ppm=500_000,
+        profit_sweep_threshold=MoneyMicros(0),
+    )
+    rebuilt.governance.observe_equity(MoneyMicros(1_000_001))
+
+    assert rebuilt.governance.current_floor_micros == live_floor
+    assert rebuilt.sink.calls == []
+
+
+def test_from_events_replay_of_legacy_ratchet_only_history_may_refire() -> None:
+    """Issue #125 (pinned backward-compat decision): a hand-built legacy
+    history recorded before this fix shipped -- carrying only a
+    `FloorRatchetApplied` event, never an `EquityHighWaterMarkAdvanced` one
+    -- still recovers the correct floor on replay (that logic is untouched).
+    But the high-water mark no longer comes along for the ride:
+    `FloorRatchetApplied` no longer drives `_high_water_mark` on replay, so a
+    legacy history's mark trails until the next fresh crossing. This is the
+    pinned, conservative-only divergence the fix accepts -- the floor is
+    never understated relative to the legacy behavior and the profit-sweep
+    advisory is non-blocking -- so a subsequent observation below the true
+    (pre-fix) peak but above the replayed (zeroed) mark legitimately re-fires
+    the advisory once.
+    """
+    legacy_event = Event(
+        event_type="FloorRatchetApplied",
+        component="riskkernel",
+        payload_schema_version=1,
+        payload={
+            "previous_floor_micros": 0,
+            "new_floor_micros": 1_000_000,
+            "gain_micros": 2_000_000,
+            "increment_micros": 1_000_000,
+        },
+    )
+
+    rebuilt = _replay_with_handles(
+        [legacy_event],
+        ratchet_ppm=500_000,
+        profit_sweep_threshold=MoneyMicros(0),
+    )
+
+    assert rebuilt.governance.current_floor_micros == MoneyMicros(1_000_000)
+
+    rebuilt.governance.observe_equity(MoneyMicros(1_500_000))
+
+    advisories = [
+        call
+        for call in rebuilt.sink.calls
+        if call[0] == AlertType.PROFIT_SWEEP_ADVISORY
+    ]
+    assert len(advisories) == 1
+
+
+@given(
+    equities=st.lists(_equity_strategy, min_size=1, max_size=15),
+    ppm=_ppm_strategy,
+)
+def test_replaying_then_reobserving_the_peak_is_always_a_no_op(
+    equities: list[int], ppm: int
+) -> None:
+    """Issue #125 property: for any equity sequence and any `ratchet_ppm`,
+    replaying the recorded events and then re-observing the sequence's
+    maximum value is always a total no-op on the rebuilt instance -- no new
+    `FloorRatchetApplied`, no new `EquityHighWaterMarkAdvanced`, and no
+    `PROFIT_SWEEP_ADVISORY` -- because replay reconstructs the exact
+    high-water mark, not just the sum of ratchet gains.
+    """
+    harness = _build(
+        initial_floor=MoneyMicros(0),
+        ratchet_ppm=ppm,
+        profit_sweep_threshold=MoneyMicros(0),
+    )
+    for equity in equities:
+        harness.governance.observe_equity(MoneyMicros(equity))
+    peak = max(equities)
+
+    rebuilt = _replay_with_handles(
+        harness.writer.events,
+        ratchet_ppm=ppm,
+        profit_sweep_threshold=MoneyMicros(0),
+    )
+    rebuilt.governance.observe_equity(MoneyMicros(peak))
+
+    assert rebuilt.sink.calls == []
+    assert _events_of_type(rebuilt.writer, "FloorRatchetApplied") == []
+    assert _events_of_type(rebuilt.writer, "EquityHighWaterMarkAdvanced") == []
