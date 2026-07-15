@@ -12,6 +12,12 @@ Pins:
 - `maybe_write_weekly(output_dir, *, today)` is idempotent per ISO week: two
   calls whose `today` falls in the same ISO calendar week write exactly one
   file; a `today` in a *different* ISO week writes a second, distinct file.
+
+Issue #188 widens both functions' `body` parameter from `str | None` to
+`str | Callable[[], str] | None`: a callable factory is invoked only on the
+genuine write path (never when this ISO week's file already exists), so an
+expensive body -- a whole-ledger evaluation/cost-meter fold -- is built only
+when it will actually be persisted.
 """
 
 from __future__ import annotations
@@ -125,3 +131,93 @@ def test_maybe_write_weekly_returns_the_written_or_existing_path(
     assert first_path.exists()
     assert second_path.exists()
     assert first_path == second_path
+
+
+# ---------------------------------------------------------------------------
+# Callable `body` factory (issue #188): built only on the genuine write path.
+# ---------------------------------------------------------------------------
+
+
+def test_write_weekly_stub_invokes_a_callable_body_exactly_once(tmp_path: Path) -> None:
+    """`write_weekly_stub` (the unconditional-write primitive) accepts a
+    zero-arg callable `body` and invokes it exactly once, writing its
+    returned string -- never the callable object itself.
+    """
+    from windbreak.reports.weekly import write_weekly_stub
+
+    calls: list[int] = []
+
+    def _factory() -> str:
+        calls.append(1)
+        return "# stub body\n"
+
+    path = write_weekly_stub(tmp_path, today=_A_WEDNESDAY, body=_factory)
+
+    assert len(calls) == 1
+    assert path.read_text(encoding="utf-8") == "# stub body\n"
+
+
+def test_maybe_write_weekly_invokes_a_callable_body_exactly_once_on_a_genuine_write(
+    tmp_path: Path,
+) -> None:
+    """A callable `body` factory is invoked exactly once when
+    `maybe_write_weekly` actually writes this ISO week's first file.
+    """
+    from windbreak.reports.weekly import maybe_write_weekly
+
+    calls: list[int] = []
+
+    def _factory() -> str:
+        calls.append(1)
+        return "# built body\n"
+
+    path = maybe_write_weekly(tmp_path, today=_A_WEDNESDAY, body=_factory)
+
+    assert len(calls) == 1
+    assert path.read_text(encoding="utf-8") == "# built body\n"
+
+
+def test_maybe_write_weekly_never_invokes_a_callable_body_when_this_weeks_file_exists(
+    tmp_path: Path,
+) -> None:
+    """When this ISO week's file already exists, a callable `body` factory is
+    NOT invoked at all -- the entire point of deferring the body to a
+    callable is to skip paying for an expensive fold on an idempotent no-op
+    tick.
+
+    The first call also passes a callable (not a plain `str`), so this test
+    starts on the same genuine-write path as the test above and fails there
+    today (`TypeError`) rather than passing trivially: today's
+    `maybe_write_weekly` already skips touching `body` at all on its
+    already-exists short-circuit, so a version of this test whose *first*
+    call used a plain `str` body would pass before callable support exists
+    at all -- exactly the "passes before the code exists" trap this suite
+    must avoid.
+    """
+    from datetime import timedelta
+
+    from windbreak.reports.weekly import maybe_write_weekly
+
+    first_calls: list[int] = []
+
+    def _first_factory() -> str:
+        first_calls.append(1)
+        return "# first body\n"
+
+    first_path = maybe_write_weekly(tmp_path, today=_A_WEDNESDAY, body=_first_factory)
+    assert len(first_calls) == 1
+    assert first_path.read_text(encoding="utf-8") == "# first body\n"
+
+    second_calls: list[int] = []
+
+    def _second_factory() -> str:
+        second_calls.append(1)
+        return "# should never be built\n"
+
+    second_path = maybe_write_weekly(
+        tmp_path, today=_A_WEDNESDAY + timedelta(days=1), body=_second_factory
+    )
+
+    assert second_calls == []
+    assert second_path == first_path
+    assert second_path.read_text(encoding="utf-8") == "# first body\n"

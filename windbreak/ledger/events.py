@@ -106,19 +106,29 @@ class Event:
         )
 
 
-def _derive_typed_event(event: Event, payload: dict[str, object]) -> None:
+def _derive_typed_event(
+    event: Event,
+    payload: dict[str, object],
+    *,
+    schema_version: int = _SCHEMA_VERSION,
+) -> None:
     """Populate the derived ``Event`` fields on a frozen typed subclass.
 
     Sets ``event_type`` to the concrete class name, ``payload_schema_version``
-    to the current schema version, and ``payload`` to the assembled dict,
-    using ``object.__setattr__`` because the instances are frozen.
+    to ``schema_version`` (the module-wide default for every event but the one
+    that overrides it), and ``payload`` to the assembled dict, using
+    ``object.__setattr__`` because the instances are frozen.
 
     Args:
         event: The freshly constructed typed event to populate.
         payload: The type-specific payload assembled by the subclass.
+        schema_version: The payload schema version to stamp; defaults to the
+            module-wide :data:`_SCHEMA_VERSION`. Only an event whose payload
+            shape has diverged from its v1 form (``ForecastCreated``, #188)
+            supplies an override.
     """
     object.__setattr__(event, "event_type", type(event).__name__)
-    object.__setattr__(event, "payload_schema_version", _SCHEMA_VERSION)
+    object.__setattr__(event, "payload_schema_version", schema_version)
     object.__setattr__(event, "payload", payload)
 
 
@@ -757,9 +767,23 @@ class ScreenDecisionRecorded(Event):
         _derive_typed_event(self, payload)
 
 
+#: ``ForecastCreated``'s payload schema version (issue #188). Bumped to ``2``
+#: -- the first M0-family event whose version is not the module-wide
+#: :data:`_SCHEMA_VERSION` -- when the two cost/baseline fields the weekly
+#: evaluation/cost-meter fold reads were added, so a v1-shaped row already on
+#: disk is distinguishable from a v2 one without inspecting the payload's keys.
+_FORECAST_CREATED_SCHEMA_VERSION = 2
+
+
 @dataclass(frozen=True)
 class ForecastCreated(Event):
-    """Records one PAPER-loop forecast's headline figures (issue #48).
+    """Records one PAPER-loop forecast's headline figures (issue #48, #188).
+
+    Issue #188 adds ``research_cost_micros`` and ``market_price_baseline_pips``
+    -- the two fields the weekly evaluation/cost-meter fold reads verbatim off
+    the ledgered payload -- and bumps ``payload_schema_version`` to ``2`` (see
+    :data:`_FORECAST_CREATED_SCHEMA_VERSION`). Both new fields are scaled ints,
+    never floats (SPEC S6.1).
 
     Attributes:
         forecast_id: The forecast's deterministic id.
@@ -767,6 +791,8 @@ class ForecastCreated(Event):
         probability_ppm: The forecast probability, in parts-per-million.
         eligible_for_live: Whether the forecast may back a live order.
         abstention_reason: Why the engine abstained, or ``None`` when it did not.
+        research_cost_micros: The forecast's research spend, in micros.
+        market_price_baseline_pips: The baseline executable price, in pips.
     """
 
     forecast_id: str
@@ -774,6 +800,8 @@ class ForecastCreated(Event):
     probability_ppm: int
     eligible_for_live: bool
     abstention_reason: str | None
+    research_cost_micros: int
+    market_price_baseline_pips: int
     event_type: str = field(init=False)
     payload_schema_version: int = field(init=False)
     payload: dict[str, object] = field(init=False)
@@ -786,8 +814,12 @@ class ForecastCreated(Event):
             "probability_ppm": self.probability_ppm,
             "eligible_for_live": self.eligible_for_live,
             "abstention_reason": self.abstention_reason,
+            "research_cost_micros": self.research_cost_micros,
+            "market_price_baseline_pips": self.market_price_baseline_pips,
         }
-        _derive_typed_event(self, payload)
+        _derive_typed_event(
+            self, payload, schema_version=_FORECAST_CREATED_SCHEMA_VERSION
+        )
 
 
 @dataclass(frozen=True)

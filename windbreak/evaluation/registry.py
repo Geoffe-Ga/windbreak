@@ -525,14 +525,28 @@ class MetricSpec:
         def gated_compute(inputs: EvaluationInputs) -> MetricValue:
             """Gate inputs then delegate to the original ``compute``.
 
+            A metrics-level
+            :class:`~windbreak.evaluation.metrics.NoResolvedForecastsError`
+            (raised when a fold has no resolved forecasts at all -- an ordinary
+            whole-ledger, pre-resolution state, #188) is caught here and mapped
+            to the :data:`~windbreak.evaluation.cohorts.UNDEFINED` sentinel,
+            mirroring the per-metric ``EmptyCohortError``/``ZeroModeledCostError``
+            adapters, so no registered metric raises over unresolved-only inputs.
+            The catch is scoped to that one exception type; any other
+            invalid-input ``ValueError`` still propagates.
+
             Args:
                 inputs: The raw evaluation inputs handed to the metric.
 
             Returns:
-                The original metric's value over the temporally-admitted inputs.
+                The original metric's value over the temporally-admitted inputs,
+                or the ``UNDEFINED`` sentinel when nothing resolved.
             """
             admitted, _ = gate_evaluation_inputs(inputs)
-            return original(admitted)
+            try:
+                return original(admitted)
+            except metrics.NoResolvedForecastsError:
+                return cohorts.UNDEFINED
 
         object.__setattr__(self, "compute", gated_compute)
 

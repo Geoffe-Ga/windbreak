@@ -39,7 +39,6 @@ from typing import TYPE_CHECKING, Protocol
 from windbreak.config import config_hash
 from windbreak.connector.freshness import is_fresh
 from windbreak.connector.paper import PaperExchange
-from windbreak.evaluation.report import render_weekly_report
 from windbreak.forecast.cassettes import ReplayCassette
 from windbreak.forecast.pipeline import run_pipeline
 from windbreak.forecast.records import BaselineQuoteSnapshot
@@ -74,6 +73,7 @@ from windbreak.riskkernel.reservations import (
     ReservationLedger,
 )
 from windbreak.riskkernel.tokens import TokenIssuer
+from windbreak.scheduler.weekly_data import weekly_report_body
 from windbreak.selector import select
 from windbreak.selector.types import (
     FeeModelInput,
@@ -785,6 +785,10 @@ def _forecast_stage(
 ) -> ForecastRecord:
     """Run the forecast pipeline and ledger the forecast event.
 
+    The ledgered ``ForecastCreated`` carries the forecast's ``research_cost_micros``
+    and ``market_price_baseline_pips`` (issue #188), the two fields the weekly
+    evaluation/cost-meter fold reads verbatim off the payload.
+
     Args:
         deps: The tick's dependency bundle.
         order_book: The current book snapshot the baseline is struck against.
@@ -814,6 +818,8 @@ def _forecast_stage(
             probability_ppm=forecast.probability_ppm,
             eligible_for_live=forecast.eligible_for_live,
             abstention_reason=forecast.abstention_reason,
+            research_cost_micros=forecast.research_cost_micros,
+            market_price_baseline_pips=forecast.market_price_baseline_pips,
         )
     )
     return forecast
@@ -1050,9 +1056,12 @@ def run_single_tick(deps: PaperTickDeps, *, beat: int) -> TickOutcome:
     The tick follows the SINGLE order path -- snapshot -> forecast -> select ->
     approve(seam) -> (only if a token minted) route -> fill -> reconcile -- then
     emits the per-tick heartbeat, equity sample, and positions snapshot, and
-    writes this ISO-week's report stub. Every stage appends an audit event to the
-    shared hash-chained ledger. With the real kernel the approval always vetoes,
-    so no order ever routes and ``filled_centis`` is ``0``.
+    writes this ISO-week's report -- folding the real ledger through
+    :func:`windbreak.scheduler.weekly_data.weekly_report_body` so the report
+    carries genuine evaluation and cost-meter data (issue #188), built lazily so
+    the fold is paid for only on the genuine per-week write. Every stage appends
+    an audit event to the shared hash-chained ledger. With the real kernel the
+    approval always vetoes, so no order ever routes and ``filled_centis`` is ``0``.
 
     Args:
         deps: The fully wired dependency bundle.
@@ -1075,7 +1084,7 @@ def run_single_tick(deps: PaperTickDeps, *, beat: int) -> TickOutcome:
     maybe_write_weekly(
         deps.report_dir,
         today=report_date,
-        body=render_weekly_report(today=report_date, evaluation=None, costs=None),
+        body=lambda: weekly_report_body(deps.store.read_all(), today=report_date),
     )
     return TickOutcome(
         beat=beat,

@@ -349,6 +349,60 @@ def test_seed_metric_compute_stub_returns_the_documented_value() -> None:
     assert result is NOT_IMPLEMENTED
 
 
+def test_every_registered_metric_never_raises_over_unresolved_only_inputs() -> None:
+    """Every registered metric's `compute` is safe over a fold that has no
+    resolutions at all (issue #188's whole-ledger weekly fold, before any
+    market has settled): the metrics-level `NoResolvedForecastsError` is
+    caught at the `gated_compute` choke point and mapped to the `UNDEFINED`
+    sentinel, mirroring the pre-existing `EmptyCohortError`/
+    `ZeroModeledCostError` adapters -- for every metric except the one
+    deliberate `fill_vs_model_slippage` stub, which ignores its inputs
+    entirely and always returns `NOT_IMPLEMENTED`.
+
+    Today (pre-#188) the seven forecast-track scalar metrics that delegate
+    straight to `windbreak.evaluation.metrics` (`brier`,
+    `brier_skill_vs_executable_price`, `log_score`,
+    `expected_calibration_error`, `calibration_slope`,
+    `calibration_intercept`, `sharpness`) let their bare `ValueError` escape
+    `gated_compute` uncaught, since only `EmptyCohortError` and
+    `ZeroModeledCostError` are adapted there -- so this test currently fails
+    with an uncaught `ValueError` on the first of those names, not a
+    collection/import error.
+    """
+    from windbreak.evaluation import (
+        NOT_IMPLEMENTED,
+        UNDEFINED,
+        EvaluationInputs,
+        FixtureForecast,
+        TemporalContext,
+        registered_metrics,
+    )
+    from windbreak.numeric.types import ProbabilityPpm
+
+    forecast = FixtureForecast(
+        forecast_id="fc-unresolved",
+        market_ticker="MKT-UNRESOLVED",
+        probability_ppm=ProbabilityPpm(500_000),
+        eligible_for_live=True,
+        abstention_reason=None,
+        traded=False,
+        baseline_executable_price_pips=5_000,
+        created_sequence=1,
+    )
+    inputs = EvaluationInputs(
+        forecasts=(forecast,),
+        resolutions={},
+        temporal=TemporalContext(deployment_sequence=0, resolution_sequences={}),
+    )
+
+    for name, spec in registered_metrics().items():
+        result = spec.compute(inputs)
+        if name == "fill_vs_model_slippage":
+            assert result is NOT_IMPLEMENTED, f"{name} returned {result!r}"
+        else:
+            assert result is UNDEFINED, f"{name} returned {result!r}, not UNDEFINED"
+
+
 def test_registered_metrics_returns_a_mapping_with_no_duplicate_names() -> None:
     """`registered_metrics()` is keyed by metric name with no collisions.
 

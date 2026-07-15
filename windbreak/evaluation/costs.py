@@ -22,7 +22,7 @@ PnL has no sign floor, but a ``True`` must never count as a profitable trade).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from windbreak.numeric.rounding import RoundingDirection, divide
 from windbreak.numeric.types import MoneyMicros
@@ -31,10 +31,39 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from windbreak.evaluation.resolution import ResolutionOutcome
-    from windbreak.forecast.records import ForecastRecord
 
 #: The exclusive lower bound below which a research cost is illegal (negative).
 _MIN_RESEARCH_COST_MICROS = 0
+
+
+class _ResearchCostSource(Protocol):
+    """The minimal structural surface :func:`aggregate_research_costs` reads.
+
+    Only two attributes are needed off each record: its ``market_ticker`` (the
+    resolution/trade join key) and its ``research_cost_micros`` (the spend to
+    aggregate). :class:`~windbreak.forecast.records.ForecastRecord` satisfies
+    this structurally, and so does the lightweight row the ledger weekly fold
+    (#188) reconstructs, without building a full ``ForecastRecord``.
+
+    Both attributes are declared as read-only properties (rather than plain
+    variables) so a *frozen* dataclass satisfies the protocol: mypy treats a
+    frozen dataclass's fields as read-only, which does not match a mutable
+    protocol attribute but does match a read-only one. Both
+    :class:`~windbreak.forecast.records.ForecastRecord` and the #188 ledger
+    fold's lightweight row are frozen, so both need this read-only surface.
+
+    Attributes:
+        market_ticker: The market the forecast is for.
+        research_cost_micros: The forecast's research spend, in micros.
+    """
+
+    @property
+    def market_ticker(self) -> str:
+        """The market the forecast is for."""
+
+    @property
+    def research_cost_micros(self) -> int:
+        """The forecast's research spend, in micros."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,7 +93,7 @@ class CostMeter:
     cost_adjusted_expectancy_micros: MoneyMicros | None
 
 
-def _validated_cost(record: ForecastRecord) -> int:
+def _validated_cost(record: _ResearchCostSource) -> int:
     """Return one record's research cost after guarding its type and sign.
 
     Args:
@@ -158,7 +187,7 @@ def _cost_adjusted_expectancy(
 
 
 def aggregate_research_costs(
-    records: Sequence[ForecastRecord],
+    records: Sequence[_ResearchCostSource],
     *,
     resolutions: Mapping[str, ResolutionOutcome],
     trade_pnls_micros: Mapping[str, int],

@@ -26,6 +26,7 @@ from windbreak.evaluation.cohorts import (
     UndefinedBrier,
     cohort_brier_table,
 )
+from windbreak.evaluation.metrics import NoResolvedForecastsError
 from windbreak.evaluation.power import power_analysis
 from windbreak.evaluation.registry import (
     HEADLINE_SKILL_METRIC,
@@ -546,6 +547,60 @@ def _build_tracks(inputs: EvaluationInputs) -> tuple[TrackReport, ...]:
     )
 
 
+def _power_or_none(admitted: EvaluationInputs) -> PowerAnalysis | None:
+    """Run the report's power analysis, or ``None`` when nothing resolved (#188).
+
+    The clustered-bootstrap power path scores resolved Brier terms, so it raises
+    :class:`~windbreak.evaluation.metrics.NoResolvedForecastsError` over an
+    all-unresolved fold (a whole-ledger, pre-resolution state). That is caught
+    here and mapped to ``power=None`` -- an already-supported
+    :class:`EvaluationReport` state -- exactly as the forecast-track metrics'
+    ``gated_compute`` adapter maps the same error to ``UNDEFINED``, rather than
+    crashing the report.
+
+    Args:
+        admitted: The temporally-admitted evaluation inputs.
+
+    Returns:
+        The power analysis, or ``None`` when the fold has no resolved forecasts.
+    """
+    try:
+        return power_analysis(admitted, seed=POWER_ANALYSIS_SEED)
+    except NoResolvedForecastsError:
+        return None
+
+
+def build_evaluation_report(inputs: EvaluationInputs) -> EvaluationReport:
+    """Assemble the three-track report from already-typed inputs (#188).
+
+    Extracted verbatim from :func:`run_evaluation`'s tail (gate -> power ->
+    cohorts -> abstentions -> tracks) so the scheduler's whole-ledger weekly
+    fold can build a report straight from an :class:`EvaluationInputs` without
+    going through the fixture-file loader. Over the same inputs
+    :func:`run_evaluation` itself builds, this renders byte-for-byte identically.
+
+    Args:
+        inputs: The typed evaluation inputs to score, carrying their temporal
+            context.
+
+    Returns:
+        The assembled :class:`EvaluationReport`; ``power`` is ``None`` when no
+        forecast resolved.
+
+    Raises:
+        ValueError: If ``inputs.temporal`` is ``None`` while forecasts are
+            present (propagated from the temporal gate).
+    """
+    admitted, rejections = gate_evaluation_inputs(inputs)
+    return EvaluationReport(
+        tracks=_build_tracks(admitted),
+        power=_power_or_none(admitted),
+        rejections=rejections,
+        cohorts=cohort_brier_table(admitted, window=_SELECTION_WINDOW),
+        abstentions=summarize_abstentions(admitted),
+    )
+
+
 def run_evaluation(*, fixture_path: Path) -> EvaluationReport:
     """Load a known-answer fixture and build its three-track report.
 
@@ -563,18 +618,7 @@ def run_evaluation(*, fixture_path: Path) -> EvaluationReport:
     """
     payload: Any = json.loads(fixture_path.read_text(encoding="utf-8"))
     _require_top_level_keys(payload)
-    inputs = _build_inputs(payload)
-    admitted, rejections = gate_evaluation_inputs(inputs)
-    power = power_analysis(admitted, seed=POWER_ANALYSIS_SEED)
-    cohorts = cohort_brier_table(admitted, window=_SELECTION_WINDOW)
-    abstentions = summarize_abstentions(admitted)
-    return EvaluationReport(
-        tracks=_build_tracks(admitted),
-        power=power,
-        rejections=rejections,
-        cohorts=cohorts,
-        abstentions=abstentions,
-    )
+    return build_evaluation_report(_build_inputs(payload))
 
 
 #: The fallback body printed under any weekly-report section that has no data
@@ -601,24 +645,41 @@ def _render_weekly_section(heading: str, body: str) -> str:
 
 
 def _render_cost_meter(costs: CostMeter) -> str:
-    """Render a cost meter's three money fields as ``str``-formatted lines.
+    """Render a cost meter's totals, denominator counts, and per-unit fields.
+
+    Prints ``total_research_cost_micros`` and the three denominator counts
+    (``resolved_forecast_count``, ``profitable_trade_count``, ``trade_count``) as
+    their own labelled lines, in addition to the three per-unit money fields, so
+    a real but pre-resolution meter (every per-unit field ``n/a``) still renders
+    observably differently from a genuinely zero-spend meter and from the bare
+    ``costs=None`` fallback: the total spend already incurred is never lost (#188).
 
     Args:
         costs: The cost meter to render.
 
     Returns:
-        Three lines, each naming a cost metric and its
+        The rendered lines: one integer total line, three integer count lines,
+        then three per-unit lines each naming a cost metric and its
         :class:`~windbreak.numeric.types.MoneyMicros` rendering (or ``n/a`` for a
         ``None`` field, which never collides with the section-empty fallback).
     """
-    fields = (
+    integer_fields = (
+        ("total research cost", costs.total_research_cost_micros),
+        ("resolved forecasts", costs.resolved_forecast_count),
+        ("profitable trades", costs.profitable_trade_count),
+        ("trades", costs.trade_count),
+    )
+    money_fields = (
         ("cost per resolved forecast", costs.cost_per_resolved_forecast_micros),
         ("cost per profitable trade", costs.cost_per_profitable_trade_micros),
         ("cost-adjusted expectancy", costs.cost_adjusted_expectancy_micros),
     )
-    return "\n".join(
-        f"{label}: {'n/a' if value is None else value!s}" for label, value in fields
+    lines = [f"{label}: {value}" for label, value in integer_fields]
+    lines.extend(
+        f"{label}: {'n/a' if value is None else value!s}"
+        for label, value in money_fields
     )
+    return "\n".join(lines)
 
 
 def render_weekly_report(
@@ -632,8 +693,10 @@ def render_weekly_report(
     Preserves the #48 stub's dated title and its three ``No data yet.`` sections
     (this issue does not wire that data), then appends an ``## Evaluation``
     section (the verbatim :meth:`EvaluationReport.render_text` when ``evaluation``
-    is not ``None``, else the fallback) and a ``## Cost meter`` section (the three
-    :class:`~windbreak.evaluation.costs.CostMeter` money fields, else the fallback).
+    is not ``None``, else the fallback) and a ``## Cost meter`` section (the
+    :class:`~windbreak.evaluation.costs.CostMeter`'s total research spend, its
+    three denominator counts, and its three per-unit money fields, else the
+    fallback).
 
     Args:
         today: The report date, stamped into the title.
