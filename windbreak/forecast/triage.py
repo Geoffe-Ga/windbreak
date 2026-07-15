@@ -99,7 +99,7 @@ _TRIAGE_RATIONALE_MD = (
 class _TriageModel(NamedTuple):
     """The pinned Stage-0 triage model's provenance strings.
 
-    Mirrors :class:`windbreak.forecast.pipeline._EnsembleMember`: pinning the
+    Mirrors :class:`windbreak.forecast.providers.EnsembleMember`: pinning the
     provider/version keeps the single Stage-0 request byte-stable across runs.
 
     Attributes:

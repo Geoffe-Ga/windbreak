@@ -157,6 +157,26 @@ class CanaryConfig:
     cadence_days: int = 7
 
 
+@dataclass(frozen=True, slots=True)
+class EnsembleMemberConfig:
+    """One vote-ensemble member's pinned provider provenance (SPEC S6.3).
+
+    Backs :attr:`ForecastConfig.vote_ensemble`. A structural triple the forecast
+    engine consumes without importing this package (SPEC S8.3 sandbox boundary):
+    it matches the engine's own ``EnsembleMemberLike`` shape by exposing the
+    same three read-only strings.
+
+    Attributes:
+        provider: The LLM provider identifier (e.g. ``openai``).
+        model_version: The pinned, operator-chosen model version string.
+        training_cutoff: The model's declared training cutoff date.
+    """
+
+    provider: str
+    model_version: str
+    training_cutoff: str
+
+
 def _default_ensemble() -> tuple[ModelRef, ...]:
     """Return the SPEC §16 default two-model forecasting ensemble."""
     return (
@@ -170,9 +190,29 @@ def _default_triage_model() -> ModelRef:
     return ModelRef("cheapest-adequate", "pinned-by-operator")
 
 
+def _default_vote_ensemble() -> tuple[EnsembleMemberConfig, ...]:
+    """Return the default three-member vote ensemble (issue #184).
+
+    Pinned to the forecast engine's own ``DEFAULT_VOTE_ENSEMBLE`` triple so a
+    config file omitting ``vote_ensemble`` reproduces the pre-#184 vote-stage
+    provenance exactly.
+    """
+    return (
+        EnsembleMemberConfig("openai", "gpt-5-forecast", "2024-06-01"),
+        EnsembleMemberConfig("anthropic", "claude-forecast", "2024-04-01"),
+        EnsembleMemberConfig("openai", "gpt-5-forecast-mini", "2024-06-01"),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class ForecastConfig:
-    """Ensemble, triage, budget, and calibration-canary forecasting policy."""
+    """Ensemble, triage, budget, and calibration-canary forecasting policy.
+
+    ``vote_ensemble`` (issue #184) supersedes the legacy ``ensemble`` field for
+    the vote stage: ``ensemble`` remains the triage/promotion ``ModelRef`` set,
+    while ``vote_ensemble`` names the per-member provenance the vote stage drives
+    a provider with.
+    """
 
     ensemble: tuple[ModelRef, ...] = field(default_factory=_default_ensemble)
     triage_model: ModelRef = field(default_factory=_default_triage_model)
@@ -181,6 +221,9 @@ class ForecastConfig:
     budget: ForecastBudget = field(default_factory=ForecastBudget)
     min_verified_citations: int = 3
     canary: CanaryConfig = field(default_factory=CanaryConfig)
+    vote_ensemble: tuple[EnsembleMemberConfig, ...] = field(
+        default_factory=_default_vote_ensemble
+    )
 
 
 @dataclass(frozen=True, slots=True)

@@ -81,13 +81,27 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 #: Canned completion text for the three deterministic `collect_model_votes`
-#: calls a pipeline run is expected to make. No test asserts anything about
-#: this wording (see the "Cassette-fixture choice" note above) -- only that
-#: each resulting vote carries a non-empty `response_fingerprint`.
+#: calls a pipeline run is expected to make. Each entry is a schema-valid
+#: *structured* vote response (issue #184, SPEC S6.3 vote-parsing seam): a
+#: compact JSON object carrying an integer `probability_ppm`, a
+#: `rationale_summary`, and an `abstain` flag -- the shape
+#: `windbreak.forecast.sanitize.parse_vote_response` requires once vote
+#: probabilities are parsed from the response instead of derived from
+#: `baseline ± offset`. The three `probability_ppm` values (440000 / 450000 /
+#: 460000) are chosen to reproduce, byte-for-byte, what the pre-#184 pipeline
+#: derived from `baseline ± 10_000 ppm` for this package's `baseline` fixture
+#: (4500 pips -> 450_000 ppm baseline), so every pre-existing test asserting
+#: on vote counts, dispersion, or aggregated medians keeps passing unchanged
+#: once #184 wires vote probabilities from the response instead of the
+#: baseline. No test asserts anything about `rationale_summary`'s wording --
+#: only that each resulting vote carries a non-empty `response_fingerprint`.
 CANNED_VOTE_RESPONSES: tuple[str, str, str] = (
-    "vote-response-alpha",
-    "vote-response-beta",
-    "vote-response-gamma",
+    '{"probability_ppm": 440000, "rationale_summary": "steady evidence alpha", '
+    '"abstain": false}',
+    '{"probability_ppm": 450000, "rationale_summary": "steady evidence beta", '
+    '"abstain": false}',
+    '{"probability_ppm": 460000, "rationale_summary": "steady evidence gamma", '
+    '"abstain": false}',
 )
 
 
