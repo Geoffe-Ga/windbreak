@@ -191,16 +191,17 @@ def _default_triage_model() -> ModelRef:
 
 
 def _default_vote_ensemble() -> tuple[EnsembleMemberConfig, ...]:
-    """Return the default three-member vote ensemble (issue #184).
+    """Return the default three-member vote ensemble (issue #191).
 
-    Pinned to the forecast engine's own ``DEFAULT_VOTE_ENSEMBLE`` triple so a
-    config file omitting ``vote_ensemble`` reproduces the pre-#184 vote-stage
-    provenance exactly.
+    Pinned to the real, operator-pinned live triple -- mirror-equal in
+    provenance to the forecast engine's own ``DEFAULT_VOTE_ENSEMBLE`` -- so a
+    config file omitting ``vote_ensemble`` and the forecast engine's built-in
+    default drive the vote stage with identical ensemble provenance and ordering.
     """
     return (
-        EnsembleMemberConfig("openai", "gpt-5-forecast", "2024-06-01"),
-        EnsembleMemberConfig("anthropic", "claude-forecast", "2024-04-01"),
-        EnsembleMemberConfig("openai", "gpt-5-forecast-mini", "2024-06-01"),
+        EnsembleMemberConfig("openai", "gpt-5-2025-08-07", "2024-09-30"),
+        EnsembleMemberConfig("anthropic", "claude-sonnet-4-5-20250929", "2025-07-31"),
+        EnsembleMemberConfig("openai", "gpt-5-mini-2025-08-07", "2024-05-31"),
     )
 
 

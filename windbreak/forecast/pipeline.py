@@ -1122,8 +1122,8 @@ def run_pipeline(
         canary_gate: The optional canary drift gate ANDed into live eligibility
             (keyword-only). ``None`` (or an open gate) is a no-op.
         ensemble: The vote ensemble to drive the vote stage with, or ``None``
-            (keyword-only) for the pinned default three-member ensemble -- the
-            default preserves the pre-#184 vote provenance byte-for-byte.
+            (keyword-only) for the pinned default three-member ensemble
+            (:data:`~windbreak.forecast.providers.DEFAULT_VOTE_ENSEMBLE`).
         provider_factory: An optional factory building the vote provider per
             member (keyword-only). ``None`` (the default) drives the pre-existing
             fixture-vote path byte-identically; a supplied factory instead drives

@@ -1,16 +1,22 @@
 """The forecast provider seam: transport-agnostic vote collection (issue #184).
 
 Re-exports the provider protocol and result types, the pinned default vote
-ensemble, the network-free :class:`FixtureVoteProvider`, and the hosted
+ensemble, the network-free :class:`FixtureVoteProvider`, the hosted
 research-forecaster :class:`FutureSearchProvider` (plus its HTTP record/replay
-harness) so callers import from ``windbreak.forecast.providers`` rather than
-reaching into the submodules. Per the SPEC S8.3 sandbox boundary, nothing here
-imports ``windbreak.config``; an ensemble member is accepted structurally via
+harness), and the pinned-LLM :class:`AnthropicMessagesTransport` /
+:class:`OpenAiChatTransport` completion transports (issue #191) so callers
+import from ``windbreak.forecast.providers`` rather than reaching into the
+submodules. Per the SPEC S8.3 sandbox boundary, nothing here imports
+``windbreak.config``; an ensemble member is accepted structurally via
 :class:`EnsembleMemberLike`.
 """
 
 from __future__ import annotations
 
+from windbreak.forecast.providers.anthropic import (
+    ANTHROPIC_MESSAGES_ENDPOINT,
+    AnthropicMessagesTransport,
+)
 from windbreak.forecast.providers.base import (
     DEFAULT_VOTE_ENSEMBLE,
     EnsembleMember,
@@ -37,9 +43,16 @@ from windbreak.forecast.providers.http_cassettes import (
     RecordingHttpCassette,
     ReplayHttpCassette,
 )
+from windbreak.forecast.providers.openai import (
+    OPENAI_CHAT_ENDPOINT,
+    OpenAiChatTransport,
+)
 
 __all__ = [
+    "ANTHROPIC_MESSAGES_ENDPOINT",
     "DEFAULT_VOTE_ENSEMBLE",
+    "OPENAI_CHAT_ENDPOINT",
+    "AnthropicMessagesTransport",
     "EnsembleMember",
     "EnsembleMemberLike",
     "FixtureVoteProvider",
@@ -50,6 +63,7 @@ __all__ = [
     "HttpRequest",
     "HttpResponse",
     "HttpTransport",
+    "OpenAiChatTransport",
     "ProviderCitation",
     "ProviderError",
     "ProviderForecast",
