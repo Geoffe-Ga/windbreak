@@ -18,6 +18,19 @@ remaining tests are expected to fail with `TypeError` (unexpected keyword
 `component`), `SystemExit` code mismatches, or `AssertionError` (the
 `component` field missing/wrong on log records) until the flag is fully
 wired through `main()`.
+
+Issue #144 further diverges `--process riskkernel`: it now composes a real
+`RiskKernel` (with kill-switch wiring) instead of running through this bare
+`run_loop`, so it emits `heartbeat beat=`, not `heartbeat seq=`, and is
+excluded from `_HEARTBEAT_PROCESS_CHOICES` below -- mirroring how issue #79
+excluded `dashboard` for the same reason (a diverging process outgrows the
+shared `seq=`-based assertion). `windbreak.main._build_risk_kernel` and its
+CLI routing do not exist yet; `tests/test_run_riskkernel.py` -- not this
+module -- pins that RED state. The `riskkernel` subprocess-smoke test below is
+updated only so it stops touching the real `~/.local/share/windbreak`: once
+`riskkernel` composes a real `KillFileWatcher` polling `ops.state_dir`, a
+stray `KILL` file left there by an unrelated manual run or concurrent test
+process could kill this test's kernel out from under it.
 """
 
 from __future__ import annotations
@@ -26,10 +39,15 @@ import json
 import logging
 import subprocess
 import sys
+from typing import TYPE_CHECKING
 
 import pytest
+import yaml
 
 from windbreak.main import PROCESS_CHOICES, build_parser, main, run_loop
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_process_choices_constant_matches_the_four_spec_processes() -> None:
@@ -178,8 +196,14 @@ def test_main_run_default_process_stamps_pipeline_component_in_json(
 # requires WINDBREAK_DASHBOARD_TOKEN and boots an HTTP server (see
 # tests/test_dashboard_process.py), so it can no longer share this
 # heartbeat/shutdown-log assertion with the other three processes.
+#
+# Issue #144: `riskkernel` is excluded for the identical reason -- `run
+# --process riskkernel` now composes a real `RiskKernel` (see
+# tests/test_run_riskkernel.py), which logs `heartbeat beat=`, not this bare
+# loop's `heartbeat seq=`, so it can no longer share this seq=-based
+# heartbeat/shutdown-log assertion either.
 _HEARTBEAT_PROCESS_CHOICES = tuple(
-    process for process in PROCESS_CHOICES if process != "dashboard"
+    process for process in PROCESS_CHOICES if process not in {"dashboard", "riskkernel"}
 )
 
 
@@ -216,13 +240,24 @@ def test_main_run_with_process_flag_stamps_matching_component_in_json(
 
 
 @pytest.mark.timeout(30)
-def test_main_process_riskkernel_smoke_via_subprocess() -> None:
-    """`python -m windbreak run --process riskkernel` exits 0 and logs the component.
+def test_main_process_riskkernel_smoke_via_subprocess(tmp_path: Path) -> None:
+    """`python -m windbreak run --process riskkernel` exits 0 and logs a
+    `RiskKernel` heartbeat stamped with the `riskkernel` component.
 
     Bounded via `--max-beats 1` and `--heartbeat-interval 0` -- no signal
-    races, no unbounded loop. This is the sole subprocess-level test in this
-    module; every other assertion above runs in-process for speed.
+    races, no unbounded loop. `--config` points `ops.state_dir` at a fresh
+    `tmp_path` (issue #144: `riskkernel` now composes a real `RiskKernel`
+    whose `KillFileWatcher` polls `ops.state_dir` for a `KILL` file every
+    beat), so this subprocess never reads -- and could never be killed by a
+    stray `KILL` file left in -- the real `~/.local/share/windbreak`. This is
+    the sole subprocess-level test in this module; every other assertion
+    above runs in-process for speed.
     """
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump({"ops": {"state_dir": str(tmp_path)}}), encoding="utf-8"
+    )
+
     result = subprocess.run(
         [
             sys.executable,
@@ -235,6 +270,8 @@ def test_main_process_riskkernel_smoke_via_subprocess() -> None:
             "1",
             "--heartbeat-interval",
             "0",
+            "--config",
+            str(config_path),
         ],
         capture_output=True,
         text=True,
@@ -245,4 +282,10 @@ def test_main_process_riskkernel_smoke_via_subprocess() -> None:
     assert result.returncode == 0
     lines = [line for line in result.stderr.splitlines() if line]
     payloads = [json.loads(line) for line in lines]
-    assert any(payload.get("component") == "riskkernel" for payload in payloads)
+    heartbeat_payloads = [
+        payload
+        for payload in payloads
+        if "heartbeat beat=1" in str(payload.get("msg", ""))
+    ]
+    assert len(heartbeat_payloads) == 1
+    assert heartbeat_payloads[0].get("component") == "riskkernel"
