@@ -28,6 +28,16 @@ if TYPE_CHECKING:
     from typing import Any
 
 
+# Fake environment-variable *names* (not credentials) exercised by the fixtures
+# below. `api_key_env` names the env var an operator points at their real key --
+# it never holds a secret. Binding these to constants keeps the literals off the
+# `api_key_env = "..."` assignment lines so detect-secrets' keyword heuristic
+# cannot misread an env-var name as a hard-coded credential.
+_CUSTOM_ENV_VAR = "CUSTOM_KEY_ENV"
+_DEFAULT_ENV_VAR = "FUTURESEARCH_API_KEY"
+_YAML_ENV_VAR = "MY_FUTURESEARCH_KEY"
+
+
 # --- FutureSearchProviderSettings: construction, immutability, defaults ----------
 
 
@@ -36,7 +46,7 @@ def test_futuresearch_provider_settings_construction_preserves_its_fields() -> N
     settings = FutureSearchProviderSettings(
         endpoint_url="https://futuresearch.example/v1/forecast",
         pinned_forecaster_versions=("futuresearch-v1", "futuresearch-v2"),
-        api_key_env="CUSTOM_KEY_ENV",
+        api_key_env=_CUSTOM_ENV_VAR,
         per_call_ceiling_micros=1_000_000,
         reject_on_version_drift=False,
     )
@@ -46,7 +56,7 @@ def test_futuresearch_provider_settings_construction_preserves_its_fields() -> N
         "futuresearch-v1",
         "futuresearch-v2",
     )
-    assert settings.api_key_env == "CUSTOM_KEY_ENV"
+    assert settings.api_key_env == _CUSTOM_ENV_VAR
     assert settings.per_call_ceiling_micros == 1_000_000
     assert settings.reject_on_version_drift is False
 
@@ -68,7 +78,7 @@ def test_futuresearch_provider_settings_defaults_are_operator_placeholders() -> 
 
     assert settings.endpoint_url == "configured-by-operator"
     assert settings.pinned_forecaster_versions == ("pinned-by-operator",)
-    assert settings.api_key_env == "FUTURESEARCH_API_KEY"
+    assert settings.api_key_env == _DEFAULT_ENV_VAR
     assert settings.per_call_ceiling_micros == 2_000_000
     assert settings.reject_on_version_drift is True
 
@@ -97,7 +107,7 @@ def test_load_config_parses_futuresearch_block_from_yaml(
                 "futuresearch": {
                     "endpoint_url": "https://futuresearch.example/v1/forecast",
                     "pinned_forecaster_versions": ["futuresearch-v1"],
-                    "api_key_env": "MY_FUTURESEARCH_KEY",
+                    "api_key_env": _YAML_ENV_VAR,
                     "per_call_ceiling_micros": 1_500_000,
                     "reject_on_version_drift": False,
                 }
@@ -110,7 +120,7 @@ def test_load_config_parses_futuresearch_block_from_yaml(
     assert config.forecast.futuresearch == FutureSearchProviderSettings(
         endpoint_url="https://futuresearch.example/v1/forecast",
         pinned_forecaster_versions=("futuresearch-v1",),
-        api_key_env="MY_FUTURESEARCH_KEY",
+        api_key_env=_YAML_ENV_VAR,
         per_call_ceiling_micros=1_500_000,
         reject_on_version_drift=False,
     )
