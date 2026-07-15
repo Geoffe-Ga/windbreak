@@ -58,6 +58,16 @@ exactly, or confirm/rename via the handoff):
     banned ``type: ignore`` to force a not-yet-existing keyword argument
     through mypy, or a test-only file editing the production schema itself.
     See the note near the bottom of this file.
+
+Issue #192 additionally derives hosts from ``config.forecast.research``
+(``windbreak.config.schema.ResearchSettings``, itself new in #192): the parsed
+host of ``research.search_endpoint_url`` and every entry of
+``research.allowed_research_hosts``, both additive with the exchange- and
+forecast-provider-host derivation above. The default, unconfigured
+``ResearchSettings()`` (a placeholder endpoint URL, an empty
+``allowed_research_hosts`` tuple) contributes zero hosts, mirroring every
+other "operator must fill this in" default's fail-closed behavior elsewhere
+in this module.
 """
 
 from __future__ import annotations
@@ -67,7 +77,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from windbreak.config.schema import ModelRef, WindbreakConfig
+from windbreak.config.schema import (
+    ForecastConfig,
+    ModelRef,
+    ResearchSettings,
+    WindbreakConfig,
+)
 from windbreak.net.allowlist import (
     EgressDeniedError,
     OutboundAllowlist,
@@ -268,6 +283,82 @@ def test_allowlist_from_config_forwards_the_recorder() -> None:
         allowlist.require("https://evil.example.com/steal")
 
     assert any(event.event_type == "EgressDenied" for event in recorder.events)
+
+
+# --- allowlist_from_config: live-research host derivation (issue #192) ---------
+
+
+def test_allowlist_from_config_derives_the_research_search_endpoint_host() -> None:
+    """``config.forecast.research.search_endpoint_url``'s host is admitted,
+    exactly like the exchange and per-model forecast-provider hosts.
+    """
+    research = ResearchSettings(search_endpoint_url="https://search.example/v1/search")
+    config = dataclasses.replace(
+        WindbreakConfig(),
+        forecast=dataclasses.replace(WindbreakConfig().forecast, research=research),
+    )
+
+    allowlist = allowlist_from_config(config)
+
+    allowlist.require("https://search.example/v1/search")
+
+
+def test_allowlist_from_config_derives_each_allowed_research_host() -> None:
+    """Every host named in ``config.forecast.research.allowed_research_hosts``
+    is admitted.
+    """
+    research = ResearchSettings(
+        allowed_research_hosts=("news.example", "wire-service.example")
+    )
+    config = dataclasses.replace(
+        WindbreakConfig(),
+        forecast=dataclasses.replace(WindbreakConfig().forecast, research=research),
+    )
+
+    allowlist = allowlist_from_config(config)
+
+    allowlist.require("https://news.example/article")
+    allowlist.require("https://wire-service.example/article")
+
+
+def test_allowlist_from_config_default_research_settings_contributes_no_host() -> None:
+    """`WindbreakConfig()`'s default, unconfigured
+    ``forecast.research`` (a placeholder endpoint URL and an empty
+    ``allowed_research_hosts`` tuple) contributes zero hosts -- an
+    unconfigured live-research deployment fails closed rather than silently
+    admitting some plausible-looking default host.
+    """
+    allowlist = allowlist_from_config(WindbreakConfig())
+
+    with pytest.raises(EgressDeniedError):
+        allowlist.require("https://search.example/v1/search")
+    with pytest.raises(EgressDeniedError):
+        allowlist.require("https://configured-by-operator/x")
+
+
+def test_allowlist_from_config_research_hosts_additive() -> None:
+    """A configured research section adds to -- never replaces -- the
+    existing exchange and forecast-provider host derivation.
+    """
+    research = ResearchSettings(allowed_research_hosts=("news.example",))
+    config = dataclasses.replace(
+        WindbreakConfig(),
+        forecast=dataclasses.replace(WindbreakConfig().forecast, research=research),
+    )
+
+    allowlist = allowlist_from_config(config)
+
+    allowlist.require(f"https://{_KALSHI_HOST}/trade-api/v2/markets")
+    allowlist.require(f"https://{_ANTHROPIC_HOST}/v1/messages")
+    allowlist.require("https://news.example/article")
+
+
+def test_allowlist_from_config_research_settings_fixture_assumption() -> None:
+    """Fixture assumption: ``ForecastConfig``'s default ``research`` field is
+    a bare ``ResearchSettings()`` -- the host-derivation tests above build
+    their overrides against that same default via ``dataclasses.replace``.
+    """
+    assert ForecastConfig().research == ResearchSettings()
 
 
 # --- ModelRef sanity (documents the fixture assumption above) ------------------

@@ -30,6 +30,13 @@ from windbreak.forecast.providers.base import (
     build_vote_prompt,
     fingerprint_response,
 )
+from windbreak.forecast.providers.fetch_live import (
+    BodyTooLargeError,
+    ContentTypeRejectedError,
+    LiveFetchConfig,
+    LiveFetchTransport,
+    UnreachableUrlError,
+)
 from windbreak.forecast.providers.fixture import FixtureVoteProvider
 from windbreak.forecast.providers.futuresearch import (
     FutureSearchProvider,
@@ -47,12 +54,18 @@ from windbreak.forecast.providers.openai import (
     OPENAI_CHAT_ENDPOINT,
     OpenAiChatTransport,
 )
+from windbreak.forecast.providers.search_live import (
+    LiveSearchConfig,
+    LiveSearchTransport,
+)
 
 __all__ = [
     "ANTHROPIC_MESSAGES_ENDPOINT",
     "DEFAULT_VOTE_ENSEMBLE",
     "OPENAI_CHAT_ENDPOINT",
     "AnthropicMessagesTransport",
+    "BodyTooLargeError",
+    "ContentTypeRejectedError",
     "EnsembleMember",
     "EnsembleMemberLike",
     "FixtureVoteProvider",
@@ -63,6 +76,10 @@ __all__ = [
     "HttpRequest",
     "HttpResponse",
     "HttpTransport",
+    "LiveFetchConfig",
+    "LiveFetchTransport",
+    "LiveSearchConfig",
+    "LiveSearchTransport",
     "OpenAiChatTransport",
     "ProviderCitation",
     "ProviderError",
@@ -71,6 +88,7 @@ __all__ = [
     "ProviderVersionDriftError",
     "RecordingHttpCassette",
     "ReplayHttpCassette",
+    "UnreachableUrlError",
     "build_vote_prompt",
     "fingerprint_response",
 ]

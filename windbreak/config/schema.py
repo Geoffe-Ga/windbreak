@@ -236,6 +236,42 @@ class FutureSearchProviderSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class ResearchSettings:
+    """The live web-research config-schema section (issue #192).
+
+    Backs the :class:`windbreak.forecast.providers.search_live.LiveSearchTransport`
+    / :class:`windbreak.forecast.providers.fetch_live.LiveFetchTransport` pair
+    and the outbound-allowlist host derivation in
+    :func:`windbreak.net.allowlist.allowlist_from_config`. Per SPEC §6.1 every
+    leaf is an integer, string, or tuple of strings -- never a float.
+
+    ``search_endpoint_url`` and ``allowed_research_hosts`` have no safe
+    real-world default, so -- like :class:`AlertSink`, :class:`ModelRef`, and
+    :class:`FutureSearchProviderSettings` -- they default to the "operator must
+    fill this in" placeholder idiom and fail *closed*: an unconfigured
+    deployment's live-research egress allowlist contributes zero hosts rather
+    than an invented, plausible-looking one.
+
+    Attributes:
+        search_endpoint_url: The search endpoint a live search POSTs to.
+        search_api_key_env: The environment variable a live recorder reads the
+            search API key from; never a secret itself, only the var's *name*.
+        allowed_research_hosts: The hosts a live fetch may reach, added to the
+            outbound allowlist.
+        fetch_timeout_seconds: The per-fetch timeout, in whole seconds.
+        fetch_max_bytes: The maximum accepted fetched-body size, in bytes.
+        allowed_content_types: The response media types a live fetch accepts.
+    """
+
+    search_endpoint_url: str = "configured-by-operator"
+    search_api_key_env: str = "RESEARCH_SEARCH_API_KEY"
+    allowed_research_hosts: tuple[str, ...] = ()
+    fetch_timeout_seconds: int = 30
+    fetch_max_bytes: int = 2_000_000
+    allowed_content_types: tuple[str, ...] = ("text/html",)
+
+
+@dataclass(frozen=True, slots=True)
 class ForecastConfig:
     """Ensemble, triage, budget, and calibration-canary forecasting policy.
 
@@ -259,6 +295,7 @@ class ForecastConfig:
     futuresearch: FutureSearchProviderSettings = field(
         default_factory=FutureSearchProviderSettings
     )
+    research: ResearchSettings = field(default_factory=ResearchSettings)
 
 
 @dataclass(frozen=True, slots=True)

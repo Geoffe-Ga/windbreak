@@ -58,7 +58,7 @@ CANARY_ACK_EVENT = "CANARY_ACK"
 class _CanaryModel(NamedTuple):
     """The pinned canary model's provenance strings.
 
-    Mirrors :class:`windbreak.forecast.triage._TriageModel`: pinning the
+    Mirrors :class:`windbreak.forecast.triage.TriageModel`: pinning the
     provider/version keeps each canary request byte-stable across runs.
 
     Attributes:
