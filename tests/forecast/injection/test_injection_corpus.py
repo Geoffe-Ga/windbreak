@@ -1288,5 +1288,19 @@ class TestValidateVoteResponse:
         assert validate_vote_response(response) == RESPONSE_FAILURE_DELIMITER_FORGERY
 
     def test_ordinary_valid_response_returns_none(self) -> None:
-        """A non-empty, marker-free, delimiter-free response is valid."""
-        assert validate_vote_response("The probability estimate is 0.62.") is None
+        """A non-empty, marker-free, delimiter-free response is valid.
+
+        The literal is schema-valid structured JSON (issue #184, SPEC S6.3):
+        once `validate_vote_response` gained a post-injection-screen schema
+        check, an ordinary "valid" response must satisfy both layers, not
+        just the injection screen -- a bare prose sentence no longer
+        qualifies, so this fixture was migrated from free-form prose to a
+        minimal, otherwise-unremarkable structured vote.
+        """
+        response = (
+            '{"probability_ppm": 620000, "rationale_summary": '
+            '"The probability estimate reflects available evidence.", '
+            '"abstain": false}'
+        )
+
+        assert validate_vote_response(response) is None

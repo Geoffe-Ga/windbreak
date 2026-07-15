@@ -39,6 +39,7 @@ raw-substring re-check and fail closed.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import Final
@@ -73,6 +74,54 @@ RESPONSE_FAILURE_TOOL_CALL_LURE: Final = "tool_call_lure"
 TOOL_CALL_MARKERS: Final[frozenset[str]] = frozenset(
     {'"tool"', '"tool_call"', '"function_call"'}
 )
+
+#: Response-failure code: the response is not a schema-valid vote object at all
+#: (not JSON, not a JSON object, a required key is missing, or a required value
+#: is of the wrong JSON type entirely).
+RESPONSE_FAILURE_MALFORMED_VOTE_JSON: Final = "malformed_vote_json"
+
+#: Response-failure code: ``probability_ppm`` is numeric-shaped but not a true
+#: integer -- a JSON float, or a ``bool`` (an ``int`` subclass that must never
+#: masquerade as a probability, mirroring ``records._require_ppm``).
+RESPONSE_FAILURE_NON_INTEGER_PROBABILITY: Final = "non_integer_probability"
+
+#: Response-failure code: ``probability_ppm`` is a true integer but falls
+#: outside the inclusive ``[0, 1_000_000]`` ppm domain.
+RESPONSE_FAILURE_PROBABILITY_OUT_OF_RANGE: Final = "probability_out_of_range"
+
+#: Response-failure code: a *present* ``rationale_summary`` violates a content
+#: constraint (not a string, empty, or longer than :data:`MAX_RATIONALE_CHARS`).
+RESPONSE_FAILURE_INVALID_RATIONALE: Final = "invalid_rationale"
+
+#: Response-failure code: the vote object carries a top-level key outside the
+#: closed schema set, mirroring ``config.loader``'s unknown-key-is-fatal rule.
+RESPONSE_FAILURE_UNKNOWN_VOTE_KEY: Final = "unknown_vote_key"
+
+#: Maximum characters a ``rationale_summary`` may carry (SPEC S6.3 length cap).
+#: A model rationale is a short justification, never a document, so a generous
+#: bound still rejects a response trying to smuggle a large payload past the
+#: schema layer.
+MAX_RATIONALE_CHARS: Final = 2_000
+
+#: The vote schema's ``probability_ppm`` key.
+_VOTE_PPM_KEY: Final = "probability_ppm"
+
+#: The vote schema's ``rationale_summary`` key.
+_VOTE_RATIONALE_KEY: Final = "rationale_summary"
+
+#: The vote schema's ``abstain`` key.
+_VOTE_ABSTAIN_KEY: Final = "abstain"
+
+#: The closed set of top-level keys a schema-valid vote object may carry.
+_REQUIRED_VOTE_KEYS: Final[frozenset[str]] = frozenset(
+    {_VOTE_PPM_KEY, _VOTE_RATIONALE_KEY, _VOTE_ABSTAIN_KEY}
+)
+
+#: Lowest legal parts-per-million probability (inclusive).
+_MIN_PPM: Final = 0
+
+#: Highest legal parts-per-million probability (inclusive).
+_MAX_PPM: Final = 1_000_000
 
 #: HTML elements whose entire text subtree is discarded during sanitization:
 #: executable, styling, or off-DOM containers that never carry visible prose.
@@ -121,6 +170,26 @@ class ResearchQuote:
 
     url: str
     text: str
+
+
+@dataclass(frozen=True, slots=True)
+class ParsedVote:
+    """A parsed, schema-valid structured vote response (SPEC S6.3).
+
+    Produced by :func:`parse_vote_response` only after
+    :func:`validate_vote_response` has cleared both the injection screen and the
+    schema layer, so every field here is already known to be well-formed.
+
+    Attributes:
+        probability_ppm: The member's integer probability estimate, in ppm,
+            within ``[0, 1_000_000]``.
+        rationale_summary: The bounded, non-empty free-text rationale summary.
+        abstain: Whether the member abstained from casting a usable vote.
+    """
+
+    probability_ppm: int
+    rationale_summary: str
+    abstain: bool
 
 
 @dataclass(slots=True)
@@ -393,18 +462,122 @@ def wrap_data_block(*, url: str, quote: str) -> str:
     return f'{DATA_BLOCK_BEGIN} url="{url}">>>\n{quote}\n{DATA_BLOCK_END}'
 
 
-def validate_vote_response(response: str) -> str | None:
-    """Screen a model's own vote response for injection artifacts (S8.5).
+def _probability_failure(value: object) -> str | None:
+    """Return the failure code for a ``probability_ppm`` value, or ``None``.
 
-    Checks run in a fixed first-failure order: empty/whitespace-only, then a
-    forged delimiter token, then a tool-call lure. The first failure wins.
+    The bool/float/int ordering is load-bearing: ``bool`` is an ``int``
+    subclass, so it must be rejected as non-integer *before* the ``int`` branch
+    ever runs, and a JSON ``float`` is numeric-shaped but the wrong numeric kind
+    (never silently truncated). Any non-numeric JSON type (string, list, object,
+    ``null``) is malformed rather than non-integer.
+
+    Args:
+        value: The raw ``probability_ppm`` value parsed from the response.
+
+    Returns:
+        A ``RESPONSE_FAILURE_*`` code, or ``None`` when the value is a valid
+        in-range integer.
+    """
+    if isinstance(value, bool):
+        return RESPONSE_FAILURE_NON_INTEGER_PROBABILITY
+    if isinstance(value, int):
+        if _MIN_PPM <= value <= _MAX_PPM:
+            return None
+        return RESPONSE_FAILURE_PROBABILITY_OUT_OF_RANGE
+    if isinstance(value, float):
+        return RESPONSE_FAILURE_NON_INTEGER_PROBABILITY
+    return RESPONSE_FAILURE_MALFORMED_VOTE_JSON
+
+
+def _rationale_failure(value: object) -> str | None:
+    """Return the failure code for a ``rationale_summary`` value, or ``None``.
+
+    The non-string guard runs first so ``len`` is never called on a non-string
+    (e.g. a JSON ``null`` or number), failing closed on a present-but-bad value.
+
+    Args:
+        value: The raw ``rationale_summary`` value parsed from the response.
+
+    Returns:
+        :data:`RESPONSE_FAILURE_INVALID_RATIONALE` when the value is not a
+        non-empty string of at most :data:`MAX_RATIONALE_CHARS`, else ``None``.
+    """
+    if not isinstance(value, str) or not value or len(value) > MAX_RATIONALE_CHARS:
+        return RESPONSE_FAILURE_INVALID_RATIONALE
+    return None
+
+
+def _abstain_failure(value: object) -> str | None:
+    """Return the failure code for an ``abstain`` value, or ``None`` if valid.
+
+    ``abstain`` must be a genuine JSON ``bool`` (validated by ``isinstance``,
+    never by truthiness): a wrong-typed value -- a string, a number, ``null``,
+    or a nested container that could smuggle an *unbounded* payload past the
+    :data:`MAX_RATIONALE_CHARS` cap (the only bounded free field) -- is rejected
+    as malformed rather than coerced, so no non-boolean ever reaches
+    :class:`ParsedVote`. The check mirrors the wrong-JSON-type handling of a
+    non-numeric ``probability_ppm``.
+
+    Args:
+        value: The raw ``abstain`` value parsed from the response.
+
+    Returns:
+        :data:`RESPONSE_FAILURE_MALFORMED_VOTE_JSON` when ``value`` is not a
+        ``bool``, else ``None``.
+    """
+    if not isinstance(value, bool):
+        return RESPONSE_FAILURE_MALFORMED_VOTE_JSON
+    return None
+
+
+def _schema_failure(response: str) -> str | None:
+    """Return the vote-schema failure code for a response, or ``None`` if valid.
+
+    Runs only after the injection screen has cleared (see
+    :func:`validate_vote_response`). Checks run in a fixed order: JSON parse,
+    object shape, required keys present, closed key set, then per-field value
+    constraints (probability before rationale before abstain).
+
+    Args:
+        response: The injection-clean raw vote-completion text.
+
+    Returns:
+        A ``RESPONSE_FAILURE_*`` code for the first failing check, or ``None``.
+    """
+    try:
+        payload = json.loads(response)
+    except json.JSONDecodeError:
+        return RESPONSE_FAILURE_MALFORMED_VOTE_JSON
+    if not isinstance(payload, dict):
+        return RESPONSE_FAILURE_MALFORMED_VOTE_JSON
+    if not _REQUIRED_VOTE_KEYS.issubset(payload):
+        return RESPONSE_FAILURE_MALFORMED_VOTE_JSON
+    if set(payload) - _REQUIRED_VOTE_KEYS:
+        return RESPONSE_FAILURE_UNKNOWN_VOTE_KEY
+    return (
+        _probability_failure(payload[_VOTE_PPM_KEY])
+        or _rationale_failure(payload[_VOTE_RATIONALE_KEY])
+        or _abstain_failure(payload[_VOTE_ABSTAIN_KEY])
+    )
+
+
+def validate_vote_response(response: str) -> str | None:
+    """Screen a vote response for injection artifacts, then schema (S8.5/S6.3).
+
+    Checks run in a fixed first-failure order. The pre-existing SPEC S8.5
+    injection screen runs *first* -- empty/whitespace-only, then a forged
+    delimiter token, then a tool-call lure -- so a response that is otherwise
+    schema-valid JSON but carries an injection artifact is still flagged by the
+    injection code, never masked by the schema layer. Only a response that
+    clears the injection screen is then schema-validated (SPEC S6.3) as a
+    structured vote object. The first failure wins.
 
     Args:
         response: The raw vote-completion text.
 
     Returns:
         A ``RESPONSE_FAILURE_*`` code for the first failing check, or ``None``
-        when the response is clean.
+        when the response is both injection-clean and schema-valid.
     """
     if not response.strip():
         return RESPONSE_FAILURE_EMPTY
@@ -412,4 +585,34 @@ def validate_vote_response(response: str) -> str | None:
         return RESPONSE_FAILURE_DELIMITER_FORGERY
     if any(marker in response for marker in TOOL_CALL_MARKERS):
         return RESPONSE_FAILURE_TOOL_CALL_LURE
-    return None
+    return _schema_failure(response)
+
+
+def parse_vote_response(response: str) -> ParsedVote:
+    """Parse a validated vote response into a typed :class:`ParsedVote`, fail-closed.
+
+    Validates first via :func:`validate_vote_response` and raises on any failure
+    rather than silently coercing (mirroring
+    ``windbreak.forecast.cassettes._reject_float``'s float-leaf ban): a float
+    ``probability_ppm``, for instance, is rejected as non-integer, never
+    truncated. A clean response is re-parsed into its exact fields.
+
+    Args:
+        response: The raw vote-completion text.
+
+    Returns:
+        The parsed, schema-valid vote.
+
+    Raises:
+        ValueError: If ``response`` fails the injection screen or the schema
+            check; the message names the offending ``RESPONSE_FAILURE_*`` code.
+    """
+    failure = validate_vote_response(response)
+    if failure is not None:
+        raise ValueError(f"vote response failed validation: {failure}")
+    payload = json.loads(response)
+    return ParsedVote(
+        probability_ppm=payload[_VOTE_PPM_KEY],
+        rationale_summary=payload[_VOTE_RATIONALE_KEY],
+        abstain=payload[_VOTE_ABSTAIN_KEY],
+    )

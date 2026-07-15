@@ -9,11 +9,29 @@ with `CassetteMissError` -- never a live fallback. `windbreak/forecast/` does
 not exist yet, so importing `windbreak.forecast.pipeline` fails collection with
 `ModuleNotFoundError: No module named 'windbreak.forecast'` -- the expected
 Gate 1 RED state for issue #22.
+
+Also pins the issue #184 vote-parsing seam directly on `collect_model_votes`:
+vote probabilities must come from the *response* (a structured, integer-ppm
+JSON vote), never from `baseline ± fixed offset`; a response whose
+`probability_ppm` is not a true integer is discarded and ledgered exactly
+like an injection-tainted response; and an explicit `ensemble` override
+threads its members' provenance onto the resulting votes. Until issue #184
+lands, `collect_model_votes` has no `ensemble` keyword, `windbreak.forecast.
+sanitize` has no `RESPONSE_FAILURE_NON_INTEGER_PROBABILITY` constant, and
+`windbreak.config.schema` has no `EnsembleMemberConfig` -- so the three tests
+in the "vote probability comes from the response" section below import those
+two new names *locally* (deferred to call time, mirroring
+`tests/forecast/conftest.py`'s "Sandbox-transport fixture choice" pattern) so
+this module keeps collecting cleanly for every pre-existing test above; only
+those three new tests themselves fail, with an `ImportError` naming the
+missing symbol or (once the symbols exist) a `TypeError` on the still-missing
+`ensemble=` keyword -- the expected Gate 1 RED state for issue #184.
 """
 
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 from typing import TYPE_CHECKING
 
@@ -28,6 +46,8 @@ from windbreak.forecast.cassettes import (
     ReplayCassette,
 )
 from windbreak.forecast.pipeline import (
+    FORECAST_OUTPUT_DISCARDED_EVENT,
+    InMemoryForecastLedger,
     aggregate_median,
     apply_calibration_map,
     build_forecast_record,
@@ -49,8 +69,10 @@ if TYPE_CHECKING:
     #: `make_fake_vote_transport` (see tests/forecast/conftest.py) is a factory
     #: for `FakeVoteTransport`, a network-free `LlmTransport` double defined in
     #: the conftest module (not part of the `windbreak` package under test), so
-    #: it is typed structurally here rather than imported by name.
-    FakeVoteTransportFactory = Callable[[], object]
+    #: it is typed structurally here rather than imported by name. It also
+    #: accepts an optional `responses` tuple override, hence `Callable[...]`
+    #: rather than the no-argument `Callable[[], object]`.
+    FakeVoteTransportFactory = Callable[..., object]
 
 
 # --- (a) schema-valid record ------------------------------------------------------
@@ -295,3 +317,164 @@ def test_apply_calibration_map_is_identity_within_domain() -> None:
 def test_apply_calibration_map_clamps_out_of_domain(value: int, expected: int) -> None:
     """The calibration map defensively clamps back into ``[0, 1_000_000]``."""
     assert apply_calibration_map(value) == expected
+
+
+# --- Vote probability comes from the response, not the baseline (issue #184) -----
+#
+# `windbreak.forecast.sanitize.RESPONSE_FAILURE_NON_INTEGER_PROBABILITY` and
+# `windbreak.config.schema.EnsembleMemberConfig` do not exist yet, so each test
+# below imports them locally rather than at module scope (see this module's
+# docstring) -- only these three tests fail collection/execution, never the
+# tests above.
+
+
+def test_vote_probability_comes_from_response_not_baseline(
+    market: NormalizedMarket,
+    baseline: BaselineQuoteSnapshot,
+    make_fake_vote_transport: FakeVoteTransportFactory,
+) -> None:
+    """Each surviving vote's `probability_ppm` is parsed from its response's
+    structured JSON, not derived from `baseline ± fixed offset`.
+
+    `baseline.price_pips == 4500` maps to a 450_000 ppm baseline, so the old
+    `baseline ± 10_000 ppm` derivation would have produced exactly
+    `(440_000, 450_000, 460_000)` regardless of what the responses said. Here
+    every response carries a probability far from that baseline-derived triple
+    (123_000 / 456_000 / 789_000), so a pipeline still deriving from the
+    baseline would fail this test's *first* assertion, and one still deriving
+    from the baseline by coincidence would still fail the explicit negation
+    below.
+    """
+    responses = (
+        '{"probability_ppm": 123000, "rationale_summary": "alpha evidence", '
+        '"abstain": false}',
+        '{"probability_ppm": 456000, "rationale_summary": "beta evidence", '
+        '"abstain": false}',
+        '{"probability_ppm": 789000, "rationale_summary": "gamma evidence", '
+        '"abstain": false}',
+    )
+    transport = make_fake_vote_transport(responses)
+
+    votes = collect_model_votes(market, baseline, transport=transport)
+
+    observed = [vote.probability_ppm for vote in votes]
+    assert observed == [123_000, 456_000, 789_000]
+    assert observed != [440_000, 450_000, 460_000]
+
+
+def test_non_integer_probability_is_discarded_and_ledgered(
+    market: NormalizedMarket,
+    baseline: BaselineQuoteSnapshot,
+    created_at: datetime,
+    make_fake_vote_transport: FakeVoteTransportFactory,
+) -> None:
+    """A response whose `probability_ppm` is not a true integer (`0.47`) is
+    discarded and ledgered -- exactly like an injection-tainted response --
+    leaving the other two valid votes to survive, with exactly one
+    `FORECAST_OUTPUT_DISCARDED` event carrying the new failure code and a
+    fingerprint, never the raw (float-carrying) response text.
+    """
+    from windbreak.forecast.sanitize import RESPONSE_FAILURE_NON_INTEGER_PROBABILITY
+
+    tainted_response = (
+        '{"probability_ppm": 0.47, "rationale_summary": "bad evidence", '
+        '"abstain": false}'
+    )
+    responses = (
+        '{"probability_ppm": 300000, "rationale_summary": "alpha evidence", '
+        '"abstain": false}',
+        tainted_response,
+        '{"probability_ppm": 700000, "rationale_summary": "gamma evidence", '
+        '"abstain": false}',
+    )
+    transport = make_fake_vote_transport(responses)
+    ledger = InMemoryForecastLedger()
+
+    votes = collect_model_votes(
+        market,
+        baseline,
+        transport=transport,
+        ledger=ledger,
+        created_at=created_at,
+    )
+
+    assert [vote.probability_ppm for vote in votes] == [300_000, 700_000]
+    events = ledger.events_by_type(FORECAST_OUTPUT_DISCARDED_EVENT)
+    assert len(events) == 1
+    event = events[0]
+    assert event.payload["failure"] == RESPONSE_FAILURE_NON_INTEGER_PROBABILITY
+    assert event.payload["vote_index"] == 1
+    assert (
+        event.payload["response_fingerprint"]
+        == hashlib.sha256(tainted_response.encode("utf-8")).hexdigest()
+    )
+    for value in event.payload.values():
+        assert "0.47" not in str(value)
+
+
+def test_collect_model_votes_custom_ensemble_overrides_default_and_call_count(
+    market: NormalizedMarket,
+    baseline: BaselineQuoteSnapshot,
+    make_fake_vote_transport: FakeVoteTransportFactory,
+) -> None:
+    """A caller-supplied `ensemble` overrides the built-in three-member default:
+    the resulting votes carry that tuple's own provenance, in order, and
+    `collect_model_votes` issues exactly `len(ensemble)` transport calls (two
+    here, never the default three).
+    """
+    from windbreak.config.schema import EnsembleMemberConfig
+
+    custom_ensemble = (
+        EnsembleMemberConfig("openai", "custom-model-a", "2025-01-01"),
+        EnsembleMemberConfig("anthropic", "custom-model-b", "2025-02-01"),
+    )
+    responses = (
+        '{"probability_ppm": 111111, "rationale_summary": "alpha evidence", '
+        '"abstain": false}',
+        '{"probability_ppm": 222222, "rationale_summary": "beta evidence", '
+        '"abstain": false}',
+    )
+    transport = _CountingTransport(make_fake_vote_transport(responses))
+
+    votes = collect_model_votes(
+        market, baseline, transport=transport, ensemble=custom_ensemble
+    )
+
+    assert transport.call_count == 2
+    assert [vote.provider for vote in votes] == ["openai", "anthropic"]
+    assert [vote.model_version for vote in votes] == [
+        "custom-model-a",
+        "custom-model-b",
+    ]
+    assert [vote.declared_training_cutoff for vote in votes] == [
+        "2025-01-01",
+        "2025-02-01",
+    ]
+    assert [vote.probability_ppm for vote in votes] == [111_111, 222_222]
+
+
+class _CountingTransport:
+    """An `LlmTransport` double counting calls, then delegating (mirrors
+    `tests/forecast/test_triage.py`'s `_CountingTransport`).
+    """
+
+    def __init__(self, transport: object) -> None:
+        """Store the delegate transport and reset the call counter.
+
+        Args:
+            transport: The underlying transport to delegate every call to.
+        """
+        self._transport = transport
+        self.call_count = 0
+
+    def complete(self, request: LlmRequest) -> str:
+        """Record one call, then delegate to the wrapped transport.
+
+        Args:
+            request: The completion request to forward unchanged.
+
+        Returns:
+            The wrapped transport's response.
+        """
+        self.call_count += 1
+        return self._transport.complete(request)  # type: ignore[attr-defined]
