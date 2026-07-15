@@ -24,7 +24,10 @@ import hashlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, Protocol
 
-from windbreak.forecast.sanitize import wrap_data_block
+from windbreak.forecast.sanitize import (
+    RESPONSE_FAILURE_VERSION_DRIFT,
+    wrap_data_block,
+)
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -225,18 +228,35 @@ class ProviderVersionDriftError(ProviderError):
     closed rather than trusting an un-vetted forecaster (T14). The message names
     the drift but never carries any secret (no API key is in scope here).
 
+    Carries ``failure_code`` and ``response_fingerprint`` mirroring
+    :class:`ProviderResponseRejectedError`, so the pipeline discards and ledgers
+    a drifted vote per-vote through the same discard path -- never crashing the
+    whole run.
+
     Attributes:
+        failure_code: The ``RESPONSE_FAILURE_*`` code for version drift
+            (:data:`RESPONSE_FAILURE_VERSION_DRIFT`).
+        response_fingerprint: The sha256 fingerprint of the drifted response;
+            fingerprint-only, never the raw text or any secret.
         reported_version: The forecaster version the provider reported.
         pinned_versions: The operator-pinned versions the report drifted from.
     """
 
-    def __init__(self, reported_version: str, pinned_versions: tuple[str, ...]) -> None:
-        """Store the reported version and the pinned set it drifted from.
+    def __init__(
+        self,
+        reported_version: str,
+        pinned_versions: tuple[str, ...],
+        response_fingerprint: str,
+    ) -> None:
+        """Store the reported version, pinned set, and response fingerprint.
 
         Args:
             reported_version: The forecaster version the provider reported.
             pinned_versions: The operator-pinned versions considered valid.
+            response_fingerprint: The drifted response's sha256 fingerprint.
         """
+        self.failure_code = RESPONSE_FAILURE_VERSION_DRIFT
+        self.response_fingerprint = response_fingerprint
         self.reported_version = reported_version
         self.pinned_versions = pinned_versions
         super().__init__(

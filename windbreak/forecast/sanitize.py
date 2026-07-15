@@ -97,6 +97,15 @@ RESPONSE_FAILURE_INVALID_RATIONALE: Final = "invalid_rationale"
 #: closed schema set, mirroring ``config.loader``'s unknown-key-is-fatal rule.
 RESPONSE_FAILURE_UNKNOWN_VOTE_KEY: Final = "unknown_vote_key"
 
+#: Response-failure code: the forecaster reported a version outside the
+#: operator-pinned set under the strict drift policy -- discarded per-vote
+#: (never crashes the whole run), mirroring every other rejection path.
+RESPONSE_FAILURE_VERSION_DRIFT: Final = "forecaster_version_drift"
+
+#: Response-failure code: the transport returned a non-2xx status; the response
+#: is rejected fast rather than relied upon to fail body-schema validation.
+RESPONSE_FAILURE_HTTP_STATUS: Final = "http_status_error"
+
 #: Maximum characters a ``rationale_summary`` may carry (SPEC S6.3 length cap).
 #: A model rationale is a short justification, never a document, so a generous
 #: bound still rejects a response trying to smuggle a large payload past the

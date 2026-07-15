@@ -136,6 +136,11 @@ def _endpoint_allowlist(config: FutureSearchProviderConfig) -> OutboundAllowlist
     Returns:
         An allowlist permitting only the endpoint's host.
     """
+    # The allowlist host is derived from the same endpoint URL being dialed, so
+    # it cannot pre-vet an independently-trusted host -- it only constrains where
+    # a *redirect* may land (redirects are refused outright) and screens control
+    # characters. That is acceptable for this operator-run, never-CI-executed
+    # recorder, where the operator supplies the endpoint deliberately.
     host = urlsplit(config.endpoint_url).hostname or ""
     return OutboundAllowlist(frozenset({host}))
 

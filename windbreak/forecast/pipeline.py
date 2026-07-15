@@ -35,6 +35,7 @@ from windbreak.forecast.providers import (
     DEFAULT_VOTE_ENSEMBLE,
     FixtureVoteProvider,
     ProviderResponseRejectedError,
+    ProviderVersionDriftError,
 )
 from windbreak.forecast.records import (
     Citation,
@@ -607,8 +608,14 @@ def _collect_provider_forecasts(
     a response the provider rejects
     (:class:`~windbreak.forecast.providers.ProviderResponseRejectedError`) is
     *discarded* -- never trusted, never retried -- and, when a recorder is wired,
-    ledgered with a fingerprint-only payload. The result holds between zero and
-    ``len(members)`` surviving forecasts, in call order.
+    ledgered with a fingerprint-only payload. A provider-reported forecaster-
+    version drift under the strict policy
+    (:class:`~windbreak.forecast.providers.ProviderVersionDriftError`) is treated
+    identically -- both errors expose ``failure_code`` and
+    ``response_fingerprint`` -- so one drifted vote is dropped and ledgered
+    exactly like a screened-out response rather than crashing the whole run
+    (#189). The result holds between zero and ``len(members)`` surviving
+    forecasts, in call order.
 
     Args:
         market: The market under forecast.
@@ -628,7 +635,7 @@ def _collect_provider_forecasts(
         provider = _build_provider(provider_factory, transport, member)
         try:
             forecast = provider.forecast(market, baseline, index, quotes)
-        except ProviderResponseRejectedError as rejected:
+        except (ProviderResponseRejectedError, ProviderVersionDriftError) as rejected:
             if recorder is not None:
                 recorder.record_discard(
                     market_ticker=market.ticker,
@@ -665,7 +672,13 @@ def collect_model_votes(
     :class:`~windbreak.forecast.providers.ProviderResponseRejectedError`; that
     vote is *discarded* (never trusted, never retried) and, when a ledger is
     wired, recorded as a :data:`FORECAST_OUTPUT_DISCARDED_EVENT` with a
-    fingerprint-only payload. Each surviving vote's ``probability_ppm`` is parsed
+    fingerprint-only payload. A provider-reported forecaster-version drift under
+    the strict policy
+    (:class:`~windbreak.forecast.providers.ProviderVersionDriftError`) is
+    discarded per-vote in exactly the same way -- one vote dropped and ledgered
+    ``FORECAST_OUTPUT_DISCARDED`` with the version-drift failure code and the
+    drifted response's fingerprint -- never a whole-run crash (#189). Each
+    surviving vote's ``probability_ppm`` is parsed
     from its response (SPEC S6.3), not derived from the baseline, while its
     fingerprint records provider drift (T14). The returned tuple therefore holds
     between zero and ``len(ensemble)`` votes.

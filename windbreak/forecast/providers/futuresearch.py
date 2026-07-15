@@ -44,7 +44,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import ROUND_CEILING, ROUND_HALF_EVEN, Decimal
-from typing import TYPE_CHECKING, NoReturn
+from typing import TYPE_CHECKING, Final, NoReturn
 
 from windbreak.forecast.providers.base import (
     ProviderCitation,
@@ -56,6 +56,7 @@ from windbreak.forecast.providers.base import (
 from windbreak.forecast.providers.http_cassettes import HttpRequest
 from windbreak.forecast.sanitize import (
     MAX_RATIONALE_CHARS,
+    RESPONSE_FAILURE_HTTP_STATUS,
     RESPONSE_FAILURE_INVALID_RATIONALE,
     RESPONSE_FAILURE_MALFORMED_VOTE_JSON,
     RESPONSE_FAILURE_PROBABILITY_OUT_OF_RANGE,
@@ -83,6 +84,14 @@ _TRAINING_CUTOFF = "server-managed"
 
 #: The HTTP method every FutureSearch request uses.
 _REQUEST_METHOD = "POST"
+
+#: Inclusive lower bound of the HTTP success (2xx) status range: a response
+#: whose status falls below it is rejected fast, before any body parsing.
+_HTTP_SUCCESS_MIN: Final = 200
+
+#: Exclusive upper bound of the HTTP success (2xx) status range: a response
+#: whose status reaches it (300+) is rejected fast, before any body parsing.
+_HTTP_SUCCESS_MAX_EXCLUSIVE: Final = 300
 
 #: ppm scale: one full probability (1.0) is 1_000_000 ppm. A ``Decimal`` so the
 #: whole conversion stays on the exact-decimal path, never a float.
@@ -435,9 +444,11 @@ class FutureSearchProvider:
             The structured forecast parsed from a clean, schema-valid response.
 
         Raises:
-            ProviderResponseRejectedError: If the raw response fails the
-                injection screen, JSON parse, or a field's domain check; the
-                error carries the failure code and response fingerprint only.
+            ProviderResponseRejectedError: If the transport returns a non-2xx
+                status (rejected fast, before any body parsing), or if the raw
+                response fails the injection screen, JSON parse, or a field's
+                domain check; the error carries the failure code and response
+                fingerprint only.
             ProviderVersionDriftError: If the reported forecaster version is off
                 the pinned set and the config rejects drift.
         """
@@ -447,8 +458,13 @@ class FutureSearchProvider:
             url=self._config.endpoint_url,
             body=_canonical_request_body(market, baseline, vote_index),
         )
-        raw_body = self._transport.send(request).body
+        response = self._transport.send(request)
+        raw_body = response.body
         fingerprint = fingerprint_response(raw_body)
+        if not (
+            _HTTP_SUCCESS_MIN <= response.status_code < _HTTP_SUCCESS_MAX_EXCLUSIVE
+        ):
+            _reject(RESPONSE_FAILURE_HTTP_STATUS, fingerprint)
         injection = screen_untrusted_text(raw_body)
         if injection is not None:
             _reject(injection, fingerprint)
@@ -476,23 +492,28 @@ class FutureSearchProvider:
     ) -> str:
         """Enforce the pinned-forecaster-version drift policy.
 
-        A reported version inside the pinned set is returned as-is. An unpinned
-        version raises :class:`ProviderVersionDriftError` under the strict
+        A missing or non-string ``forecaster_version`` is rejected as malformed
+        (:data:`RESPONSE_FAILURE_MALFORMED_VOTE_JSON`) in *both* strict and
+        permissive modes -- it is a schema violation, not drift. Only a version
+        that is present and a string but outside the pinned set is the drift
+        case: it raises :class:`ProviderVersionDriftError` under the strict
         default, or -- when drift is permitted -- proceeds with one logged
-        warning and the *reported* version stamped onto the forecast.
+        warning and the *reported* version stamped onto the forecast. A reported
+        version inside the pinned set is returned as-is.
 
         Args:
             payload: The parsed response object.
-            fingerprint: The response fingerprint, for any rejection.
+            fingerprint: The response fingerprint, for any rejection or drift.
 
         Returns:
             The version string to stamp onto the forecast.
 
         Raises:
-            ProviderResponseRejectedError: If ``forecaster_version`` is not a
-                string.
-            ProviderVersionDriftError: If the version is unpinned and the config
-                rejects drift.
+            ProviderResponseRejectedError: If ``forecaster_version`` is missing
+                or not a string (malformed, in both modes).
+            ProviderVersionDriftError: If the version is present, a string, but
+                unpinned and the config rejects drift; carries the response
+                fingerprint so the pipeline can discard and ledger it per-vote.
         """
         version = payload.get(_FORECASTER_VERSION_KEY)
         if not isinstance(version, str):
@@ -501,7 +522,7 @@ class FutureSearchProvider:
         if version in pinned:
             return version
         if self._config.reject_on_version_drift:
-            raise ProviderVersionDriftError(version, pinned)
+            raise ProviderVersionDriftError(version, pinned, fingerprint)
         _LOGGER.warning(
             "futuresearch reported forecaster version %r off the pinned set %r; "
             "proceeding permissively and stamping the reported version",

@@ -35,8 +35,16 @@ from windbreak.forecast.cassettes import (
     ForbiddenLiveTransport,
     LiveCallForbiddenError,
 )
-from windbreak.forecast.pipeline import PROVIDER_REPORTED_SOURCE_TYPE, run_pipeline
+from windbreak.forecast.pipeline import (
+    FORECAST_OUTPUT_DISCARDED_EVENT,
+    PROVIDER_REPORTED_SOURCE_TYPE,
+    InMemoryForecastLedger,
+    collect_model_votes,
+    run_pipeline,
+)
 from windbreak.forecast.providers import (
+    EnsembleMember,
+    EnsembleMemberLike,
     ForbiddenLiveHttpTransport,
     FutureSearchProvider,
     FutureSearchProviderConfig,
@@ -369,6 +377,19 @@ def test_probability_wrong_type_string_is_rejected_as_malformed(
 ) -> None:
     """A string `probability` value is rejected as malformed, not coerced."""
     error = _rejected(_body(probability='"not-a-number"'), market, baseline)
+
+    assert error.failure_code == RESPONSE_FAILURE_MALFORMED_VOTE_JSON
+
+
+def test_probability_true_bool_is_rejected(
+    market: NormalizedMarket, baseline: BaselineQuoteSnapshot
+) -> None:
+    """A JSON `true`/`false` `probability` value is rejected as malformed: a
+    `bool` is an `int` subclass and must never masquerade as a numeric
+    probability (pins the `isinstance(value, bool)` guard at
+    `futuresearch.py:257`, #189).
+    """
+    error = _rejected(_body(probability="true"), market, baseline)
 
     assert error.failure_code == RESPONSE_FAILURE_MALFORMED_VOTE_JSON
 
@@ -798,6 +819,22 @@ def test_cost_usd_bad_value_defaults_to_per_call_ceiling(
     assert result.cost_micros == 999_000
 
 
+def test_cost_usd_true_bool_defaults_to_ceiling(
+    market: NormalizedMarket, baseline: BaselineQuoteSnapshot
+) -> None:
+    """A JSON `true`/`false` `cost_usd` value does not reject the response --
+    it only defaults the cost to the per-call ceiling, since a `bool` is an
+    `int` subclass that must never be treated as a numeric cost (pins the
+    `isinstance(value, bool)` guard at `futuresearch.py:389`, #189).
+    """
+    config = _config(per_call_ceiling_micros=777_000)
+    provider = FutureSearchProvider(_StubHttpTransport(_body(cost_usd="true")), config)
+
+    result = provider.forecast(market, baseline, 0, ())
+
+    assert result.cost_micros == 777_000
+
+
 # --- Version drift: strict reject by default, permissive with a warning ---------
 
 
@@ -861,6 +898,73 @@ def test_pinned_version_is_stamped_without_drift(
     result = provider.forecast(market, baseline, 0, ())
 
     assert result.model_version == _PINNED_VERSION
+
+
+def test_version_drift_error_carries_failure_code_and_fingerprint(
+    market: NormalizedMarket, baseline: BaselineQuoteSnapshot
+) -> None:
+    """An unpinned reported version raises `ProviderVersionDriftError` that
+    also carries `.failure_code` (== `RESPONSE_FAILURE_VERSION_DRIFT`) and a
+    non-empty sha256 `.response_fingerprint`, alongside the pre-existing
+    `.reported_version`/`.pinned_versions` -- so a version-drift failure can
+    be discarded and ledgered by the pipeline exactly like a
+    `ProviderResponseRejectedError` (#189).
+    """
+    from windbreak.forecast.sanitize import RESPONSE_FAILURE_VERSION_DRIFT
+
+    unpinned_version_json = json.dumps("futuresearch-v2-unpinned")
+    body = _body(forecaster_version=unpinned_version_json)
+    provider = FutureSearchProvider(_StubHttpTransport(body), _config())
+
+    with pytest.raises(ProviderVersionDriftError) as excinfo:
+        provider.forecast(market, baseline, 0, ())
+
+    assert excinfo.value.failure_code == RESPONSE_FAILURE_VERSION_DRIFT
+    assert len(excinfo.value.response_fingerprint) == 64
+    assert (
+        excinfo.value.response_fingerprint
+        == hashlib.sha256(body.encode("utf-8")).hexdigest()
+    )
+    assert excinfo.value.reported_version == "futuresearch-v2-unpinned"
+    assert excinfo.value.pinned_versions == (_PINNED_VERSION,)
+
+
+# --- HTTP status: non-2xx rejected fast, before any body-schema parsing ---------
+
+
+def test_non_2xx_status_is_rejected_fast(
+    market: NormalizedMarket, baseline: BaselineQuoteSnapshot
+) -> None:
+    """A non-2xx HTTP status is rejected immediately, before any body-schema
+    parsing is attempted -- proven by pairing the bad status with a body that
+    is not even valid JSON, which a parsing-first implementation would
+    instead surface as `RESPONSE_FAILURE_MALFORMED_VOTE_JSON` (#189).
+    """
+    from windbreak.forecast.sanitize import RESPONSE_FAILURE_HTTP_STATUS
+
+    provider = FutureSearchProvider(
+        _StubHttpTransport("not even json", status_code=500), _config()
+    )
+
+    with pytest.raises(ProviderResponseRejectedError) as excinfo:
+        provider.forecast(market, baseline, 0, ())
+
+    assert excinfo.value.failure_code == RESPONSE_FAILURE_HTTP_STATUS
+
+
+def test_2xx_status_is_accepted(
+    market: NormalizedMarket, baseline: BaselineQuoteSnapshot
+) -> None:
+    """A 200 status accepts and parses the body as usual -- the status check
+    never rejects a normal successful response (#189).
+    """
+    provider = FutureSearchProvider(
+        _StubHttpTransport(_body(), status_code=200), _config()
+    )
+
+    result = provider.forecast(market, baseline, 0, ())
+
+    assert isinstance(result, ProviderForecast)
 
 
 # --- HTTP record/replay determinism, fail-closed misses, and secret hygiene -----
@@ -1104,3 +1208,135 @@ def test_run_pipeline_provider_citations_do_not_inflate_verified_count_or_eligib
     ]
     assert len(provider_verified) == len(baseline_verified)
     assert provider_record.eligible_for_live == baseline_record.eligible_for_live
+
+
+# --- Pipeline integration: sibling errors discard the vote, not the run (#189) --
+
+
+def test_version_drift_through_pipeline_discards_vote_not_whole_run(
+    market: NormalizedMarket,
+    baseline: BaselineQuoteSnapshot,
+    created_at: datetime,
+) -> None:
+    """A `ProviderVersionDriftError` raised by one ensemble member's real
+    `FutureSearchProvider` is caught by `collect_model_votes` exactly like a
+    `ProviderResponseRejectedError`: the drifted vote is discarded -- the run
+    never crashes -- and ledgered as `FORECAST_OUTPUT_DISCARDED` with the
+    version-drift failure code and the drifted response's fingerprint, while
+    the other ensemble member's vote survives.
+
+    Today `ProviderVersionDriftError` propagates uncaught out of
+    `_collect_provider_forecasts` and crashes the whole run; this is the #189
+    regression this test pins.
+    """
+    from windbreak.forecast.sanitize import RESPONSE_FAILURE_VERSION_DRIFT
+
+    member_ok = EnsembleMember("openai", "futuresearch-ok-member", "2024-06-01")
+    member_drift = EnsembleMember(
+        "anthropic", "futuresearch-drift-member", "2024-06-01"
+    )
+    ensemble = (member_ok, member_drift)
+
+    ok_body = _body()
+    drifted_body = _body(forecaster_version=json.dumps("futuresearch-v2-unpinned"))
+    config = _config()
+
+    def provider_factory(member: EnsembleMemberLike) -> FutureSearchProvider:
+        """Route the drifted member to the drifted body, others to a clean one."""
+        if member.model_version == "futuresearch-drift-member":
+            return FutureSearchProvider(_StubHttpTransport(drifted_body), config)
+        return FutureSearchProvider(_StubHttpTransport(ok_body), config)
+
+    ledger = InMemoryForecastLedger()
+
+    votes = collect_model_votes(
+        market,
+        baseline,
+        transport=ForbiddenLiveTransport(),
+        ledger=ledger,
+        created_at=created_at,
+        ensemble=ensemble,
+        provider_factory=provider_factory,
+    )
+
+    # Exactly one vote survives (the clean member); the drifted one is dropped.
+    # The survivor's `model_version` is the response-stamped `forecaster_version`
+    # (`_PINNED_VERSION`), never the ensemble member's -- so which member was
+    # discarded is asserted through the ledger event's `provider`/`model_version`
+    # (recorded from the member), not the surviving vote.
+    assert len(votes) == 1
+    assert votes[0].model_version == _PINNED_VERSION
+
+    events = ledger.events_by_type(FORECAST_OUTPUT_DISCARDED_EVENT)
+    assert len(events) == 1
+    event = events[0]
+    assert event.payload["failure"] == RESPONSE_FAILURE_VERSION_DRIFT
+    assert event.payload["provider"] == member_drift.provider
+    assert event.payload["model_version"] == member_drift.model_version
+    assert (
+        event.payload["response_fingerprint"]
+        == hashlib.sha256(drifted_body.encode("utf-8")).hexdigest()
+    )
+
+
+def test_response_rejection_through_pipeline_discards_and_ledgers(
+    market: NormalizedMarket,
+    baseline: BaselineQuoteSnapshot,
+    created_at: datetime,
+) -> None:
+    """A `ProviderResponseRejectedError` raised by a real `FutureSearchProvider`
+    wired in through `provider_factory` is caught end-to-end by
+    `collect_model_votes`: the rejected vote is discarded -- the run never
+    crashes -- and ledgered as `FORECAST_OUTPUT_DISCARDED` with the exact
+    failure code and response fingerprint, while the other member's vote
+    survives.
+
+    Unlike `_rejected` (which drives a single-member unit call directly),
+    this exercises the real `provider_factory` wiring through
+    `collect_model_votes` end-to-end -- the #189 HIGH finding.
+    """
+    member_ok = EnsembleMember("openai", "futuresearch-ok-member-2", "2024-06-01")
+    member_rejected = EnsembleMember(
+        "anthropic", "futuresearch-rejected-member", "2024-06-01"
+    )
+    ensemble = (member_ok, member_rejected)
+
+    ok_body = _body()
+    rejected_body = _body(probability="true")  # bool: malformed, never coerced
+    config = _config()
+
+    def provider_factory(member: EnsembleMemberLike) -> FutureSearchProvider:
+        """Route the rejected member to the malformed body, others to a clean one."""
+        if member.model_version == "futuresearch-rejected-member":
+            return FutureSearchProvider(_StubHttpTransport(rejected_body), config)
+        return FutureSearchProvider(_StubHttpTransport(ok_body), config)
+
+    ledger = InMemoryForecastLedger()
+
+    votes = collect_model_votes(
+        market,
+        baseline,
+        transport=ForbiddenLiveTransport(),
+        ledger=ledger,
+        created_at=created_at,
+        ensemble=ensemble,
+        provider_factory=provider_factory,
+    )
+
+    # Exactly one vote survives (the clean member); the rejected one is dropped.
+    # As above, the survivor's `model_version` is the response-stamped
+    # `forecaster_version`, so the discarded member is identified via the ledger
+    # event payload (recorded from the member), not the surviving vote.
+    assert len(votes) == 1
+    assert votes[0].model_version == _PINNED_VERSION
+
+    events = ledger.events_by_type(FORECAST_OUTPUT_DISCARDED_EVENT)
+    assert len(events) == 1
+    event = events[0]
+    assert event.payload["failure"] == RESPONSE_FAILURE_MALFORMED_VOTE_JSON
+    assert event.payload["provider"] == member_rejected.provider
+    assert event.payload["model_version"] == member_rejected.model_version
+    assert (
+        event.payload["response_fingerprint"]
+        == hashlib.sha256(rejected_body.encode("utf-8")).hexdigest()
+    )
