@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Final, Protocol
 
+from windbreak.forecast.calibration import ensure_temporal_integrity
 from windbreak.forecast.citations import (
     content_hash_of,
     count_verified,
@@ -56,6 +57,7 @@ if TYPE_CHECKING:
 
     from windbreak.connector.models import NormalizedMarket
     from windbreak.forecast.budget import ResearchBudget
+    from windbreak.forecast.calibration import CalibrationMap
     from windbreak.forecast.canary import CanaryGate
     from windbreak.forecast.cassettes import LlmTransport
     from windbreak.forecast.citations import CitationVerdict
@@ -66,6 +68,7 @@ if TYPE_CHECKING:
         ProviderCitation,
         ProviderForecast,
     )
+    from windbreak.forecast.providers.track_record import ProviderTrackRecordGate
     from windbreak.forecast.records import BaselineQuoteSnapshot
     from windbreak.forecast.sandbox import ResearchTools
 
@@ -111,6 +114,14 @@ ABSTENTION_ALL_VOTES_DISCARDED: Final = "all_votes_discarded"
 
 #: Event type ledgered when one model vote is discarded as injection-tainted.
 FORECAST_OUTPUT_DISCARDED_EVENT: Final = "FORECAST_OUTPUT_DISCARDED"
+
+#: Event type ledgered when a wired calibration map is applied to the aggregate
+#: median, recording the exact pre-/post-calibration ppm (SPEC S8.2 stage 11).
+CALIBRATION_MAP_APPLIED_EVENT: Final = "CALIBRATION_MAP_APPLIED"
+
+#: Event type ledgered when the provider-track-record gate holds a run back from
+#: live eligibility because one or more voting providers are unproven (#194).
+PROVIDER_GATE_HELD_EVENT: Final = "PROVIDER_GATE_HELD"
 
 #: ``source_type`` stamped on a citation a provider *reported* (never one this
 #: pipeline independently verified): it carries provider-claimed provenance, so
@@ -755,20 +766,28 @@ def normalize_coherence(market: NormalizedMarket) -> int | None:
     return None
 
 
-def apply_calibration_map(probability_ppm: int) -> int:
-    """Stage 11: apply the versioned calibration map (v0 identity map).
+def apply_calibration_map(
+    probability_ppm: int, calibration_map: CalibrationMap | None = None
+) -> int:
+    """Stage 11: apply the versioned calibration map to an aggregate probability.
 
-    No resolved forecasts exist yet to fit a correction, so the v0 calibration
-    map is the identity map; the value is returned unchanged after a defensive
-    clamp back into the ppm domain.
+    With no map (the default) the v0 identity behavior is preserved byte-for-
+    byte: the value is returned unchanged after a defensive clamp back into the
+    ppm domain. A wired :class:`~windbreak.forecast.calibration.CalibrationMap`
+    instead corrects the value through its own integer piecewise-linear
+    interpolation, re-clamped defensively.
 
     Args:
         probability_ppm: The aggregated probability, in ppm.
+        calibration_map: The fitted calibration map to apply, or ``None`` (the
+            default) for the identity-clamp behavior.
 
     Returns:
         The calibrated probability, in ppm.
     """
-    return _clamp_ppm(probability_ppm)
+    if calibration_map is None:
+        return _clamp_ppm(probability_ppm)
+    return _clamp_ppm(calibration_map.apply(probability_ppm))
 
 
 def shrink_toward_baseline(probability_ppm: int, baseline_ppm: int) -> int:
@@ -981,6 +1000,141 @@ def _live_gate_open(canary_gate: CanaryGate | None, created_at: datetime) -> boo
     return canary_gate is None or not canary_gate.is_live_blocked(created_at=created_at)
 
 
+def _apply_and_record_calibration(
+    probability_ppm: int,
+    calibration_map: CalibrationMap | None,
+    ledger: ForecastLedgerWriter | None,
+    created_at: datetime,
+) -> int:
+    """Apply the calibration map (if any), ledgering the exact ppm transition.
+
+    Extracted so :func:`run_pipeline` stays a flat, low-complexity wiring
+    function. With no map this is the byte-identical identity clamp and records
+    nothing (even with a ledger wired). With a map it first enforces temporal
+    integrity -- so a future-trained map fails the whole run closed -- then
+    applies it and, when a ledger is wired, records one
+    :data:`CALIBRATION_MAP_APPLIED_EVENT` carrying the pre-/post-calibration ppm.
+
+    Args:
+        probability_ppm: The aggregate median probability to calibrate, in ppm.
+        calibration_map: The fitted map to apply, or ``None`` for the identity.
+        ledger: The forecast-event ledger writer, or ``None`` to record nothing.
+        created_at: The forecast creation instant (temporal-integrity anchor and
+            event timestamp).
+
+    Returns:
+        The calibrated probability, in ppm.
+
+    Raises:
+        TemporalIntegrityError: If ``calibration_map`` is trained after
+            ``created_at``.
+    """
+    if calibration_map is None:
+        return apply_calibration_map(probability_ppm)
+    ensure_temporal_integrity(calibration_map, forecast_created_at=created_at)
+    calibrated_ppm = apply_calibration_map(probability_ppm, calibration_map)
+    if ledger is not None:
+        payload: dict[str, object] = {
+            "map_id": calibration_map.map_id,
+            "map_version": calibration_map.version,
+            "input_ppm": probability_ppm,
+            "output_ppm": calibrated_ppm,
+        }
+        ledger.record(
+            ForecastEvent(CALIBRATION_MAP_APPLIED_EVENT, payload, _iso_z(created_at))
+        )
+    return calibrated_ppm
+
+
+def _provider_gate_open(
+    provider_gate: ProviderTrackRecordGate | None,
+    votes: tuple[ModelVote, ...],
+    ledger: ForecastLedgerWriter | None,
+    created_at: datetime,
+) -> bool:
+    """Return whether the provider gate permits live eligibility for a run.
+
+    Mirrors :func:`_live_gate_open`: the gate is open (returns ``True``) when
+    there is no gate at all or every voting provider is proven. When one or more
+    voting providers are unproven the gate holds the run back (returns
+    ``False``) and, if a ledger is wired, records one
+    :data:`PROVIDER_GATE_HELD_EVENT` naming the unproven providers. Computed as a
+    statement -- never short-circuited against the canary gate -- so the hold is
+    always ledgered, even when another gate also blocks the run.
+
+    Args:
+        provider_gate: The optional per-provider track-record gate; ``None``
+            means no gate.
+        votes: The surviving ensemble votes whose providers are screened.
+        ledger: The forecast-event ledger writer, or ``None`` to record nothing.
+        created_at: The forecast creation instant (event timestamp).
+
+    Returns:
+        ``True`` if the gate permits live eligibility, else ``False``.
+    """
+    if provider_gate is None:
+        return True
+    unproven = provider_gate.unproven_providers(vote.provider for vote in votes)
+    if not unproven:
+        return True
+    if ledger is not None:
+        payload: dict[str, object] = {
+            "unproven_providers": ",".join(unproven),
+            "unproven_count": len(unproven),
+            "min_resolved": provider_gate.min_resolved,
+            "min_brier_skill_ppm": provider_gate.min_brier_skill_ppm,
+        }
+        ledger.record(
+            ForecastEvent(PROVIDER_GATE_HELD_EVENT, payload, _iso_z(created_at))
+        )
+    return False
+
+
+def _full_run_eligible_for_live(
+    *,
+    canary_gate: CanaryGate | None,
+    provider_gate_ok: bool,
+    created_at: datetime,
+    verified_count: int,
+    min_verified_citations: int,
+    coherence_sum: int | None,
+) -> bool:
+    """Combine every live-eligibility gate for a full (non-abstaining) run.
+
+    A full run is live-eligible only when the canary drift gate is open, the
+    per-provider track-record gate is open (``provider_gate_ok``), *and* the
+    citation/stage/coherence invariants of :func:`is_live_eligible` all hold.
+    Extracted from :func:`run_pipeline` so the wiring function stays a flat,
+    low-complexity chain; the ``provider_gate_ok`` argument is pre-computed by
+    the caller (never short-circuited) so a held provider gate is always
+    ledgered even when the canary gate also blocks.
+
+    Args:
+        canary_gate: The optional canary drift gate; ``None`` means no gate.
+        provider_gate_ok: Whether the provider track-record gate is open,
+            pre-computed by :func:`_provider_gate_open`.
+        created_at: The record's creation instant.
+        verified_count: How many citations independently verified.
+        min_verified_citations: The minimum verified citations required.
+        coherence_sum: The coherence group sum, or ``None`` when the market
+            stands alone.
+
+    Returns:
+        ``True`` if the full run may back a live order, else ``False``.
+    """
+    return (
+        _live_gate_open(canary_gate, created_at)
+        and provider_gate_ok
+        and is_live_eligible(
+            verified_citation_count=verified_count,
+            min_verified_citations=min_verified_citations,
+            triage_stage="full",
+            coherence_flag=coherence_sum is not None,
+            abstention_reason=None,
+        )
+    )
+
+
 def _reported_citation(citation: ProviderCitation) -> Citation:
     """Map one provider-reported citation into an audit-trail :class:`Citation`.
 
@@ -1075,6 +1229,8 @@ def run_pipeline(
     canary_gate: CanaryGate | None = None,
     ensemble: tuple[EnsembleMemberLike, ...] | None = None,
     provider_factory: Callable[[EnsembleMemberLike], ForecastProvider] | None = None,
+    calibration_map: CalibrationMap | None = None,
+    provider_gate: ProviderTrackRecordGate | None = None,
 ) -> ForecastRecord:
     """Run the twelve-stage pipeline into a schema-valid forecast record.
 
@@ -1134,6 +1290,17 @@ def run_pipeline(
             :data:`PROVIDER_REPORTED_SOURCE_TYPE` entries (audit-only, never
             counted toward live eligibility) and whose reported cost is charged
             into the run's research budget.
+        calibration_map: The optional fitted calibration map applied at stage 11
+            (keyword-only). ``None`` (the default) is the byte-identical identity
+            clamp and records no event; a wired map is temporal-integrity checked
+            against ``created_at``, applied to the aggregate median, and ledgered
+            as a :data:`CALIBRATION_MAP_APPLIED_EVENT`.
+        provider_gate: The optional per-provider track-record gate ANDed into
+            live eligibility (keyword-only). ``None`` (the default) is a no-op; a
+            wired gate forces ``eligible_for_live=False`` and ledgers one
+            :data:`PROVIDER_GATE_HELD_EVENT` when any voting provider is unproven,
+            independently of the canary gate (never short-circuited). It never
+            changes which votes run.
 
     Returns:
         The produced, immutable forecast record.
@@ -1143,6 +1310,9 @@ def run_pipeline(
             day is already exhausted; raised before any research.
         PerForecastBudgetExceededError: If ``budget`` is supplied and the run's
             research cost exceeds the per-forecast ceiling.
+        TemporalIntegrityError: If ``calibration_map`` is supplied and trained
+            after the forecast's own ``created_at`` (a future-dated map fails the
+            whole run closed).
     """
     if budget is not None:
         budget.ensure_day_open(at=created_at)
@@ -1198,12 +1368,17 @@ def run_pipeline(
         )
     aggregate = aggregate_median(votes)
     coherence_sum = normalize_coherence(market)
-    calibrated_ppm = apply_calibration_map(aggregate.probability_ppm)
+    calibrated_ppm = _apply_and_record_calibration(
+        aggregate.probability_ppm, calibration_map, ledger, created_at
+    )
     shrunk_ppm = shrink_toward_baseline(calibrated_ppm, base_rate_ppm)
     probability_ppm = _clamp_between(
         shrunk_ppm, aggregate.ci_low_ppm, aggregate.ci_high_ppm
     )
     rationale = _build_rationale(criteria, counterpoints)
+    # Computed as a statement (never short-circuited) so a PROVIDER_GATE_HELD is
+    # ledgered even when the canary gate also blocks the run.
+    provider_gate_ok = _provider_gate_open(provider_gate, votes, ledger, created_at)
     return build_forecast_record(
         market=market,
         baseline=baseline,
@@ -1216,12 +1391,12 @@ def run_pipeline(
         source_notes=source_notes,
         rationale=rationale,
         coherence_sum=coherence_sum,
-        eligible_for_live=_live_gate_open(canary_gate, created_at)
-        and is_live_eligible(
-            verified_citation_count=verified_count,
+        eligible_for_live=_full_run_eligible_for_live(
+            canary_gate=canary_gate,
+            provider_gate_ok=provider_gate_ok,
+            created_at=created_at,
+            verified_count=verified_count,
             min_verified_citations=min_verified_citations,
-            triage_stage="full",
-            coherence_flag=coherence_sum is not None,
-            abstention_reason=None,
+            coherence_sum=coherence_sum,
         ),
     )

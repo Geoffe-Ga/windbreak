@@ -272,6 +272,27 @@ class ResearchSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class ProviderGateConfig:
+    """Per-provider live-eligibility promotion thresholds (issue #194, SPEC S13/S16).
+
+    Backs :class:`windbreak.forecast.providers.track_record.ProviderTrackRecordGate`:
+    a voting provider is proven (may back a live order) only once its historical
+    track record clears both bars. The defaults deliberately equal
+    :class:`EvaluationConfig`'s own promotion thresholds
+    (``min_resolved_for_calibration`` / ``brier_skill_required_ppm``) -- the same
+    statistical bar, applied per provider rather than to the ensemble.
+
+    Attributes:
+        min_resolved: Minimum resolved forecasts a provider needs to be proven.
+        min_brier_skill_ppm: Minimum Brier skill over baseline, in ppm, a
+            provider needs to be proven.
+    """
+
+    min_resolved: int = 150
+    min_brier_skill_ppm: int = 10000
+
+
+@dataclass(frozen=True, slots=True)
 class ForecastConfig:
     """Ensemble, triage, budget, and calibration-canary forecasting policy.
 
@@ -279,7 +300,9 @@ class ForecastConfig:
     the vote stage: ``ensemble`` remains the triage/promotion ``ModelRef`` set,
     while ``vote_ensemble`` names the per-member provenance the vote stage drives
     a provider with. ``futuresearch`` (issue #189) configures the hosted
-    research-forecaster provider.
+    research-forecaster provider. ``provider_gate`` (issue #194) sets the
+    per-provider track-record thresholds a voting provider must clear to be
+    live-eligible.
     """
 
     ensemble: tuple[ModelRef, ...] = field(default_factory=_default_ensemble)
@@ -296,6 +319,7 @@ class ForecastConfig:
         default_factory=FutureSearchProviderSettings
     )
     research: ResearchSettings = field(default_factory=ResearchSettings)
+    provider_gate: ProviderGateConfig = field(default_factory=ProviderGateConfig)
 
 
 @dataclass(frozen=True, slots=True)
