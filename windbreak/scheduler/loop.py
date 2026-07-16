@@ -34,13 +34,17 @@ import secrets
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, cast
 
 from windbreak.config import config_hash
 from windbreak.connector.freshness import is_fresh
 from windbreak.connector.paper import PaperExchange
 from windbreak.forecast.cassettes import ReplayCassette
-from windbreak.forecast.pipeline import run_pipeline
+from windbreak.forecast.pipeline import (
+    PROVIDER_VOTE_COSTED_EVENT,
+    InMemoryForecastLedger,
+    run_pipeline,
+)
 from windbreak.forecast.records import BaselineQuoteSnapshot
 from windbreak.forecast.sandbox import build_research_tools
 from windbreak.ledger.events import (
@@ -49,6 +53,7 @@ from windbreak.ledger.events import (
     MarketSnapshotRecorded,
     ModeHeartbeat,
     PositionsSnapshotRecorded,
+    ProviderVoteRecorded,
     SelectorDecisionRecorded,
 )
 from windbreak.ledger.store import SqliteLedgerStore
@@ -803,12 +808,14 @@ def _forecast_stage(
         price_pips=_baseline_pips(order_book),
         fetched_at=order_book.fetched_at,
     )
+    vote_ledger = InMemoryForecastLedger()
     forecast = run_pipeline(
         market,
         baseline,
         transport=deps.transport,
         created_at=created_at,
         research_tools=deps.research_tools,
+        ledger=vote_ledger,
     )
     deps.store.append(
         ForecastCreated(
@@ -822,7 +829,42 @@ def _forecast_stage(
             market_price_baseline_pips=forecast.market_price_baseline_pips,
         )
     )
+    _ledger_provider_votes(deps, forecast.forecast_id, vote_ledger)
     return forecast
+
+
+def _ledger_provider_votes(
+    deps: PaperTickDeps, forecast_id: str, vote_ledger: InMemoryForecastLedger
+) -> None:
+    """Fold buffered per-vote cost events into ``ProviderVoteRecorded`` rows.
+
+    The pipeline buffers one :data:`PROVIDER_VOTE_COSTED_EVENT` per ensemble
+    member driven into ``vote_ledger``; this composition-root fold stamps each
+    with the tick's own ``forecast_id`` and appends it to the durable store, in
+    emission order, immediately after the tick's ``ForecastCreated`` (issue
+    #281). A run that abstains before the vote stage buffers zero events, so
+    zero ``ProviderVoteRecorded`` rows are appended.
+
+    Args:
+        deps: The tick's dependency bundle (its ``store`` receives the rows).
+        forecast_id: The tick's forecast id, stamped on every appended row.
+        vote_ledger: The in-memory ledger the pipeline buffered vote costs into.
+    """
+    for event in vote_ledger.events_by_type(PROVIDER_VOTE_COSTED_EVENT):
+        payload = event.payload
+        deps.store.append(
+            ProviderVoteRecorded(
+                component=_COMPONENT,
+                forecast_id=forecast_id,
+                market_ticker=cast("str", payload["market_ticker"]),
+                provider=cast("str", payload["provider"]),
+                model_version=cast("str", payload["model_version"]),
+                vote_index=cast("int", payload["vote_index"]),
+                cost_micros=cast("int", payload["cost_micros"]),
+                outcome=cast("str", payload["outcome"]),
+                failure_code=cast("str", payload["failure_code"]),
+            )
+        )
 
 
 def _position_input(deps: PaperTickDeps) -> PositionReadModelInput:

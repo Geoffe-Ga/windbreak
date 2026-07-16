@@ -231,6 +231,113 @@ def test_dashboard_read_models_provider_panel_accepts_explicit_rows_and_is_froze
         read_models.provider_panel = []  # type: ignore[misc]
 
 
+# --- _provider_summary_rows / _compose_provider_panel: vote_cost_rows (#281) --
+#
+# `windbreak.dashboard.views.models._provider_summary_rows` and
+# `_compose_provider_panel` do not yet accept a `vote_cost_rows` keyword, so
+# every call below fails with `TypeError: _provider_summary_rows() got an
+# unexpected keyword argument 'vote_cost_rows'` -- the expected Gate 1 RED
+# state for issue #281. Once the keyword lands, a provider covered by the
+# `provider_vote_costs_read_model` fold gets REAL ints for
+# `abstain_rate_ppm`/`cost_per_forecast` (never the `"n/a"` placeholder), and
+# an uncovered provider keeps `"n/a"` for both -- mirroring
+# `_resolved_and_skill`'s own covered/uncovered #194 pattern exactly.
+
+#: A minimal `canary_status.json`-shaped row for provider `"openai"`.
+_OPENAI_CANARY_ROW = {
+    "seq": 1,
+    "created_at": "2024-01-01T00:00:00.000000+00:00",
+    "event_type": "CanaryVerdictRecorded",
+    "data": {"provider": "openai", "status": "OK"},
+}
+
+#: A minimal `canary_status.json`-shaped row for provider `"anthropic"`
+#: (deliberately absent from the vote-cost fold in the "uncovered" tests).
+_ANTHROPIC_CANARY_ROW = {
+    "seq": 2,
+    "created_at": "2024-01-01T00:00:01.000000+00:00",
+    "event_type": "CanaryVerdictRecorded",
+    "data": {"provider": "anthropic", "status": "OK"},
+}
+
+#: A `provider_vote_costs.json`-shaped aggregate row covering `"openai"`.
+_OPENAI_VOTE_COST_ROW = {
+    "provider": "openai",
+    "cost_micros_total": 1_000,
+    "vote_count": 2,
+    "abstain_count": 1,
+    "forecast_count": 1,
+    "cost_per_forecast_micros": 1_000,
+    "abstain_rate_ppm": 500_000,
+}
+
+
+def test_provider_summary_rows_covered_provider_gets_real_vote_cost_ints() -> None:
+    """A provider present in the `vote_cost_rows` fold gets REAL ints for
+    `cost_per_forecast`/`abstain_rate_ppm`, copied verbatim off the fold's own
+    `cost_per_forecast_micros`/`abstain_rate_ppm` -- never `"n/a"`.
+    """
+    from windbreak.dashboard.views.models import _provider_summary_rows
+
+    rows = _provider_summary_rows(
+        [_OPENAI_CANARY_ROW], vote_cost_rows=[_OPENAI_VOTE_COST_ROW]
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["provider"] == "openai"
+    assert rows[0]["cost_per_forecast"] == 1_000
+    assert rows[0]["abstain_rate_ppm"] == 500_000
+    assert type(rows[0]["cost_per_forecast"]) is int
+    assert type(rows[0]["abstain_rate_ppm"]) is int
+
+
+def test_provider_summary_rows_uncovered_provider_stays_n_a() -> None:
+    """A provider present in canary status but ABSENT from the vote-cost fold
+    keeps the `"n/a"` placeholder for both figures -- old-ledger tolerance,
+    never a fabricated `0`.
+    """
+    from windbreak.dashboard.views.models import _provider_summary_rows
+
+    rows = _provider_summary_rows(
+        [_ANTHROPIC_CANARY_ROW], vote_cost_rows=[_OPENAI_VOTE_COST_ROW]
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["provider"] == "anthropic"
+    assert rows[0]["cost_per_forecast"] == "n/a"
+    assert rows[0]["abstain_rate_ppm"] == "n/a"
+
+
+def test_provider_summary_rows_default_vote_cost_rows_stays_n_a() -> None:
+    """With no `vote_cost_rows` supplied at all, every provider stays `"n/a"`
+    for both figures -- the pre-#281 behavior, unchanged (backward compat for
+    any caller that has not yet threaded the new fold through).
+    """
+    from windbreak.dashboard.views.models import _provider_summary_rows
+
+    rows = _provider_summary_rows([_OPENAI_CANARY_ROW])
+
+    assert rows[0]["cost_per_forecast"] == "n/a"
+    assert rows[0]["abstain_rate_ppm"] == "n/a"
+
+
+def test_compose_provider_panel_threads_vote_cost_rows_into_provider_summary() -> None:
+    """`_compose_provider_panel` gains a `vote_cost_rows` keyword and threads
+    it straight through to `_provider_summary_rows`, so a covered provider's
+    panel row carries the real fold ints end-to-end from the two source
+    projections.
+    """
+    from windbreak.dashboard.views.models import _compose_provider_panel
+
+    panel = _compose_provider_panel(
+        [_OPENAI_CANARY_ROW], [], vote_cost_rows=[_OPENAI_VOTE_COST_ROW]
+    )
+
+    provider_row = next(row for row in panel if row["kind"] == "provider")
+    assert provider_row["cost_per_forecast"] == 1_000
+    assert provider_row["abstain_rate_ppm"] == 500_000
+
+
 # --- /providers route: bearer-gated, "no data yet" empty state --------------
 
 
@@ -555,3 +662,93 @@ def test_build_ledger_read_models_source_malformed_track_record_raises_value_err
 
     with pytest.raises(ValueError, match="float"):
         source()
+
+
+# --- build_ledger_read_models_source: real vote-cost figures (issue #281) ----
+#
+# `windbreak.ledger.events.ProviderVoteRecorded` does not exist yet, so
+# `_seed_provider_vote_costs` below fails at call time with `ImportError:
+# cannot import name 'ProviderVoteRecorded' from 'windbreak.ledger.events'`
+# -- the expected Gate 1 RED state for issue #281.
+
+
+def _seed_provider_vote_costs(
+    ledger_path: Path, *, provider: str, forecast_id: str, cost_micros: int
+) -> None:
+    """Append one clean, non-abstaining `ProviderVoteRecorded` row to an
+    already-seeded ledger, so `provider_vote_costs_read_model` folds a real
+    aggregate for `provider`.
+
+    Args:
+        ledger_path: The already-seeded SQLite ledger path.
+        provider: The provider identifier the vote is stamped for.
+        forecast_id: The forecast this vote belongs to.
+        cost_micros: The vote's billed cost, in micros.
+    """
+    from windbreak.ledger.events import ProviderVoteRecorded
+    from windbreak.ledger.store import SqliteLedgerStore
+
+    store = SqliteLedgerStore(ledger_path)
+    store.append(
+        ProviderVoteRecorded(
+            component="scheduler",
+            forecast_id=forecast_id,
+            market_ticker="MKT-DEEP",
+            provider=provider,
+            model_version="gpt-5-2025-08-07",
+            vote_index=0,
+            cost_micros=cost_micros,
+            outcome="voted",
+            failure_code="",
+        )
+    )
+    store.close()
+
+
+def test_build_ledger_source_shows_real_cost_and_abstain_for_covered(
+    tmp_path: Path,
+) -> None:
+    """A provider covered by the ledger's `ProviderVoteRecorded` rows gets
+    REAL `cost_per_forecast`/`abstain_rate_ppm` ints in the composed dashboard
+    panel -- never the `"n/a"` placeholder -- proving the vote-cost fold is
+    actually wired into `build_ledger_read_models_source`, not just the
+    `_compose_provider_panel` unit-level contract above.
+    """
+    from windbreak.dashboard.views import build_ledger_read_models_source
+
+    ledger_path = _seed_provider_canary_ledger(tmp_path, ["openai"])
+    _seed_provider_vote_costs(
+        ledger_path, provider="openai", forecast_id="fc-0001", cost_micros=1_500
+    )
+
+    source = build_ledger_read_models_source(ledger_path)
+    read_models = source()
+
+    rows_by_provider = _provider_rows_by_name(read_models.provider_panel)
+    assert rows_by_provider["openai"]["cost_per_forecast"] == 1_500
+    assert rows_by_provider["openai"]["abstain_rate_ppm"] == 0
+    assert type(rows_by_provider["openai"]["cost_per_forecast"]) is int
+
+
+def test_build_ledger_read_models_source_uncovered_provider_still_shows_n_a(
+    tmp_path: Path,
+) -> None:
+    """A provider present in canary status but with ZERO `ProviderVoteRecorded`
+    rows keeps the `"n/a"` placeholder for both figures -- old-ledger
+    tolerance, never a fabricated `0` -- while a covered provider in the same
+    panel gets its real figures.
+    """
+    from windbreak.dashboard.views import build_ledger_read_models_source
+
+    ledger_path = _seed_provider_canary_ledger(tmp_path, ["openai", "anthropic"])
+    _seed_provider_vote_costs(
+        ledger_path, provider="openai", forecast_id="fc-0001", cost_micros=1_500
+    )
+
+    source = build_ledger_read_models_source(ledger_path)
+    read_models = source()
+
+    rows_by_provider = _provider_rows_by_name(read_models.provider_panel)
+    assert rows_by_provider["anthropic"]["cost_per_forecast"] == "n/a"
+    assert rows_by_provider["anthropic"]["abstain_rate_ppm"] == "n/a"
+    assert rows_by_provider["openai"]["cost_per_forecast"] == 1_500

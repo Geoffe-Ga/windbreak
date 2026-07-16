@@ -25,8 +25,10 @@ if TYPE_CHECKING:
 #: :mod:`windbreak.ledger.rebuild` projection emits.
 ReadModelRow = dict[str, object]
 
-#: The permanent per-provider cost placeholder: per-provider cost attribution is
-#: issue #281, not this issue, so it is never derivable from the ledger fold.
+#: The old-ledger fallback for a figure the fold cannot supply: a provider
+#: absent from the ``provider_vote_costs`` fold (a pre-#281 ledger, or one with
+#: zero vote-cost rows for that provider) keeps this ``n/a`` placeholder for its
+#: ``abstain_rate_ppm``/``cost_per_forecast`` rather than a fabricated ``0``.
 _NOT_AVAILABLE = "n/a"
 
 
@@ -100,31 +102,88 @@ def _resolved_and_skill(
     return _NOT_AVAILABLE, _NOT_AVAILABLE
 
 
+def _vote_cost_by_provider(
+    vote_cost_rows: list[ReadModelRow] | None,
+) -> dict[str, ReadModelRow]:
+    """Index the ``provider_vote_costs`` fold rows by provider identity.
+
+    Args:
+        vote_cost_rows: The ``provider_vote_costs.json`` aggregate rows, or
+            ``None`` when no vote-cost fold was threaded through.
+
+    Returns:
+        The rows keyed by their ``provider`` field, or an empty map when no
+        fold was supplied.
+    """
+    if vote_cost_rows is None:
+        return {}
+    return {cast("str", row["provider"]): row for row in vote_cost_rows}
+
+
+def _abstain_rate_and_cost(
+    provider: object,
+    vote_cost_by_provider: dict[str, ReadModelRow],
+) -> tuple[int | str, int | str]:
+    """Resolve one provider's ``(abstain_rate_ppm, cost_per_forecast)`` pair.
+
+    Mirrors :func:`_resolved_and_skill`'s covered/uncovered contract: a provider
+    the vote-cost fold covers gets the real integer figures verbatim; one it
+    does not cover (or no fold at all) keeps the ``n/a`` placeholder rather than
+    a fabricated ``0``.
+
+    Args:
+        provider: The provider identity from the canary-status row (an
+            ``object`` off the projection payload; only ``str`` keys can match).
+        vote_cost_by_provider: The vote-cost fold rows keyed by provider.
+
+    Returns:
+        The ``(abstain_rate_ppm, cost_per_forecast)`` pair: real integers when
+        covered, else the ``n/a`` placeholder for each.
+    """
+    if isinstance(provider, str):
+        row = vote_cost_by_provider.get(provider)
+        if row is not None:
+            return (
+                cast("int", row["abstain_rate_ppm"]),
+                cast("int", row["cost_per_forecast_micros"]),
+            )
+    return _NOT_AVAILABLE, _NOT_AVAILABLE
+
+
 def _provider_summary_rows(
     canary_rows: list[ReadModelRow],
     track_records: dict[str, ProviderTrackRecord] | None = None,
+    *,
+    vote_cost_rows: list[ReadModelRow] | None = None,
 ) -> list[ReadModelRow]:
     """Compose one ``"provider"`` panel row per latest-canary-status row.
 
     The provider identity and its live canary status come from the ledger fold.
     The resolved count and Brier skill come from the optional ``track_records``
     fold (#194): real integers for a covered provider, ``n/a`` for one the fold
-    does not cover (or when no fold is wired). The abstention rate is ``n/a``
-    (not derivable here) and per-provider cost is permanently ``n/a``
-    (issue #281).
+    does not cover (or when no fold is wired). The abstention rate and
+    per-provider cost come from the optional ``vote_cost_rows`` fold (#281) the
+    same way: real integers for a covered provider, ``n/a`` otherwise.
 
     Args:
         canary_rows: The ``canary_status.json`` projection rows.
         track_records: The parsed provider -> track-record map, or ``None`` to
             leave every provider's ``resolved``/``brier_skill_ppm`` as ``n/a``.
+        vote_cost_rows: The ``provider_vote_costs.json`` aggregate rows (#281),
+            or ``None`` to leave every provider's ``abstain_rate_ppm``/
+            ``cost_per_forecast`` as ``n/a``.
 
     Returns:
         One provider-panel row per provider, in first-seen order.
     """
+    vote_cost_by_provider = _vote_cost_by_provider(vote_cost_rows)
     rows: list[ReadModelRow] = []
     for canary_row in canary_rows:
         data = _row_data(canary_row)
         resolved, brier_skill_ppm = _resolved_and_skill(data["provider"], track_records)
+        abstain_rate_ppm, cost_per_forecast = _abstain_rate_and_cost(
+            data["provider"], vote_cost_by_provider
+        )
         rows.append(
             {
                 "kind": "provider",
@@ -132,8 +191,8 @@ def _provider_summary_rows(
                 "resolved": resolved,
                 "brier_skill_ppm": brier_skill_ppm,
                 "canary_status": data["status"],
-                "abstain_rate_ppm": _NOT_AVAILABLE,
-                "cost_per_forecast": _NOT_AVAILABLE,
+                "abstain_rate_ppm": abstain_rate_ppm,
+                "cost_per_forecast": cost_per_forecast,
             }
         )
     return rows
@@ -169,8 +228,10 @@ def _compose_provider_panel(
     canary_rows: list[ReadModelRow],
     forecast_rows: list[ReadModelRow],
     track_records: dict[str, ProviderTrackRecord] | None = None,
+    *,
+    vote_cost_rows: list[ReadModelRow] | None = None,
 ) -> list[ReadModelRow]:
-    """Compose the full provider panel from the two fleet projections.
+    """Compose the full provider panel from the fleet projections.
 
     Args:
         canary_rows: The ``canary_status.json`` projection rows.
@@ -178,11 +239,16 @@ def _compose_provider_panel(
         track_records: The parsed provider -> track-record map (#194), or
             ``None`` to leave every provider's ``resolved``/``brier_skill_ppm``
             as ``n/a``.
+        vote_cost_rows: The ``provider_vote_costs.json`` aggregate rows (#281),
+            or ``None`` to leave every provider's ``abstain_rate_ppm``/
+            ``cost_per_forecast`` as ``n/a``.
 
     Returns:
         The provider summary rows followed by the fleet cost row (when present).
     """
-    panel = _provider_summary_rows(canary_rows, track_records)
+    panel = _provider_summary_rows(
+        canary_rows, track_records, vote_cost_rows=vote_cost_rows
+    )
     fleet_row = _fleet_cost_row(forecast_rows)
     if fleet_row is not None:
         panel.append(fleet_row)
@@ -229,6 +295,7 @@ def build_ledger_read_models_source(
         forecasts_read_model,
         live_divergence_read_model,
         positions_read_model,
+        provider_vote_costs_read_model,
         selector_decisions_read_model,
     )
     from windbreak.ledger.store import SqliteLedgerStore
@@ -256,6 +323,7 @@ def build_ledger_read_models_source(
                 canary_status_read_model(records),
                 forecasts_read_model(records),
                 track_records,
+                vote_cost_rows=provider_vote_costs_read_model(records),
             ),
         )
 

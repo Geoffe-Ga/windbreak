@@ -78,6 +78,26 @@ mirrors `CanaryVerdictRecorded`'s shape exactly -- `event_type` is the literal
 class name `"PromotionBlocked"`, derived via `_derive_typed_event`, and
 `payload_schema_version` is the module-wide default (`1`). Growing
 `EVENT_TYPES` to 30 entries.
+
+Issue #281 (RED -- `ProviderVoteRecorded` does not exist in this module yet,
+so the import below fails collection with `ImportError: cannot import name
+'ProviderVoteRecorded' from 'windbreak.ledger.events'`) adds the per-provider
+vote-cost audit event the scheduler's `_forecast_stage` composition root
+appends once per ensemble member per paper tick (per-provider vote-cost
+signal, issue #281): `forecast_id`, `market_ticker`, `provider`,
+`model_version`, `vote_index`, `cost_micros`, `outcome` (`"voted"` /
+`"abstained"` / `"discarded"`), and `failure_code` (`""` unless
+`outcome == "discarded"`, matching this module's inapplicable-string
+convention -- see `CanaryVerdictRecorded.drift_kind`). It mirrors
+`CanaryVerdictRecorded`'s shape exactly: `event_type` is the literal class
+name `"ProviderVoteRecorded"`, derived via `_derive_typed_event`, and
+`payload_schema_version` is the module-wide default (`1`). Growing
+`EVENT_TYPES` to 31 entries. Unlike every other event in this module,
+`ProviderVoteRecorded` is also re-exported directly from `windbreak.ledger`
+(the package `__init__.py`), so `test_provider_vote_recorded_is_reexported_
+from_windbreak_ledger` below fails today with `AttributeError: module
+'windbreak.ledger' has no attribute 'ProviderVoteRecorded'` once the
+`ImportError` above is otherwise resolved.
 """
 
 from __future__ import annotations
@@ -115,6 +135,7 @@ from windbreak.ledger.events import (
     PositionsSnapshotRecorded,
     PromotionBlocked,
     PromotionEvaluated,
+    ProviderVoteRecorded,
     ReconciliationHalted,
     ReconciliationHealed,
     RecoveryCompleted,
@@ -353,6 +374,7 @@ def test_event_types_registry_maps_type_name_to_class() -> None:
         "GateComputationMismatch": GateComputationMismatch,
         "CanaryVerdictRecorded": CanaryVerdictRecorded,
         "PromotionBlocked": PromotionBlocked,
+        "ProviderVoteRecorded": ProviderVoteRecorded,
     } == EVENT_TYPES
 
 
@@ -901,3 +923,205 @@ def test_event_types_registry_round_trips_promotion_blocked() -> None:
     rebuilt = rebuilt_cls(component=envelope["component"], **envelope["data"])
 
     assert rebuilt == original
+
+
+# --- Issue #281: ProviderVoteRecorded, the per-provider vote-cost event ------
+
+
+def test_provider_vote_recorded_envelope_json_is_canonical() -> None:
+    """`envelope_json` is the canonical (sorted-key, whitespace-free) envelope
+    -- mirrors `test_config_loaded_envelope_json_matches_canonical_envelope`'s
+    identical check for the base `Event` contract.
+    """
+    event = ProviderVoteRecorded(
+        component="scheduler",
+        forecast_id="fc-0001",
+        market_ticker="MKT-DEEP",
+        provider="openai",
+        model_version="gpt-5-2025-08-07",
+        vote_index=0,
+        cost_micros=100,
+        outcome="voted",
+        failure_code="",
+    )
+
+    assert event.envelope_json == canonical_json(
+        {
+            "component": event.component,
+            "data": event.payload,
+            "schema_version": event.payload_schema_version,
+        }
+    )
+    assert " " not in event.envelope_json
+    assert "\n" not in event.envelope_json
+
+
+def test_provider_vote_recorded_populates_event_type_and_payload() -> None:
+    """`ProviderVoteRecorded`'s ergonomic constructor derives the full
+    `Event` contract and assembles its payload from typed fields.
+    """
+    event = ProviderVoteRecorded(
+        component="scheduler",
+        forecast_id="fc-0001",
+        market_ticker="MKT-DEEP",
+        provider="openai",
+        model_version="gpt-5-2025-08-07",
+        vote_index=0,
+        cost_micros=100,
+        outcome="voted",
+        failure_code="",
+    )
+
+    assert event.event_type == "ProviderVoteRecorded"
+    assert event.component == "scheduler"
+    assert event.payload_schema_version == 1
+    assert event.payload == {
+        "forecast_id": "fc-0001",
+        "market_ticker": "MKT-DEEP",
+        "provider": "openai",
+        "model_version": "gpt-5-2025-08-07",
+        "vote_index": 0,
+        "cost_micros": 100,
+        "outcome": "voted",
+        "failure_code": "",
+    }
+
+
+def test_provider_vote_recorded_accepts_a_discarded_outcome_with_a_failure_code() -> (
+    None
+):
+    """A discarded vote's `failure_code` is a non-empty wire-format string --
+    the only outcome for which `failure_code` is ever non-`""`, matching this
+    module's inapplicable-string convention (see `CanaryVerdictRecorded.
+    drift_kind`).
+    """
+    event = ProviderVoteRecorded(
+        component="scheduler",
+        forecast_id="fc-0002",
+        market_ticker="MKT-DEEP",
+        provider="anthropic",
+        model_version="claude-sonnet-4-5-20250929",
+        vote_index=1,
+        cost_micros=0,
+        outcome="discarded",
+        failure_code="malformed_vote_json",
+    )
+
+    assert event.payload["outcome"] == "discarded"
+    assert event.payload["failure_code"] == "malformed_vote_json"
+
+
+def test_provider_vote_recorded_non_discard_outcomes_carry_empty_failure_code() -> None:
+    """`"voted"` and `"abstained"` outcomes always carry `failure_code=""` --
+    only a `"discarded"` outcome carries a real failure code.
+    """
+    voted = ProviderVoteRecorded(
+        component="scheduler",
+        forecast_id="fc-0003",
+        market_ticker="MKT-DEEP",
+        provider="openai",
+        model_version="gpt-5-2025-08-07",
+        vote_index=0,
+        cost_micros=0,
+        outcome="voted",
+        failure_code="",
+    )
+    abstained = ProviderVoteRecorded(
+        component="scheduler",
+        forecast_id="fc-0003",
+        market_ticker="MKT-DEEP",
+        provider="anthropic",
+        model_version="claude-sonnet-4-5-20250929",
+        vote_index=1,
+        cost_micros=250_000,
+        outcome="abstained",
+        failure_code="",
+    )
+
+    assert voted.payload["failure_code"] == ""
+    assert abstained.payload["failure_code"] == ""
+
+
+def test_provider_vote_recorded_envelope_json_has_json_safe_leaves() -> None:
+    """The persisted envelope's `data` carries only int/str leaves, never a
+    `float` or a `bool` masquerading as `cost_micros`/`vote_index` -- the
+    package-wide no-float convention (SPEC S6.1).
+    """
+    event = ProviderVoteRecorded(
+        component="scheduler",
+        forecast_id="fc-0004",
+        market_ticker="MKT-DEEP",
+        provider="openai",
+        model_version="gpt-5-mini-2025-08-07",
+        vote_index=2,
+        cost_micros=999_999,
+        outcome="voted",
+        failure_code="",
+    )
+
+    envelope = json.loads(event.envelope_json)
+    data = envelope["data"]
+
+    assert isinstance(data["forecast_id"], str)
+    assert isinstance(data["market_ticker"], str)
+    assert isinstance(data["provider"], str)
+    assert isinstance(data["model_version"], str)
+    assert type(data["vote_index"]) is int
+    assert type(data["vote_index"]) is not bool
+    assert type(data["cost_micros"]) is int
+    assert type(data["cost_micros"]) is not bool
+    assert isinstance(data["outcome"], str)
+    assert isinstance(data["failure_code"], str)
+
+
+def test_provider_vote_recorded_is_frozen() -> None:
+    """`ProviderVoteRecorded`, like every other concrete event, is immutable."""
+    event = ProviderVoteRecorded(
+        component="scheduler",
+        forecast_id="fc-0005",
+        market_ticker="MKT-DEEP",
+        provider="openai",
+        model_version="gpt-5-2025-08-07",
+        vote_index=0,
+        cost_micros=0,
+        outcome="voted",
+        failure_code="",
+    )
+
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        event.outcome = "changed"  # type: ignore[misc]
+
+
+def test_event_types_registry_round_trips_provider_vote_recorded() -> None:
+    """A registry lookup plus persisted `data` reconstructs `ProviderVoteRecorded`."""
+    original = ProviderVoteRecorded(
+        component="scheduler",
+        forecast_id="fc-0006",
+        market_ticker="MKT-DEEP",
+        provider="futuresearch",
+        model_version="fs-2.0",
+        vote_index=2,
+        cost_micros=500_000,
+        outcome="discarded",
+        failure_code="provider_timeout",
+    )
+    envelope = json.loads(original.envelope_json)
+
+    rebuilt_cls = EVENT_TYPES[original.event_type]
+    rebuilt = rebuilt_cls(component=envelope["component"], **envelope["data"])
+
+    assert rebuilt == original
+
+
+def test_provider_vote_recorded_is_reexported_from_windbreak_ledger() -> None:
+    """`ProviderVoteRecorded` is importable from `windbreak.ledger` directly,
+    not only from `windbreak.ledger.events` (issue #281's own directive,
+    matching several -- but not every -- prior event type's re-export
+    contract, e.g. `ForecastCreated`).
+    """
+    import windbreak.ledger as ledger_package
+
+    assert hasattr(ledger_package, "ProviderVoteRecorded"), (
+        "ProviderVoteRecorded not re-exported from windbreak.ledger"
+    )
+    assert ledger_package.ProviderVoteRecorded is ProviderVoteRecorded

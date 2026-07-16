@@ -142,6 +142,22 @@ DEFAULT_MIN_ENSEMBLE_VOTES: Final = 2
 #: Event type ledgered when one model vote is discarded as injection-tainted.
 FORECAST_OUTPUT_DISCARDED_EVENT: Final = "FORECAST_OUTPUT_DISCARDED"
 
+#: Event type buffered per ensemble member for the per-provider vote-cost audit
+#: signal (issue #281): the composition root folds these into ledgered
+#: ``ProviderVoteRecorded`` events after the tick's ``ForecastCreated``.
+PROVIDER_VOTE_COSTED_EVENT: Final = "PROVIDER_VOTE_COSTED"
+
+#: ``outcome`` on a surviving, non-abstaining vote's ``PROVIDER_VOTE_COSTED``.
+VOTE_OUTCOME_VOTED: Final = "voted"
+
+#: ``outcome`` on a surviving vote that explicitly abstained (SPEC S6.3): it
+#: answered, but chose not to vote, so it never reaches the median.
+VOTE_OUTCOME_ABSTAINED: Final = "abstained"
+
+#: ``outcome`` on a discarded vote (the provider raised ``ProviderVoteError``):
+#: its cost was still charged, but its vote never reached aggregation.
+VOTE_OUTCOME_DISCARDED: Final = "discarded"
+
 #: Event type ledgered when a wired calibration map is applied to the aggregate
 #: median, recording the exact pre-/post-calibration ppm (SPEC S8.2 stage 11).
 CALIBRATION_MAP_APPLIED_EVENT: Final = "CALIBRATION_MAP_APPLIED"
@@ -340,6 +356,45 @@ class _DiscardRecorder:
         self.ledger.record(
             ForecastEvent(FORECAST_OUTPUT_DISCARDED_EVENT, payload, self.ts)
         )
+
+    def record_vote_cost(
+        self,
+        *,
+        market_ticker: str,
+        member: EnsembleMemberLike,
+        vote_index: int,
+        cost_micros: int,
+        outcome: str,
+        failure_code: str,
+    ) -> None:
+        """Buffer one per-vote cost event for the vote-cost audit signal (#281).
+
+        Emitted once per ensemble member driven -- one ``"voted"``,
+        ``"abstained"``, or ``"discarded"`` outcome each -- so the composition
+        root can fold each provider's charged spend, whatever its vote outcome.
+        Unlike :meth:`record_discard`, this never carries a response
+        fingerprint: it is a cost/outcome signal, not a tainted-response audit.
+
+        Args:
+            market_ticker: The forecast market's ticker.
+            member: The ensemble member whose vote this cost belongs to.
+            vote_index: The zero-based index of the vote in the driven ensemble.
+            cost_micros: The vote's billed cost, in micros (charged even when
+                the vote was discarded).
+            outcome: The vote outcome (:data:`VOTE_OUTCOME_VOTED` /
+                :data:`VOTE_OUTCOME_ABSTAINED` / :data:`VOTE_OUTCOME_DISCARDED`).
+            failure_code: The discard failure code, or ``""`` for a non-discard.
+        """
+        payload: dict[str, object] = {
+            "market_ticker": market_ticker,
+            "provider": member.provider,
+            "model_version": member.model_version,
+            "vote_index": vote_index,
+            "cost_micros": cost_micros,
+            "outcome": outcome,
+            "failure_code": failure_code,
+        }
+        self.ledger.record(ForecastEvent(PROVIDER_VOTE_COSTED_EVENT, payload, self.ts))
 
 
 def _clamp_ppm(value: int) -> int:
@@ -734,6 +789,23 @@ class _VoteCollection:
     discard_transport_flags: tuple[bool, ...]
 
 
+def _survival_outcome(forecast: ProviderForecast) -> str:
+    """Classify a surviving forecast's vote-cost outcome (issue #281).
+
+    A surviving vote either voted or explicitly abstained (SPEC S6.3); both
+    carry an empty ``failure_code`` (they answered -- an abstention is a "no
+    vote" answer, never a failure).
+
+    Args:
+        forecast: The surviving provider forecast.
+
+    Returns:
+        :data:`VOTE_OUTCOME_ABSTAINED` if the forecast abstained, else
+        :data:`VOTE_OUTCOME_VOTED`.
+    """
+    return VOTE_OUTCOME_ABSTAINED if forecast.abstain else VOTE_OUTCOME_VOTED
+
+
 def _collect_provider_forecasts(
     market: NormalizedMarket,
     baseline: BaselineQuoteSnapshot,
@@ -790,8 +862,25 @@ def _collect_provider_forecasts(
                     failure=failed.failure_code,
                     response_fingerprint=failed.response_fingerprint,
                 )
+                recorder.record_vote_cost(
+                    market_ticker=market.ticker,
+                    member=member,
+                    vote_index=index,
+                    cost_micros=failed.cost_micros,
+                    outcome=VOTE_OUTCOME_DISCARDED,
+                    failure_code=failed.failure_code,
+                )
             continue
         forecasts.append(forecast)
+        if recorder is not None:
+            recorder.record_vote_cost(
+                market_ticker=market.ticker,
+                member=member,
+                vote_index=index,
+                cost_micros=forecast.cost_micros,
+                outcome=_survival_outcome(forecast),
+                failure_code="",
+            )
     return _VoteCollection(
         forecasts=tuple(forecasts),
         discarded_cost_micros=discarded_cost_micros,

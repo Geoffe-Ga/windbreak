@@ -5,9 +5,10 @@ Renders the provider-panel read-model rows into an HTML section, mirroring
 share one list (mirroring ``gateway_events.json``'s own multi-type-in-one
 projection, discriminated by a ``kind`` key here): a ``"provider"`` row (one
 per provider's summary line -- provider id, resolved count, Brier skill, canary
-status, abstention rate, and the permanently ``n/a`` per-provider
-``cost_per_forecast``, issue #281) and a ``"fleet"`` row (the two fleet-wide
-cost figures that ARE derivable in aggregate).
+status, and the per-provider abstention rate / ``cost_per_forecast`` the
+``provider_vote_costs`` fold now supplies, issue #281, falling back to ``n/a``
+only for a provider that fold does not cover) and a ``"fleet"`` row (the two
+fleet-wide cost figures that ARE derivable in aggregate).
 
 Every ledger-derived value flows through
 :func:`windbreak.dashboard.views._html.escape` before output -- provider
@@ -28,8 +29,9 @@ _TITLE = "Providers"
 #: The row-``kind`` discriminator marking a fleet-wide cost summary row.
 _FLEET_KIND = "fleet"
 
-#: The permanent per-provider cost placeholder: per-provider cost attribution is
-#: issue #281, not this issue, so it is never derivable here.
+#: The not-yet-attributed fallback for a provider the ``provider_vote_costs``
+#: fold (issue #281) does not cover: an old ledger with no such events, or one
+#: with zero vote-cost rows for that provider.
 _NOT_AVAILABLE = "n/a"
 
 
