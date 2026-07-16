@@ -224,13 +224,18 @@ def _canary_prompt(question: CanaryQuestion) -> str:
     )
 
 
-def _parse_observed_ppm(response: str) -> int:
+def parse_observed_ppm(response: str) -> int:
     """Parse a canary response into a validated ppm observation, fail-closed.
 
     Mirrors :func:`windbreak.forecast.triage._parse_prior_ppm`'s contract with a
     package-local implementation: the response must be a bare integer string
     within ``[0, 1_000_000]``; a non-integer (e.g. ``"0.5"`` or ``"maybe"``) or
     an out-of-range value fails loudly rather than silently defaulting.
+
+    This is the single canonical observed-ppm contract shared across the module
+    boundary: ``scripts/run_canaries.py`` reuses it so the operator-run replay
+    and live-record paths validate observations identically to this in-package
+    gate (issue #195 review parity fix), which is why it is public.
 
     Args:
         response: The raw canary completion text.
@@ -283,7 +288,7 @@ def run_canary_set(
             prompt=_canary_prompt(question),
         )
         response = transport.complete(request)
-        observed[question.question_id] = _parse_observed_ppm(response)
+        observed[question.question_id] = parse_observed_ppm(response)
     return observed
 
 

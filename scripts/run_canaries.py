@@ -31,11 +31,12 @@ from typing import TYPE_CHECKING
 
 import requests
 
-from windbreak.forecast.canary import CanaryQuestion
+from windbreak.forecast.canary import CanaryQuestion, parse_observed_ppm
 from windbreak.forecast.canary_providers import (
     ProviderCanaryObservation,
     ProviderCanarySpec,
 )
+from windbreak.ledger.store import ChainIntegrityError
 from windbreak.net.allowlist import OutboundAllowlist
 from windbreak.scheduler.canaries import run_canaries
 
@@ -164,15 +165,39 @@ class _StdoutAlertEmitter:
 
 
 def _observation_from_payload(payload: Mapping[str, Any]) -> ProviderCanaryObservation:
-    """Build an observation from a decoded JSON payload.
+    """Build an observation from a decoded JSON payload, fail-closed.
+
+    Every ``observed_ppm`` leaf is validated through the canonical
+    :func:`windbreak.forecast.canary.parse_observed_ppm` contract -- a strict
+    integer within ``[0, 1_000_000]`` -- so BOTH the offline ``--replay`` path
+    (:class:`_ReplayObserver`, via :func:`_build_observer`) and the live
+    ``--record`` path (:class:`_LiveObserver.observe`) reject a malformed
+    observation instead of silently truncating a float (``int(0.5) == 0``) or
+    accepting an out-of-range value. Each value is normalised to text before
+    validation so the JSON-decoded ``int``/``float`` leaves flow through the
+    exact same parser the in-package gate uses: a float renders with a decimal
+    point and is rejected, an out-of-range integer is rejected on bounds.
+
+    Rejecting (never clamping) preserves the fail-closed direction: a malformed
+    observation aborts the run rather than scoring as ``OK`` -- the opposite of
+    the fail-safe inversion an unbounded ``int(value)`` would allow (e.g. an
+    observed ``1_000_001`` against a reference ``999_999`` reads as a 2 ppm
+    drift, well under tolerance).
 
     Args:
         payload: A mapping with ``observed_ppm`` and ``reported_version`` keys.
 
     Returns:
         The parsed observation.
+
+    Raises:
+        ValueError: If any ``observed_ppm`` value is not an integer within
+            ``[0, 1_000_000]``.
     """
-    observed = {str(key): int(value) for key, value in payload["observed_ppm"].items()}
+    observed = {
+        str(key): parse_observed_ppm(str(value))
+        for key, value in payload["observed_ppm"].items()
+    }
     return ProviderCanaryObservation(
         observed_ppm=observed, reported_version=str(payload["reported_version"])
     )
@@ -229,6 +254,12 @@ def _build_observer(
         return _ReplayObserver(_observation_from_payload(entry["observation"]))
     provider = str(entry["provider"])
     host = str(entry["host"])
+    # NOTE: this allowlist is derived from the same operator-authored spec-file
+    # entry that supplies ``endpoint``, so it is NOT an SSRF control -- it only
+    # catches an internal host/endpoint typo within a trusted spec file (running
+    # this script already requires that trust level). It must not be mistaken
+    # for a security boundary; the production connector's config-derived
+    # allowlist (windbreak/net/allowlist.py) is the real egress control.
     return _LiveObserver(
         endpoint=str(entry["endpoint"]),
         headers={
@@ -300,18 +331,29 @@ def main(argv: list[str] | None = None) -> int:
         argv: Optional argument vector; defaults to ``sys.argv[1:]``.
 
     Returns:
-        ``0`` when every provider stayed within band, else ``1``.
+        ``0`` when every provider stayed within band, else ``1``. An
+        out-of-range/non-integer observation or malformed JSON
+        (:class:`ValueError`), a structurally malformed spec missing a required
+        key (:class:`KeyError`), or a ledger-chain failure
+        (:class:`~windbreak.ledger.store.ChainIntegrityError`) is reported to
+        stderr and mapped to exit ``1`` -- a clean fail-closed signal rather
+        than a raw traceback, mirroring
+        :func:`windbreak.ledger.rebuild.rebuild_command`.
     """
     args = _parse_args(argv)
-    payload = json.loads(args.spec_file.read_text(encoding="utf-8"))
-    specs = _build_specs(payload, record=args.record)
-    return run_canaries(
-        specs,
-        ledger_path=args.ledger_path,
-        alerts=_StdoutAlertEmitter(),
-        output=sys.stdout,
-        checked_at=datetime.now(tz=UTC),
-    )
+    try:
+        payload = json.loads(args.spec_file.read_text(encoding="utf-8"))
+        specs = _build_specs(payload, record=args.record)
+        return run_canaries(
+            specs,
+            ledger_path=args.ledger_path,
+            alerts=_StdoutAlertEmitter(),
+            output=sys.stdout,
+            checked_at=datetime.now(tz=UTC),
+        )
+    except (ChainIntegrityError, ValueError, KeyError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
