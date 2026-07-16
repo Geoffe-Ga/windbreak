@@ -149,7 +149,7 @@ Routes:
 | `/positions` | The latest open-positions snapshot. |
 | `/equity` | The equity curve vs. the configured capital floor. |
 | `/decisions` | The interleaved selector decisions, including skip/veto reasons. |
-| `/providers` | The fleet-observability provider panel: one summary per provider (id, canary status; resolved count, Brier skill, and abstention rate render `n/a` from this source, issue #195) plus a fleet-wide cost-per-forecast line. See [Provider operations](#provider-operations) below. |
+| `/providers` | The fleet-observability provider panel: one summary per provider (id, canary status; resolved count and Brier skill from the #194 track-record fold; abstention rate and per-provider `cost_per_forecast` from the #281 per-provider vote-cost fold) plus a fleet-wide cost-per-forecast line. Any figure falls back to `n/a` only for a provider its respective fold does not (yet) cover. See [Provider operations](#provider-operations) below. |
 | `GET /acks` | The pending human acknowledgements awaiting an operator (SPEC S10.8). |
 | `POST /ack` | Grant a pending acknowledgement — JSON body `{"approval_id": "<32-hex>"}`. |
 
@@ -210,7 +210,7 @@ read-model files -- the same projection functions the dashboard reads live:
 windbreak rebuild --ledger-path /path/to/state/ledger.db --output-dir /path/to/state/read-models
 ```
 
-This writes (or overwrites) ten files into `--output-dir`:
+This writes (or overwrites) eleven files into `--output-dir`:
 
 - `config_versions.json` -- every `ConfigLoaded` event.
 - `mode_history.json` -- every `ModeHeartbeat` event.
@@ -230,6 +230,9 @@ This writes (or overwrites) ten files into `--output-dir`:
   [Provider operations](#provider-operations) below).
 - `forecasts.json` -- every `ForecastCreated` row, in ledger order (issue
   #195), feeding the fleet cost-per-forecast/abstention fold.
+- `provider_vote_costs.json` -- the per-provider vote-cost aggregate folded
+  from `ProviderVoteRecorded` events (issue #281), feeding the `/providers`
+  panel's real per-provider `cost_per_forecast` and `abstain_rate`.
 
 `rebuild` verifies the ledger's hash chain before projecting; a corrupted
 chain fails closed with a nonzero exit code and the offending sequence number
