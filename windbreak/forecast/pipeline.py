@@ -128,6 +128,13 @@ ABSTENTION_ENSEMBLE_QUORUM_NOT_MET: Final = "ensemble_quorum_not_met"
 #: were screen-rejected (:data:`ABSTENTION_ALL_VOTES_DISCARDED`).
 ABSTENTION_PROVIDER_UNAVAILABLE: Final = "provider_unavailable"
 
+#: Abstention reason stamped when one or more ensemble members explicitly
+#: abstained from voting (SPEC S6.3), leaving fewer voting members than the
+#: required ensemble quorum. Distinct from a screen discard or a transport
+#: fault: the member was reached and answered, but declined to cast a usable
+#: vote, so it is charged yet excluded from the median (issue #241).
+ABSTENTION_ENSEMBLE_MEMBERS_ABSTAINED: Final = "ensemble_members_abstained"
+
 #: The default minimum surviving ensemble votes a full record needs; below this
 #: the run abstains with :data:`ABSTENTION_ENSEMBLE_QUORUM_NOT_MET`.
 DEFAULT_MIN_ENSEMBLE_VOTES: Final = 2
@@ -200,6 +207,20 @@ _ABSTENTION_RATIONALE_PROVIDER_UNAVAILABLE_MD: Final = (
     "abstained. This record is live-ineligible.\n"
 )
 
+#: Deterministic rationale stamped when one or more ensemble members explicitly
+#: abstained from voting, leaving too few voting members to meet the ensemble
+#: quorum. Truthful in every shortfall case that includes at least one
+#: abstention (mixed with discards or not): the pipeline ran and citations were
+#: verified, but abstaining members declined to cast usable votes, so the engine
+#: abstained rather than aggregate over too few votes.
+_ABSTENTION_RATIONALE_ENSEMBLE_MEMBERS_ABSTAINED_MD: Final = (
+    "## Abstained forecast\n\n"
+    "The full pipeline ran and citations were independently verified, but one "
+    "or more ensemble members explicitly abstained from voting, leaving fewer "
+    "voting members than the required ensemble quorum, so the engine abstained "
+    "rather than aggregate over too few votes. This record is live-ineligible.\n"
+)
+
 #: Maps each abstention reason to its human-readable rationale, so the audit
 #: trail's prose always matches the machine-readable ``abstention_reason``.
 _ABSTENTION_RATIONALE_BY_REASON: Final[Mapping[str, str]] = {
@@ -209,6 +230,9 @@ _ABSTENTION_RATIONALE_BY_REASON: Final[Mapping[str, str]] = {
         _ABSTENTION_RATIONALE_ENSEMBLE_QUORUM_NOT_MET_MD
     ),
     ABSTENTION_PROVIDER_UNAVAILABLE: _ABSTENTION_RATIONALE_PROVIDER_UNAVAILABLE_MD,
+    ABSTENTION_ENSEMBLE_MEMBERS_ABSTAINED: (
+        _ABSTENTION_RATIONALE_ENSEMBLE_MEMBERS_ABSTAINED_MD
+    ),
 }
 
 
@@ -830,7 +854,10 @@ def collect_model_votes(
             ``transport``, byte-identically to before.
 
     Returns:
-        The surviving ensemble votes, in call order (0 to ``len(ensemble)``).
+        The surviving, non-abstaining ensemble votes, in call order (0 to
+        ``len(ensemble)``). A member that explicitly abstained (SPEC S6.3) is
+        excluded from this tuple even though its cost was charged upstream, so
+        it never contributes to the median.
 
     Raises:
         ValueError: If ``ledger`` is supplied without ``created_at``.
@@ -846,7 +873,8 @@ def collect_model_votes(
         members=members,
         provider_factory=provider_factory,
     )
-    return tuple(_build_model_vote(forecast) for forecast in collection.forecasts)
+    voting_forecasts, _ = _partition_abstaining(collection.forecasts)
+    return tuple(_build_model_vote(forecast) for forecast in voting_forecasts)
 
 
 def aggregate_median(votes: tuple[ModelVote, ...]) -> VoteAggregate:
@@ -1113,38 +1141,71 @@ def _all_transport_discards(flags: tuple[bool, ...]) -> bool:
     return bool(flags) and all(flags)
 
 
+def _partition_abstaining(
+    forecasts: tuple[ProviderForecast, ...],
+) -> tuple[tuple[ProviderForecast, ...], int]:
+    """Split provider forecasts into voting survivors and the abstainer count.
+
+    An abstaining member is charged like any other (it did call the provider),
+    but declined to cast a usable vote (SPEC S6.3), so it is dropped from the
+    aggregation and its provider-reported citations never reach the audit trail.
+
+    Args:
+        forecasts: Every surviving provider forecast, in call order.
+
+    Returns:
+        A ``(voting_forecasts, abstain_count)`` pair: the non-abstaining
+        forecasts (in call order) and the number of abstaining forecasts.
+    """
+    voting = tuple(forecast for forecast in forecasts if not forecast.abstain)
+    return voting, len(forecasts) - len(voting)
+
+
 def _vote_shortfall_reason(
     vote_count: int,
     min_ensemble_votes: int,
     discard_transport_flags: tuple[bool, ...],
+    *,
+    abstain_count: int,
 ) -> str | None:
     """Classify a vote shortfall into its abstention reason, or ``None``.
 
-    The zero-survivor case splits by *why* every vote was lost: an all-transport
-    wipeout means no provider could be reached
-    (:data:`ABSTENTION_PROVIDER_UNAVAILABLE`), whereas any non-transport discard
-    in the mix -- a screen-side rejection *or* a non-retryable HTTP response,
-    where the provider was reached and answered -- keeps the pre-existing
-    :data:`ABSTENTION_ALL_VOTES_DISCARDED`. With survivors present but below
-    quorum, the run abstains :data:`ABSTENTION_ENSEMBLE_QUORUM_NOT_MET`; at or
-    above quorum there is no shortfall and the run proceeds to full aggregation.
+    First-match-wins precedence (issue #241):
+
+    1. ``vote_count >= min_ensemble_votes`` -> ``None``: quorum is met (even with
+       an abstainer in the mix), so the run proceeds to full aggregation.
+    2. ``abstain_count > 0`` ->
+       :data:`ABSTENTION_ENSEMBLE_MEMBERS_ABSTAINED`: any explicit abstention
+       below quorum takes precedence over the transport/screen taxonomy, even
+       when a transport wipeout is also in the discard mix.
+    3. ``vote_count == 0`` (and no abstainers): an all-transport wipeout means no
+       provider could be reached (:data:`ABSTENTION_PROVIDER_UNAVAILABLE`),
+       whereas any non-transport discard -- a screen-side rejection or a
+       non-retryable HTTP response -- keeps
+       :data:`ABSTENTION_ALL_VOTES_DISCARDED`.
+    4. Otherwise (survivors present but below quorum, no abstainers) the run
+       abstains :data:`ABSTENTION_ENSEMBLE_QUORUM_NOT_MET`.
 
     Args:
-        vote_count: The number of surviving votes.
+        vote_count: The number of surviving (non-abstaining) votes.
         min_ensemble_votes: The minimum surviving votes a full record requires.
         discard_transport_flags: Each discarded vote's
             :func:`_is_transport_failure` result, in discard order.
+        abstain_count: The number of members that explicitly abstained
+            (keyword-only).
 
     Returns:
         The abstention reason to stamp, or ``None`` when quorum is met.
     """
+    if vote_count >= min_ensemble_votes:
+        return None
+    if abstain_count > 0:
+        return ABSTENTION_ENSEMBLE_MEMBERS_ABSTAINED
     if vote_count == 0:
         if _all_transport_discards(discard_transport_flags):
             return ABSTENTION_PROVIDER_UNAVAILABLE
         return ABSTENTION_ALL_VOTES_DISCARDED
-    if vote_count < min_ensemble_votes:
-        return ABSTENTION_ENSEMBLE_QUORUM_NOT_MET
-    return None
+    return ABSTENTION_ENSEMBLE_QUORUM_NOT_MET
 
 
 def _live_gate_open(canary_gate: CanaryGate | None, created_at: datetime) -> bool:
@@ -1426,8 +1487,11 @@ class _VoteBundle:
 
     Attributes:
         votes: The surviving ensemble votes, in call order, ready to aggregate.
-        forecasts: The surviving provider forecasts backing ``votes``, whose
-            provider-reported citations land in the record's audit trail.
+        forecasts: The voting (non-abstaining) provider forecasts backing
+            ``votes``, whose provider-reported citations land in the record's
+            audit trail. An abstaining member is charged but never appears here,
+            so its reported citations are never cited and its provider is never
+            screened by the provider gate.
         shortfall_reason: The abstention reason when too few votes survived to
             aggregate over (see :func:`_vote_shortfall_reason`), or ``None`` when
             the quorum is met and aggregation may proceed.
@@ -1455,8 +1519,13 @@ def _collect_votes(
 
     Collects one forecast per ensemble member (discarding per-vote failures),
     charges the run's full research spend -- the fixed stub cost plus every
-    surviving *and* discarded vote's cost -- into ``budget``, builds the model
-    votes, and decides whether the survivor count clears ``min_ensemble_votes``.
+    surviving *and* discarded vote's cost (an abstaining member is charged too:
+    it did call the provider) -- into ``budget``. It then partitions off any
+    explicitly abstaining members (:func:`_partition_abstaining`): only the
+    voting survivors build model votes and back the bundle's forecasts, while the
+    abstainer count feeds the shortfall classification. The bundle's shortfall
+    reason decides whether the voting-survivor count clears
+    ``min_ensemble_votes``.
 
     Args:
         market: The market under forecast.
@@ -1488,20 +1557,25 @@ def _collect_votes(
         members=_resolve_vote_ensemble(ensemble),
         provider_factory=provider_factory,
     )
-    forecasts = collection.forecasts
-    provider_cost_micros = sum(forecast.cost_micros for forecast in forecasts)
+    provider_cost_micros = sum(
+        forecast.cost_micros for forecast in collection.forecasts
+    )
     _charge_research(
         budget,
         _RESEARCH_COST_MICROS + provider_cost_micros + collection.discarded_cost_micros,
         market,
         created_at,
     )
-    votes = tuple(_build_model_vote(forecast) for forecast in forecasts)
+    voting_forecasts, abstain_count = _partition_abstaining(collection.forecasts)
+    votes = tuple(_build_model_vote(forecast) for forecast in voting_forecasts)
     shortfall_reason = _vote_shortfall_reason(
-        len(votes), min_ensemble_votes, collection.discard_transport_flags
+        len(votes),
+        min_ensemble_votes,
+        collection.discard_transport_flags,
+        abstain_count=abstain_count,
     )
     return _VoteBundle(
-        votes=votes, forecasts=forecasts, shortfall_reason=shortfall_reason
+        votes=votes, forecasts=voting_forecasts, shortfall_reason=shortfall_reason
     )
 
 
@@ -1635,9 +1709,12 @@ def run_pipeline(
     (SPEC S8.5). Each vote response is itself injection-screened, and any
     transport-class fault (timeout, rate-limit, HTTP, cost overrun) is caught
     the same way; a discarded vote is ledgered through ``ledger`` and its cost
-    charged into the budget. A vote shortfall then abstains rather than
-    aggregate over too few members (see :func:`_vote_shortfall_reason`): zero
-    survivors from an all-transport wipeout abstains
+    charged into the budget. An explicitly abstaining member (SPEC S6.3) is
+    still charged but excluded from the median, its citations, and the provider
+    gate. A vote shortfall then abstains rather than aggregate over too few
+    members (see :func:`_vote_shortfall_reason`): any abstainer below quorum
+    abstains :data:`ABSTENTION_ENSEMBLE_MEMBERS_ABSTAINED`; with no abstainers,
+    zero survivors from an all-transport wipeout abstains
     :data:`ABSTENTION_PROVIDER_UNAVAILABLE`; zero survivors with any screen-side
     rejection abstains :data:`ABSTENTION_ALL_VOTES_DISCARDED`; and survivors
     below ``min_ensemble_votes`` abstain

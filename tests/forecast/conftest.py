@@ -582,11 +582,14 @@ def diverse_markets(
 
 #: Hand-authored, schema-valid #184 vote JSON responses per divergence-test
 #: market (issue #191), keyed by ticker. Each market's three responses carry
-#: mutually distinct `probability_ppm` values, and at least one diverges from
-#: that market's own `baseline_ppm` (`price_pips * 100`) by more than 20_000
-#: ppm. Exactly one response across the whole mapping (the elections market's
-#: third vote) carries `"abstain": true`, exercising that schema branch
-#: end-to-end through the cassette harness.
+#: mutually distinct `probability_ppm` values, and at least one *non-abstaining*
+#: (hence surviving) response diverges from that market's own `baseline_ppm`
+#: (`price_pips * 100`) by more than 20_000 ppm -- so the divergence survives
+#: the #241 abstention exclusion. Exactly one response across the whole mapping
+#: (the elections market's third vote) carries `"abstain": true`, exercising
+#: that schema branch end-to-end through the cassette harness; the elections
+#: market's divergent reading therefore sits on a surviving vote, not the
+#: abstaining one.
 DIVERGENT_VOTE_RESPONSES: dict[str, tuple[str, str, str]] = {
     _FED_TICKER: (
         '{"probability_ppm": 440000, "rationale_summary": '
@@ -607,8 +610,8 @@ DIVERGENT_VOTE_RESPONSES: dict[str, tuple[str, str, str]] = {
     _ELECTIONS_TICKER: (
         '{"probability_ppm": 590000, "rationale_summary": '
         '"polling average steady", "abstain": false}',
-        '{"probability_ppm": 605000, "rationale_summary": '
-        '"incumbent-party headwind", "abstain": false}',
+        '{"probability_ppm": 635000, "rationale_summary": '
+        '"incumbent-party tailwind", "abstain": false}',
         '{"probability_ppm": 560000, "rationale_summary": '
         '"insufficient signal this far out", "abstain": true}',
     ),
