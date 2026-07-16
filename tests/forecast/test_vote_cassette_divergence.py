@@ -106,11 +106,21 @@ def test_divergent_votes_record_and_replay_across_diverse_markets(
         abs(vote.probability_ppm - baseline_ppm) > _DIVERGENCE_THRESHOLD_PPM
         for vote in record.model_votes
     )
-    # (d) Every vote carries a non-empty fingerprint and the #191 pinned
-    # ensemble's exact provenance, in order.
-    assert len(record.model_votes) == len(_EXPECTED_ENSEMBLE_PROVENANCE)
+    # (d) Every surviving vote carries a non-empty fingerprint and the #191
+    # pinned ensemble's exact provenance, in order. A member whose response
+    # abstained (issue #241) is excluded from the record, so the expected
+    # provenance is only the non-abstaining members' -- for the elections
+    # market that is the first two members; Fed and weather keep all three.
+    expected_provenance = tuple(
+        provenance
+        for provenance, response in zip(
+            _EXPECTED_ENSEMBLE_PROVENANCE, responses, strict=True
+        )
+        if not json.loads(response)["abstain"]
+    )
+    assert len(record.model_votes) == len(expected_provenance)
     for vote, (provider, model_version, training_cutoff) in zip(
-        record.model_votes, _EXPECTED_ENSEMBLE_PROVENANCE, strict=True
+        record.model_votes, expected_provenance, strict=True
     ):
         assert vote.response_fingerprint
         assert vote.provider == provider

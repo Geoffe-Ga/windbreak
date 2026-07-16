@@ -81,6 +81,15 @@ _VALID_RESPONSE = (
     '"abstain": false}'
 )
 
+#: A schema-valid response identical in shape to `_VALID_RESPONSE` but carrying
+#: `"abstain": true` -- exercises issue #241's seam-threading contract:
+#: `FixtureVoteProvider.forecast` must thread `parsed.abstain` straight through
+#: onto the returned `ProviderForecast.abstain`, not drop it on the floor.
+_VALID_RESPONSE_ABSTAIN_TRUE = (
+    '{"probability_ppm": 500000, "rationale_summary": "insufficient evidence", '
+    '"abstain": true}'
+)
+
 #: A response that clears the schema layer's shape but still carries a
 #: tool-call lure -- `validate_vote_response`'s pre-existing SPEC S8.5 checks
 #: must reject it before `FixtureVoteProvider` ever attempts to parse ppm.
@@ -142,6 +151,40 @@ def test_fixture_vote_provider_happy_path_returns_provider_forecast(
     assert transport.calls == 1
 
 
+# --- FixtureVoteProvider: threads ParsedVote.abstain onto ProviderForecast ------
+# (issue #241: `ParsedVote.abstain` was parsed but dead-ended -- neither
+# `ProviderForecast` nor the vote-aggregation path ever saw it.)
+
+
+def test_fixture_vote_provider_threads_abstain_true_from_response(
+    market: NormalizedMarket, baseline: BaselineQuoteSnapshot
+) -> None:
+    """A response carrying `"abstain": true` yields a `ProviderForecast` whose
+    `abstain` field is `True` -- the parsed flag must cross the provider seam,
+    not be dropped after `parse_vote_response` reads it.
+    """
+    transport = _StubTransport(_VALID_RESPONSE_ABSTAIN_TRUE)
+    provider = FixtureVoteProvider(transport, _MEMBER)
+
+    result = provider.forecast(market, baseline, 0, ())
+
+    assert result.abstain is True
+
+
+def test_fixture_vote_provider_threads_abstain_false_from_response(
+    market: NormalizedMarket, baseline: BaselineQuoteSnapshot
+) -> None:
+    """A response carrying `"abstain": false` yields a `ProviderForecast`
+    whose `abstain` field is `False`.
+    """
+    transport = _StubTransport(_VALID_RESPONSE)
+    provider = FixtureVoteProvider(transport, _MEMBER)
+
+    result = provider.forecast(market, baseline, 0, ())
+
+    assert result.abstain is False
+
+
 # --- FixtureVoteProvider: tainted response is rejected, not silently trusted -----
 
 
@@ -195,6 +238,18 @@ def _provider_forecast(**overrides: object) -> ProviderForecast:
     }
     kwargs.update(overrides)
     return ProviderForecast(**kwargs)  # type: ignore[arg-type]
+
+
+def test_provider_forecast_default_construction_abstain_is_false() -> None:
+    """A `ProviderForecast` built with no `abstain` argument defaults to
+    `False` (issue #241): the new field must be additive and byte-identical
+    for every pre-#241 construction site that never mentions it (e.g.
+    `FutureSearchProvider.forecast` in `providers/futuresearch.py`, and this
+    module's own `_provider_forecast` factory above).
+    """
+    forecast = _provider_forecast()
+
+    assert forecast.abstain is False
 
 
 def test_provider_forecast_is_frozen() -> None:

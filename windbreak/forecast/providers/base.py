@@ -173,6 +173,10 @@ class ProviderForecast:
         training_cutoff: The producing model's declared training cutoff.
         response_fingerprint: A sha256 fingerprint of the raw response text, for
             silent-drift detection (T14) -- never the raw text itself.
+        abstain: Whether the member declined to cast a usable vote (SPEC S6.3);
+            an abstaining forecast is excluded from the median aggregation.
+            Defaults to False -- the research-forecaster schema has no abstain
+            concept.
     """
 
     probability_ppm: int
@@ -183,6 +187,7 @@ class ProviderForecast:
     model_version: str
     training_cutoff: str
     response_fingerprint: str
+    abstain: bool = False
 
     def __post_init__(self) -> None:
         """Validate the probability range and integrality invariant.
