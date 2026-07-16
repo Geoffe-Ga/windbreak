@@ -243,14 +243,19 @@ def _forecast_hosts(forecast: ForecastConfig) -> frozenset[str]:
         forecast: The forecast configuration section.
 
     Returns:
-        One host per recognized provider across the ensemble and the triage
-        model; an unrecognized provider name contributes no host.
+        One host per recognized provider across three sources -- the legacy
+        ``ensemble`` triage/promotion ``ModelRef`` set, the ``triage_model``,
+        and each ``vote_ensemble`` member (issue #240) -- unioned; an
+        unrecognized provider name contributes no host (fail closed).
     """
-    models = (*forecast.ensemble, forecast.triage_model)
+    providers = (
+        *(model.provider for model in (*forecast.ensemble, forecast.triage_model)),
+        *(member.provider for member in forecast.vote_ensemble),
+    )
     return frozenset(
-        _FORECAST_PROVIDER_HOSTS[model.provider]
-        for model in models
-        if model.provider in _FORECAST_PROVIDER_HOSTS
+        _FORECAST_PROVIDER_HOSTS[provider]
+        for provider in providers
+        if provider in _FORECAST_PROVIDER_HOSTS
     )
 
 
@@ -280,11 +285,12 @@ def allowlist_from_config(
     """Build an :class:`OutboundAllowlist` from a windbreak configuration.
 
     The host set is the union of the exchange host (:func:`_exchange_hosts`), the
-    forecast-provider hosts (:func:`_forecast_hosts`), and the live-research
-    hosts (:func:`_research_hosts`). Alert-sink hosts are not derived here (see
-    the module docstring). An unrecognized exchange or model provider, and an
-    unconfigured research section, each contribute no host, so the resulting
-    allowlist fails closed.
+    forecast-provider hosts (:func:`_forecast_hosts`, spanning the legacy
+    ``ensemble``, the ``triage_model``, and each ``vote_ensemble`` member), and
+    the live-research hosts (:func:`_research_hosts`). Alert-sink hosts are not
+    derived here (see the module docstring). An unrecognized exchange or model
+    provider, and an unconfigured research section, each contribute no host, so
+    the resulting allowlist fails closed.
 
     Args:
         config: The windbreak configuration to derive hosts from.

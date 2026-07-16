@@ -307,13 +307,16 @@ class ProviderGateConfig:
 class ForecastConfig:
     """Ensemble, triage, budget, and calibration-canary forecasting policy.
 
-    ``vote_ensemble`` (issue #184) supersedes the legacy ``ensemble`` field for
-    the vote stage: ``ensemble`` remains the triage/promotion ``ModelRef`` set,
-    while ``vote_ensemble`` names the per-member provenance the vote stage drives
-    a provider with. ``futuresearch`` (issue #189) configures the hosted
-    research-forecaster provider. ``provider_gate`` (issue #194) sets the
-    per-provider track-record thresholds a voting provider must clear to be
-    live-eligible.
+    ``vote_ensemble`` (issue #184) is the authoritative vote-stage ensemble:
+    each :class:`EnsembleMemberConfig` member carries its own provider
+    provenance, and the vote stage drives providers from this field alone. The
+    legacy ``ensemble`` field is the SPEC S16 triage/promotion ``ModelRef`` set,
+    retained verbatim for YAML-key and config-hash stability and deprecated for
+    vote purposes (ADR-0006, issue #240); it no longer sources vote-stage
+    behaviour. Both fields still contribute to the outbound network allowlist.
+    ``futuresearch`` (issue #189) configures the hosted research-forecaster
+    provider. ``provider_gate`` (issue #194) sets the per-provider track-record
+    thresholds a voting provider must clear to be live-eligible.
     """
 
     ensemble: tuple[ModelRef, ...] = field(default_factory=_default_ensemble)
