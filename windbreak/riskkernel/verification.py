@@ -87,6 +87,61 @@ class ExpectationSource(Protocol):
         ...
 
 
+class StartupBaselineExpectationSource:
+    """An :class:`ExpectationSource` that freezes the venue's own startup state.
+
+    When ``windbreak run --process riskkernel --snapshot-fixture-dir DIR`` wires
+    a :class:`ReadOnlyVerifier` over a read-only :class:`MarketConnector`, there
+    is no separate ledger of "what the venue *should* hold" to read expectations
+    from. This source supplies the fail-closed alternative: it captures the
+    connector's own balances, positions, and open orders **exactly once**, at
+    construction, and every later :meth:`get_expectations` call returns that one
+    frozen snapshot. The verification semantic is thus "nothing may change while
+    the kernel holds no intent to change it" -- a venue that drifts from its own
+    startup state breaches against itself, so an out-of-band position or balance
+    move is caught even with no ledger to diff against.
+
+    This is a documented placeholder seam: a future ledger-derived projection of
+    intended venue state (tracked as a follow-up to issue #236) will replace it,
+    at which point the verifier can diff the venue against what the kernel
+    actually intended rather than against its own frozen startup baseline.
+
+    :class:`MarketConnector` is annotation-only (:data:`TYPE_CHECKING`), as
+    everywhere in this module, so this class adds no runtime ``verification`` <->
+    ``process`` import cycle.
+    """
+
+    def __init__(self, connector: MarketConnector) -> None:
+        """Capture the connector's balances, positions, and open orders once.
+
+        Args:
+            connector: The read-only market connector whose current
+                exchange-verified state is frozen as the baseline. It is read
+                exactly here, at construction; a later mutation of the connector
+                never changes what :meth:`get_expectations` returns.
+        """
+        self._expectations = LedgerExpectations(
+            expected_available_cash=connector.get_balances().available,
+            expected_positions={
+                position.ticker: position.quantity
+                for position in connector.get_positions()
+            },
+            expected_open_order_ids=frozenset(
+                order.id for order in connector.get_open_orders()
+            ),
+        )
+
+    def get_expectations(self) -> LedgerExpectations:
+        """Return the baseline captured at construction.
+
+        Returns:
+            The immutable :class:`LedgerExpectations` frozen from the connector's
+            startup state; identical on every call, regardless of any later
+            connector mutation.
+        """
+        return self._expectations
+
+
 @dataclass(frozen=True, slots=True)
 class VerificationTolerances:
     """The admissible drift before a dimension is treated as a breach.

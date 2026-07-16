@@ -99,6 +99,15 @@ class RiskConfig:
             human acknowledgement, or ``None`` to require none (paper mode).
         kill_after_consecutive_mismatches: Number of consecutive reconciliation
             ``BREACH`` outcomes that auto-engages the kill switch (issue #35).
+        verification_balance_tolerance_micros: The admissible available-cash
+            drift, in micros, before the live verifier grades a reconciliation
+            ``BREACH`` (issue #236). Defaults to ``0`` -- a fail-closed
+            exact-match: any drift at all is a breach until an operator loosens
+            it.
+        verification_position_tolerance_centis: The admissible per-ticker
+            position drift, in contract-centis, before the live verifier grades
+            a ``BREACH`` (issue #236). Defaults to ``0`` -- fail-closed
+            exact-match, as above.
     """
 
     min_net_edge_ppm: int = 30000
@@ -123,6 +132,8 @@ class RiskConfig:
     clock_skew_max_seconds: int = 2
     require_human_ack_above_micros: int | None = None
     kill_after_consecutive_mismatches: int = 3
+    verification_balance_tolerance_micros: int = 0
+    verification_position_tolerance_centis: int = 0
 
 
 @dataclass(frozen=True, slots=True)
