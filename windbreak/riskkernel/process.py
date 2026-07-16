@@ -337,6 +337,7 @@ class RiskKernel:
         ledger_writer: KernelLedgerWriter,
         *,
         mode_machine: ModeStateMachine | None = None,
+        verifier: ReadOnlyVerifier | None = None,
         gate_plan_store: LedgerStore | None = None,
         kill_integration: KillIntegration | None = None,
     ) -> RiskKernel:
@@ -363,6 +364,16 @@ class RiskKernel:
             events: The event history to replay override and kill state from.
             ledger_writer: The writer the rebuilt kernel records new events to.
             mode_machine: The operating-mode state machine to adopt.
+            verifier: The read-only exchange verifier the rebuilt kernel runs
+                each beat, wired for the rebuilt kernel's per-beat verification
+                cycle (issue #236), or ``None`` to rebuild without verification.
+                Forwarded verbatim to :meth:`__init__`, so the live
+                ``AUTO_RECONCILIATION`` auto-kill trigger is fed through the same
+                replay path ``_build_risk_kernel`` composes. A replayed-``KILLED``
+                machine still skips :meth:`_halt_on_breach` via that method's
+                already-``HALT``/``KILLED`` guard, so a verifier handed to a
+                rebuilt-KILLED kernel never drives an illegal ``KILLED -> HALT``
+                transition.
             gate_plan_store: The ledger the rebuilt kernel reads its PAPER gate
                 plan from at promotion time (issue #185), or ``None``.
             kill_integration: The kill switch and its trigger adapters to wire
@@ -378,6 +389,7 @@ class RiskKernel:
         kernel = cls(
             ledger_writer,
             mode_machine=mode_machine,
+            verifier=verifier,
             gate_plan_store=gate_plan_store,
             kill_integration=kill_integration,
         )

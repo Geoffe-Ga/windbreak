@@ -49,10 +49,12 @@ if TYPE_CHECKING:
     from types import FrameType
 
     from windbreak.config import ConfigLoadEvent, ScreenerConfig, WindbreakConfig
+    from windbreak.connector.interface import MarketConnector
     from windbreak.dashboard.app import DashboardStatus
     from windbreak.ledger import Event, LedgerStore
     from windbreak.riskkernel.kill import KillIntegration
     from windbreak.riskkernel.process import KernelLedgerWriter, RiskKernel
+    from windbreak.riskkernel.verification import ReadOnlyVerifier
 
 #: Operating mode reported in every heartbeat line. Matches the RESEARCH state
 #: of the SPEC mode machine; windbreak ships research-only for now.
@@ -217,8 +219,9 @@ def _add_run_arguments(run_parser: argparse.ArgumentParser) -> None:
         "--snapshot-fixture-dir",
         default=None,
         help=(
-            "Directory of exchange JSON fixtures to snapshot each beat "
-            "(default: snapshotting is off)."
+            "Directory of exchange JSON fixtures to snapshot each beat; for "
+            "--process riskkernel it is the read-only exchange the kernel's "
+            "verifier observes each beat (default: snapshotting is off)."
         ),
     )
     run_parser.add_argument(
@@ -1197,7 +1200,10 @@ def _run_heartbeat(args: argparse.Namespace) -> int:
 
 
 def _build_risk_kernel(
-    config: WindbreakConfig, *, ledger_store: LedgerStore | None = None
+    config: WindbreakConfig,
+    *,
+    ledger_store: LedgerStore | None = None,
+    verification_connector: MarketConnector | None = None,
 ) -> tuple[RiskKernel, KillIntegration]:
     """Compose a live :class:`RiskKernel` wired to its :class:`KillIntegration`.
 
@@ -1223,6 +1229,25 @@ def _build_risk_kernel(
     shared machine to ``KILLED`` on an unrearmed history -- so the two never race
     to transition the single machine.
 
+    With a ``verification_connector`` the kernel's per-beat verification cycle
+    becomes live (issue #236): a :class:`StartupBaselineExpectationSource` freezes
+    that connector's own startup balances/positions/open-orders once, a
+    :class:`VerificationTolerances` is composed from
+    ``risk.verification_balance_tolerance_micros`` /
+    ``risk.verification_position_tolerance_centis``, and a
+    :class:`ReadOnlyVerifier` -- sharing **both** the kernel's ledger writer and
+    the kill switch's one :class:`AlertDispatcher` -- is forwarded to
+    :meth:`RiskKernel.from_events`. The shared writer means each cycle's
+    verification *event* lands on the same hash-chained ledger the kernel
+    persists to; the shared dispatcher means mismatch and jurisdiction *alerts*
+    fan out through the same sink chain the kill switch uses (log-only in this
+    composition, whose dispatcher has no persisting sinks). This is what makes the
+    ``AUTO_RECONCILIATION`` auto-kill trigger *live* rather than
+    composed-but-dormant: a sustained reconciliation ``BREACH`` now feeds the
+    shared monitor and engages the shared kill switch. With no connector the
+    verifier is ``None`` and the composition is byte-identical to its
+    pre-issue-#236 shape.
+
     The kernel imports are local (mirroring :func:`_run_drill` /
     :func:`_build_paper_on_beat`) so the RESEARCH heartbeat path never imports
     the kernel eagerly. ``ops.state_dir`` is created up front, fail-closed: a
@@ -1231,12 +1256,18 @@ def _build_risk_kernel(
 
     Args:
         config: The loaded configuration. ``ops.state_dir`` roots the kill/re-arm
-            file protocol, ``mode_ceiling`` caps the shared machine, and
+            file protocol, ``mode_ceiling`` caps the shared machine,
             ``risk.kill_after_consecutive_mismatches`` sets the auto-kill
-            threshold.
+            threshold, and ``risk.verification_balance_tolerance_micros`` /
+            ``risk.verification_position_tolerance_centis`` set the live
+            verifier's per-dimension drift tolerances.
         ledger_store: The append-only ledger the kernel persists to and replays
             durable kill state from (issue #235), or ``None`` to run against a
             log-only writer with no replay (an empty history).
+        verification_connector: The read-only market connector the live verifier
+            observes the venue through (issue #236), or ``None`` to compose no
+            verifier -- leaving the per-beat verification cycle a no-op exactly
+            as before.
 
     Returns:
         The composed kernel and the kill integration it shares, so a caller can
@@ -1270,22 +1301,78 @@ def _build_risk_kernel(
     else:
         writer = LoggingKernelLedgerWriter()
         history = ()
+    # One dispatcher shared by the kill switch's HALT_KILL alerts and (when a
+    # verification connector is wired) the verifier's mismatch/jurisdiction
+    # alerts, so both fan out through the same ledger-writing sink chain.
+    dispatcher = AlertDispatcher(sinks=[], ledger_writer=LoggingLedgerWriter())
     switch = KillSwitch.from_events(
-        history,
-        machine,
-        writer,
-        AlertDispatcher(sinks=[], ledger_writer=LoggingLedgerWriter()),
-        state_dir=state_dir,
+        history, machine, writer, dispatcher, state_dir=state_dir
     )
     watcher = KillFileWatcher(switch, state_dir)
     monitor = ReconciliationMismatchMonitor(
         switch, threshold=config.risk.kill_after_consecutive_mismatches
     )
     integration = KillIntegration(switch=switch, watcher=watcher, monitor=monitor)
+    verifier = _build_verifier(config, verification_connector, dispatcher, writer)
     kernel = RiskKernel.from_events(
-        history, writer, mode_machine=machine, kill_integration=integration
+        history,
+        writer,
+        mode_machine=machine,
+        verifier=verifier,
+        kill_integration=integration,
     )
     return kernel, integration
+
+
+def _build_verifier(
+    config: WindbreakConfig,
+    verification_connector: MarketConnector | None,
+    dispatcher: AlertDispatcher,
+    writer: KernelLedgerWriter,
+) -> ReadOnlyVerifier | None:
+    """Compose the live read-only verifier, or ``None`` when unconfigured.
+
+    Freezes ``verification_connector``'s own startup state as the baseline the
+    verifier reconciles the venue against each beat (issue #236), reading the
+    per-dimension tolerances from ``config.risk``. The verifier shares
+    ``dispatcher`` and ``writer`` with the kill switch so its alerts and events
+    reach the same sinks and hash-chained ledger.
+
+    Args:
+        config: The loaded configuration supplying the balance/position drift
+            tolerances.
+        verification_connector: The read-only market connector to observe, or
+            ``None`` to compose no verifier.
+        dispatcher: The alert dispatcher shared with the kill switch.
+        writer: The kernel ledger writer shared with the kill switch.
+
+    Returns:
+        The composed :class:`ReadOnlyVerifier`, or ``None`` when
+        ``verification_connector`` is ``None``.
+    """
+    if verification_connector is None:
+        return None
+    from windbreak.numeric.types import ContractCentis, MoneyMicros
+    from windbreak.riskkernel.verification import (
+        ReadOnlyVerifier,
+        StartupBaselineExpectationSource,
+        VerificationTolerances,
+    )
+
+    return ReadOnlyVerifier(
+        connector=verification_connector,
+        expectation_source=StartupBaselineExpectationSource(verification_connector),
+        tolerances=VerificationTolerances(
+            balance_tolerance=MoneyMicros(
+                config.risk.verification_balance_tolerance_micros
+            ),
+            position_tolerance=ContractCentis(
+                config.risk.verification_position_tolerance_centis
+            ),
+        ),
+        dispatcher=dispatcher,
+        ledger_writer=writer,
+    )
 
 
 def _kernel_heartbeat_interval(args: argparse.Namespace) -> int:
@@ -1347,6 +1434,27 @@ def _run_riskkernel(args: argparse.Namespace) -> int:
             store.close()
 
 
+def _snapshot_connector(args: argparse.Namespace) -> MarketConnector | None:
+    """Build the read-only verification connector from ``--snapshot-fixture-dir``.
+
+    Mirrors :func:`_run_preflight`'s local-import ``FakeExchange`` construction.
+    Called inside :func:`_drive_risk_kernel`'s fail-closed ``try`` so a missing
+    or malformed fixture directory raises there (issue #236).
+
+    Args:
+        args: Parsed ``run`` arguments carrying ``snapshot_fixture_dir``.
+
+    Returns:
+        A :class:`~windbreak.connector.fake.FakeExchange` over the fixture
+        directory, or ``None`` when ``--snapshot-fixture-dir`` was not given.
+    """
+    if args.snapshot_fixture_dir is None:
+        return None
+    from windbreak.connector import FakeExchange
+
+    return FakeExchange.from_fixture_dir(args.snapshot_fixture_dir)
+
+
 def _drive_risk_kernel(
     args: argparse.Namespace,
     config: WindbreakConfig,
@@ -1361,9 +1469,17 @@ def _drive_risk_kernel(
     (uncreatable state dir, bad ceiling, or a tampered ledger chain) logs
     ``FATAL`` and returns 1 before the loop is entered, emitting no heartbeat.
 
+    When ``--snapshot-fixture-dir`` is given, a read-only
+    :class:`~windbreak.connector.fake.FakeExchange` is built over it *inside*
+    this same fail-closed ``try`` and wired as the kernel's verification
+    connector (issue #236): a missing or malformed fixture directory raises
+    ``FileNotFoundError``/``JSONDecodeError`` -- subclasses of ``OSError`` /
+    ``ValueError`` already caught here -- so a bad snapshot dir fails closed
+    identically to an uncreatable state dir, never entering the kernel loop.
+
     Args:
-        args: Parsed ``run`` arguments carrying ``process``, ``max_beats``, and
-            ``heartbeat_interval``.
+        args: Parsed ``run`` arguments carrying ``process``, ``max_beats``,
+            ``heartbeat_interval``, and ``snapshot_fixture_dir``.
         config: The loaded configuration the kernel is composed from.
         ledger_store: The ledger the kernel persists to and replays from, or
             ``None`` for the log-only, replay-free path.
@@ -1372,7 +1488,12 @@ def _drive_risk_kernel(
         The process exit code (0 on a clean shutdown, 1 on a fatal build error).
     """
     try:
-        kernel, _integration = _build_risk_kernel(config, ledger_store=ledger_store)
+        verification_connector = _snapshot_connector(args)
+        kernel, _integration = _build_risk_kernel(
+            config,
+            ledger_store=ledger_store,
+            verification_connector=verification_connector,
+        )
     except (OSError, ValueError, ChainIntegrityError) as exc:
         _LOGGER.critical("FATAL: %s", exc)
         return 1

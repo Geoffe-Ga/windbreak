@@ -23,17 +23,34 @@ issue #32.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 
 from tests.riskkernel.conftest import DEFAULT_NOW_EPOCH_S, make_context, make_intent
 from windbreak.alerts.dispatch import AlertDispatcher, LoggingLedgerWriter
 from windbreak.alerts.registry import AlertSeverity, AlertType, get_registration
 from windbreak.connector.fake import FakeExchange
+from windbreak.connector.interface import UnknownMarketError
 from windbreak.connector.models import (
     BalanceSemantics,
     BalanceSnapshot,
+    ExchangeStatus,
+    FeeModel,
+    Fill,
+    NormalizedMarket,
     OpenOrder,
+    OrderBookSnapshot,
     Position,
+)
+from windbreak.connector.semantics import (
+    CancelCollateralRelease,
+    FeeDebitTiming,
+    FeeRounding,
+    HaltedMarketBehavior,
+    OrderCollateralInAvailable,
+    OrderCollateralInTotal,
+    PartialFillRepresentation,
+    UnsettledProceeds,
 )
 from windbreak.numeric.types import ContractCentis, MoneyMicros, PricePips
 from windbreak.riskkernel.modes import Mode, ModeStateMachine
@@ -45,6 +62,7 @@ from windbreak.riskkernel.process import (
 from windbreak.riskkernel.verification import (
     LedgerExpectations,
     ReadOnlyVerifier,
+    StartupBaselineExpectationSource,
     VerificationOutcome,
     VerificationTolerances,
 )
@@ -795,3 +813,143 @@ def test_every_verification_event_payload_is_int_str_or_bool_never_float() -> No
         for value in event.payload.values():
             assert not isinstance(value, float), f"{event.event_type}: {value!r}"
             assert isinstance(value, (int, str, bool)), f"{event.event_type}: {value!r}"
+
+
+# --- StartupBaselineExpectationSource (issue #236) --------------------------------
+#
+# `windbreak run --process riskkernel --snapshot-fixture-dir DIR` wires a
+# `ReadOnlyVerifier` over a `FakeExchange` connector, but needs an
+# `ExpectationSource` too -- there is no separate ledger of "what the venue
+# should hold" to read expectations from in that composition. Instead, the
+# semantics are "nothing may change while the kernel holds no intent to change
+# it": `StartupBaselineExpectationSource` captures the connector's own
+# balances/positions/open-orders exactly once, at construction, and every
+# later `get_expectations()` call returns that frozen snapshot -- so a venue
+# that drifts from its own startup state breaches against itself.
+
+#: A fixed UTC instant for every `BalanceSnapshot.fetched_at` the stub
+#: connectors below report; its exact value is irrelevant to every assertion.
+_FIXED_DATETIME = datetime(2024, 1, 1, tzinfo=UTC)
+
+#: A `BalanceSemantics` with every field a known (non-`UNKNOWN`) member,
+#: reused by the stub connectors below wherever `get_balance_semantics` must
+#: return something but no test actually inspects its value.
+_FULLY_KNOWN_SEMANTICS = BalanceSemantics(
+    open_order_collateral_in_total=OrderCollateralInTotal.EXCLUDED,
+    open_order_collateral_in_available=OrderCollateralInAvailable.DEDUCTED_FROM_AVAILABLE,
+    fee_debit_timing=FeeDebitTiming.AT_EXECUTION,
+    fee_rounding=FeeRounding.EXACT,
+    partial_fill_representation=PartialFillRepresentation.PER_FILL_RECORDS,
+    cancel_collateral_release=CancelCollateralRelease.IMMEDIATE,
+    unsettled_proceeds=UnsettledProceeds.INCLUDED_IMMEDIATELY,
+    halted_market_behavior=HaltedMarketBehavior.NEW_ORDERS_REJECTED,
+)
+
+
+def test_startup_baseline_expectation_source_matches_connectors_own_snapshot() -> None:
+    """`StartupBaselineExpectationSource(connector).get_expectations()` mirrors
+    exactly what `connector` itself reports for balances/positions/open orders.
+
+    `StartupBaselineExpectationSource` does not exist yet, so this fails
+    collection with `ImportError: cannot import name
+    'StartupBaselineExpectationSource' from 'windbreak.riskkernel.verification'`
+    -- the expected Gate 1 RED state for issue #236.
+    """
+    connector = FakeExchange.from_fixture_dir(_fixture_path("clean"))
+
+    source = StartupBaselineExpectationSource(connector)
+    expectations = source.get_expectations()
+
+    assert expectations.expected_available_cash == connector.get_balances().available
+    assert dict(expectations.expected_positions) == {
+        position.ticker: position.quantity for position in connector.get_positions()
+    }
+    assert expectations.expected_open_order_ids == frozenset(
+        order.id for order in connector.get_open_orders()
+    )
+
+
+@dataclass
+class _MutableBalanceConnector:
+    """A minimal, mutable `MarketConnector` whose available cash can change
+    after construction, so a test can prove a baseline source captured its
+    snapshot once rather than reading the connector live on every call.
+
+    Attributes:
+        available: The account's current available cash, mutable so a test
+            can change it after building a `StartupBaselineExpectationSource`
+            over this connector.
+    """
+
+    available: MoneyMicros
+
+    def get_balances(self) -> BalanceSnapshot:
+        """Return the account's current, possibly-since-mutated available cash."""
+        return BalanceSnapshot(
+            total=self.available, available=self.available, fetched_at=_FIXED_DATETIME
+        )
+
+    def get_positions(self) -> tuple[Position, ...]:
+        """Return no positions, ever."""
+        return ()
+
+    def get_open_orders(self) -> tuple[OpenOrder, ...]:
+        """Return no open orders, ever."""
+        return ()
+
+    def get_balance_semantics(self) -> BalanceSemantics:
+        """Return a fully-known `BalanceSemantics` (unused by this test)."""
+        return _FULLY_KNOWN_SEMANTICS
+
+    def list_markets(self) -> tuple[NormalizedMarket, ...]:
+        """Return no markets; unused by this test."""
+        return ()
+
+    def get_market(self, ticker: str) -> NormalizedMarket:
+        """Raise; unused by this test."""
+        raise UnknownMarketError(ticker)
+
+    def get_order_book(self, ticker: str) -> OrderBookSnapshot:
+        """Raise; unused by this test."""
+        raise NotImplementedError(ticker)
+
+    def get_exchange_status(self) -> ExchangeStatus:
+        """Raise; unused by this test."""
+        raise NotImplementedError
+
+    def get_exchange_time(self) -> datetime:
+        """Raise; unused by this test."""
+        raise NotImplementedError
+
+    def get_fills(self, since: datetime) -> tuple[Fill, ...]:
+        """Return no fills; unused by this test."""
+        del since
+        return ()
+
+    def get_fee_model(self, market_or_series: str) -> FeeModel:
+        """Raise; unused by this test."""
+        raise NotImplementedError(market_or_series)
+
+    def place_order(self, normalized_intent: object, approval_token: object) -> object:
+        """Raise; unused by this test."""
+        raise NotImplementedError
+
+    def cancel_order(self, order_id: str) -> None:
+        """Raise; unused by this test."""
+        raise NotImplementedError(order_id)
+
+
+def test_startup_baseline_expectation_source_captures_snapshot_at_construction() -> (
+    None
+):
+    """A connector mutated *after* construction never changes what an
+    already-built `StartupBaselineExpectationSource` reports: the baseline is
+    captured once, at `__init__` time, never read live on a later
+    `get_expectations()` call.
+    """
+    connector = _MutableBalanceConnector(available=MoneyMicros(1_000_000))
+    source = StartupBaselineExpectationSource(connector)
+
+    connector.available = MoneyMicros(2_000_000)
+
+    assert source.get_expectations().expected_available_cash == MoneyMicros(1_000_000)

@@ -136,3 +136,20 @@ def test_forecast_config_provider_gate_defaults_to_provider_gate_config() -> Non
 
     assert isinstance(cfg.forecast.provider_gate, ProviderGateConfig)
     assert cfg.forecast.provider_gate == ProviderGateConfig()
+
+
+def test_risk_config_verification_tolerance_fields_default_to_zero() -> None:
+    """`RiskConfig.verification_balance_tolerance_micros` and
+    `.verification_position_tolerance_centis` both default to `0` -- a
+    fail-closed exact-match default, matching `_build_risk_kernel`'s
+    zero-tolerance composition when a config leaves them unset (issue #236).
+
+    Neither field exists on `RiskConfig` yet, so this fails with
+    `AttributeError: 'RiskConfig' object has no attribute
+    'verification_balance_tolerance_micros'` -- the expected Gate 1 RED state
+    for issue #236.
+    """
+    cfg = WindbreakConfig()
+
+    assert cfg.risk.verification_balance_tolerance_micros == 0
+    assert cfg.risk.verification_position_tolerance_centis == 0

@@ -32,13 +32,22 @@ drives from ``windbreak run --process riskkernel`` -- the production
 entrypoint per the ``systemd``/``docker-compose`` deploy configs. That
 kernel's :meth:`KillFileWatcher.poll_once` runs every beat, so
 ``windbreak kill --state-dir DIR`` now halts a running kernel whenever
-``DIR`` is that kernel's configured ``ops.state_dir``. Three edges remain
-open: the :class:`ReconciliationMismatchMonitor` is composed from the
-configured threshold but ``_build_risk_kernel`` wires **no verifier**, so the
-kernel's per-beat verification cycle no-ops and the monitor is never fed --
-the ``AUTO_RECONCILIATION`` auto-kill is thus composed-but-dormant in
-production until a verifier is wired (tracked as issue #236), leaving the
-operator ``KILL`` file as today's live trigger; ``windbreak/riskkernel/
+``DIR`` is that kernel's configured ``ops.state_dir``. The
+:class:`ReconciliationMismatchMonitor` is composed from the configured
+threshold and, since issue #236, is fed a live signal: when ``windbreak run
+--process riskkernel`` is given a ``--snapshot-fixture-dir``,
+``_build_risk_kernel`` wires a
+:class:`~windbreak.riskkernel.verification.ReadOnlyVerifier`
+over that read-only connector, so the kernel's per-beat verification cycle
+grades a real reconciliation outcome and a sustained ``BREACH`` engages the
+``AUTO_RECONCILIATION`` auto-kill -- no longer composed-but-dormant. The wiring
+is live, but a static ``--snapshot-fixture-dir`` connector reports identical
+data every cycle, so it can never drift from its own frozen startup baseline:
+against a static fixture this exercises the reconciliation *plumbing*, not a
+real breach kill. A drift only arises from a mutating or live connector -- the
+ledger-derived expectation source seam tracked in issue #288. With no
+``--snapshot-fixture-dir`` no verifier is wired and the operator ``KILL`` file
+remains the live trigger. Two edges remain: ``windbreak/riskkernel/
 process.py``'s ``main()`` (reachable only via ``python -m
 windbreak.riskkernel``, a dev-only path) still runs without kill wiring; and
 replaying an existing ``KILLED`` state from the ledger on startup is now wired
