@@ -1,16 +1,17 @@
 """Fold the ledger into derived read models (SPEC S5.1, issue #13).
 
 ``rebuild`` is a pure projection over a verified ledger: it verifies the
-hash chain, then folds the records in sequence order into ten byte-stable
+hash chain, then folds the records in sequence order into eleven byte-stable
 read-model files -- ``config_versions.json`` (the ``ConfigLoaded`` rows),
 ``mode_history.json`` (the ``ModeHeartbeat`` rows), ``gateway_events.json``
 (the chronological Order Gateway / crash-recovery events, issue #40), the
 three PAPER-loop projections ``positions.json`` / ``equity_curve.json`` /
 ``selector_decisions.json`` (issue #48), the two live-divergence
 projections ``execution_quality.json`` / ``live_divergence.json`` (issue #58),
-and the two fleet-observability projections ``canary_status.json`` (the
+the two fleet-observability projections ``canary_status.json`` (the
 latest-per-provider ``CanaryVerdictRecorded``) / ``forecasts.json`` (every
-``ForecastCreated`` row, issue #195).
+``ForecastCreated`` row, issue #195), and the per-provider vote-cost aggregate
+``provider_vote_costs.json`` (issue #281).
 ``AlertEmitted`` and any unrecognized event types are skipped. Because
 verification runs first, a corrupt ledger raises :class:`ChainIntegrityError`
 instead of producing a plausible-but-wrong projection.
@@ -25,7 +26,7 @@ from __future__ import annotations
 
 import json
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from windbreak.ledger.store import ChainIntegrityError, SqliteLedgerStore
 
@@ -272,6 +273,20 @@ _FORECASTS_FILENAME = "forecasts.json"
 _CANARY_VERDICT_RECORDED = "CanaryVerdictRecorded"
 _FORECAST_CREATED = "ForecastCreated"
 
+#: Read-model filename holding the per-provider vote-cost aggregate projection
+#: (issue #281).
+_PROVIDER_VOTE_COSTS_FILENAME = "provider_vote_costs.json"
+
+_PROVIDER_VOTE_RECORDED = "ProviderVoteRecorded"
+
+#: The vote outcome that marks an abstention, counted into ``abstain_count``.
+_OUTCOME_ABSTAINED = "abstained"
+
+#: Parts-per-million scale: an abstention rate is reported as an integer ppm
+#: (``abstain_count * _PPM_SCALE // vote_count``), never a float ratio, keeping
+#: this money-path module float-free (SPEC S6.1).
+_PPM_SCALE = 1_000_000
+
 
 def canary_status_read_model(
     records: list[LedgerRecord],
@@ -324,6 +339,97 @@ def forecasts_read_model(records: list[LedgerRecord]) -> list[dict[str, object]]
     ]
 
 
+class _ProviderVoteAggregate:
+    """Mutable accumulator folding one provider's ``ProviderVoteRecorded`` rows.
+
+    Accumulates the running totals a single provider's read-model row is
+    derived from, so the fold in :func:`provider_vote_costs_read_model` stays a
+    flat, single-branch loop. ``forecast_count`` deliberately counts DISTINCT
+    ``forecast_id`` values (the default ensemble votes one provider twice per
+    forecast), so ``vote_count`` may exceed ``forecast_count``.
+
+    Attributes:
+        cost_micros_total: Summed ``cost_micros`` across every outcome (charged
+            spend, including discarded votes).
+        vote_count: The number of ``ProviderVoteRecorded`` rows for the provider.
+        abstain_count: The rows whose ``outcome`` is ``"abstained"``.
+    """
+
+    def __init__(self) -> None:
+        """Start every running total at zero, with no forecasts seen yet."""
+        self.cost_micros_total = 0
+        self.vote_count = 0
+        self.abstain_count = 0
+        self._forecast_ids: set[str] = set()
+
+    def add(self, data: dict[str, object]) -> None:
+        """Fold one vote's persisted payload into the running totals.
+
+        Args:
+            data: A ``ProviderVoteRecorded`` payload's ``data`` dict.
+        """
+        self.cost_micros_total += cast("int", data["cost_micros"])
+        self.vote_count += 1
+        if data["outcome"] == _OUTCOME_ABSTAINED:
+            self.abstain_count += 1
+        self._forecast_ids.add(str(data["forecast_id"]))
+
+    def as_row(self, provider: str) -> dict[str, object]:
+        """Derive the provider's read-model row from the accumulated totals.
+
+        Args:
+            provider: The provider identifier this aggregate folded.
+
+        Returns:
+            The ``{provider, cost_micros_total, vote_count, abstain_count,
+            forecast_count, cost_per_forecast_micros, abstain_rate_ppm}`` row.
+            Integer floor division only -- ``vote_count`` and ``forecast_count``
+            are both ``>= 1`` for any row that exists, so neither denominator is
+            ever zero.
+        """
+        forecast_count = len(self._forecast_ids)
+        return {
+            "provider": provider,
+            "cost_micros_total": self.cost_micros_total,
+            "vote_count": self.vote_count,
+            "abstain_count": self.abstain_count,
+            "forecast_count": forecast_count,
+            "cost_per_forecast_micros": self.cost_micros_total // forecast_count,
+            "abstain_rate_ppm": self.abstain_count * _PPM_SCALE // self.vote_count,
+        }
+
+
+def provider_vote_costs_read_model(
+    records: list[LedgerRecord],
+) -> list[dict[str, object]]:
+    """Fold every ``ProviderVoteRecorded`` into one per-provider aggregate (#281).
+
+    Unlike this package's passthrough projections, this fold produces one
+    AGGREGATE row per provider (not one row per event), in first-seen provider
+    order, summing charged spend and deriving integer cost-per-forecast and
+    abstention-rate figures. An empty list when no such event has ever been
+    ledgered, and no row at all for a provider with zero events (so no
+    zero-denominator row is ever produced).
+
+    Args:
+        records: The verified ledger records, in sequence order.
+
+    Returns:
+        One aggregate row per provider that has ever been ledgered, in
+        first-seen order.
+    """
+    aggregates: dict[str, _ProviderVoteAggregate] = {}
+    for record in records:
+        if record.event_type != _PROVIDER_VOTE_RECORDED:
+            continue
+        data = json.loads(record.payload_json)["data"]
+        provider = str(data["provider"])
+        if provider not in aggregates:
+            aggregates[provider] = _ProviderVoteAggregate()
+        aggregates[provider].add(data)
+    return [aggregate.as_row(provider) for provider, aggregate in aggregates.items()]
+
+
 def live_divergence_read_model(
     records: list[LedgerRecord],
 ) -> list[dict[str, object]]:
@@ -361,16 +467,17 @@ def _write_read_model(path: Path, rows: list[dict[str, object]]) -> None:
 
 
 def rebuild(ledger_path: Path, output_dir: Path) -> None:
-    """Verify the ledger and fold it into the ten read-model files.
+    """Verify the ledger and fold it into the eleven read-model files.
 
     Writes ``config_versions.json``, ``mode_history.json``,
     ``gateway_events.json``, the three PAPER-loop projections
     (``positions.json``, ``equity_curve.json``, ``selector_decisions.json``,
     issue #48), the two live-divergence projections
-    (``execution_quality.json``, ``live_divergence.json``, issue #58), and the
-    two fleet-observability projections (``canary_status.json``,
-    ``forecasts.json``, issue #195); each is written unconditionally, empty
-    where its source events are absent.
+    (``execution_quality.json``, ``live_divergence.json``, issue #58), the two
+    fleet-observability projections (``canary_status.json``,
+    ``forecasts.json``, issue #195), and the per-provider vote-cost aggregate
+    (``provider_vote_costs.json``, issue #281); each is written
+    unconditionally, empty where its source events are absent.
 
     Args:
         ledger_path: Path to the SQLite ledger database.
@@ -438,6 +545,10 @@ def rebuild(ledger_path: Path, output_dir: Path) -> None:
     )
     _write_read_model(
         output_dir.joinpath(_FORECASTS_FILENAME), forecasts_read_model(records)
+    )
+    _write_read_model(
+        output_dir.joinpath(_PROVIDER_VOTE_COSTS_FILENAME),
+        provider_vote_costs_read_model(records),
     )
 
 

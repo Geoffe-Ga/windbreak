@@ -1224,6 +1224,61 @@ class PromotionBlocked(Event):
         _derive_typed_event(self, payload)
 
 
+@dataclass(frozen=True)
+class ProviderVoteRecorded(Event):
+    """Records one ensemble member's per-vote cost outcome (issue #281).
+
+    The scheduler's ``_forecast_stage`` composition root appends one of these
+    per ensemble member driven per paper tick (per-provider vote-cost signal),
+    so a later ledger fold surfaces each provider's charged spend, abstention
+    rate, and cost-per-forecast. Like every concrete event its ``event_type``
+    is the literal class name ``"ProviderVoteRecorded"``, derived via
+    :func:`_derive_typed_event`, and every payload leaf is int/str -- never a
+    float, never ``None``.
+
+    Attributes:
+        forecast_id: The forecast this vote belongs to.
+        market_ticker: The forecast's market ticker.
+        provider: The provider identifier that cast the vote (the default
+            ensemble repeats a provider across distinct model versions).
+        model_version: The provider's pinned model version (unique per member).
+        vote_index: The zero-based index of this vote in the driven ensemble.
+        cost_micros: The vote's billed cost, in micros (charged even when the
+            vote was discarded).
+        outcome: The vote outcome (``"voted"``/``"abstained"``/``"discarded"``).
+        failure_code: The discard failure code, or ``""`` for a non-discard
+            (``"voted"``/``"abstained"``) -- never ``None``, matching this
+            module's inapplicable-string convention (see
+            :class:`CanaryVerdictRecorded` ``drift_kind``).
+    """
+
+    forecast_id: str
+    market_ticker: str
+    provider: str
+    model_version: str
+    vote_index: int
+    cost_micros: int
+    outcome: str
+    failure_code: str
+    event_type: str = field(init=False)
+    payload_schema_version: int = field(init=False)
+    payload: dict[str, object] = field(init=False)
+
+    def __post_init__(self) -> None:
+        """Assemble the payload and derive the base ``Event`` fields."""
+        payload: dict[str, object] = {
+            "forecast_id": self.forecast_id,
+            "market_ticker": self.market_ticker,
+            "provider": self.provider,
+            "model_version": self.model_version,
+            "vote_index": self.vote_index,
+            "cost_micros": self.cost_micros,
+            "outcome": self.outcome,
+            "failure_code": self.failure_code,
+        }
+        _derive_typed_event(self, payload)
+
+
 #: Maps each event_type string to its class, so a persisted envelope can be
 #: reconstructed as ``EVENT_TYPES[event_type](component=..., **data)``.
 EVENT_TYPES: dict[str, type[Event]] = {
@@ -1257,4 +1312,5 @@ EVENT_TYPES: dict[str, type[Event]] = {
     "GateComputationMismatch": GateComputationMismatch,
     "CanaryVerdictRecorded": CanaryVerdictRecorded,
     "PromotionBlocked": PromotionBlocked,
+    "ProviderVoteRecorded": ProviderVoteRecorded,
 }

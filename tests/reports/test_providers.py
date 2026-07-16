@@ -1,21 +1,31 @@
-"""Tests for `windbreak.reports.providers` (issue #195, RED).
+"""Tests for `windbreak.reports.providers` (issue #195; retyped for #281, RED).
 
-`windbreak/reports/providers.py` does not exist yet, so every import below
-fails collection with `ModuleNotFoundError: No module named
-'windbreak.reports.providers'` -- the expected Gate 1 RED state for issue
-#195.
+`windbreak/reports/providers.py` does not yet define a `ProviderReportRow`
+carrying `cost_per_forecast_micros` (issue #281 adds the field; `_row` below
+always passes it explicitly), so every test in this module fails with
+`TypeError: ProviderReportRow.__init__() got an unexpected keyword argument
+'cost_per_forecast_micros'` -- the expected Gate 1 RED state for issue #281.
 
 `render_provider_lines` is a pure renderer (mirrors
 `windbreak.evaluation.report._render_cost_meter`'s own pure, no-I/O shape)
-producing the issue's own worked-example line, verbatim:
+producing the issue #195 worked-example line, verbatim:
 
     provider=futuresearch resolved=212 brier_skill_ppm=+14200
     cost_per_forecast=n/a abstain_rate=9% canary=OK
 
-Per-provider `cost_per_forecast` is PERMANENTLY `"n/a"` (issue #281, not this
-issue: per-provider cost is not derivable from the ledger). The two FLEET
-cost figures (`cost_per_forecast_micros`/`cost_per_resolved_micros`) ARE
-derivable in aggregate and render as their own lines.
+Per-provider cost was PERMANENTLY `"n/a"` under issue #195 (per-provider cost
+attribution was issue #281, not yet landed). Issue #281 retypes
+`ProviderReportRow.abstain_rate_ppm` to `int | None` and adds
+`cost_per_forecast_micros: int | None`: `_render_row` now renders
+`cost_per_forecast=<micros>` (or `n/a` when `None`) and
+`abstain_rate=<percent>%` (or `abstain_rate=n/a` when `None`) via the
+existing `_micros_or_na` sentinel pattern -- so a not-yet-covered provider's
+row is representable WITHOUT ever routing a string `"n/a"` sentinel into
+integer division (the crash `"n/a" // 10_000` would otherwise risk): `None`,
+never a string, is the not-available sentinel. The two FLEET cost figures
+(`cost_per_forecast_micros`/`cost_per_resolved_micros` on `FleetCostSummary`,
+unaffected by this issue) ARE derivable in aggregate and render as their own
+lines, as before.
 """
 
 from __future__ import annotations
@@ -26,7 +36,8 @@ def _row(
     provider: str = "futuresearch",
     resolved: int = 212,
     brier_skill_ppm: int = 14_200,
-    abstain_rate_ppm: int = 90_000,
+    abstain_rate_ppm: int | None = 90_000,
+    cost_per_forecast_micros: int | None = None,
     canary_status: str = "OK",
 ) -> object:
     """Build one `ProviderReportRow`, deferring the import to call time."""
@@ -37,6 +48,7 @@ def _row(
         resolved=resolved,
         brier_skill_ppm=brier_skill_ppm,
         abstain_rate_ppm=abstain_rate_ppm,
+        cost_per_forecast_micros=cost_per_forecast_micros,
         canary_status=canary_status,
     )
 
@@ -137,15 +149,44 @@ def test_render_provider_lines_canary_status_renders_verbatim() -> None:
     assert "canary=ANSWER_DRIFT" in text
 
 
-def test_render_provider_lines_per_provider_cost_is_permanently_n_a() -> None:
-    """The per-provider `cost_per_forecast` field is always `n/a` -- issue
-    #281 (per-provider cost attribution), not this issue.
+def test_render_provider_lines_cost_per_forecast_renders_n_a_when_none() -> None:
+    """`cost_per_forecast_micros=None` renders `cost_per_forecast=n/a` --
+    the "not yet attributed for this provider" sentinel (issue #281's own
+    old-ledger-tolerance contract), never a crash or a fabricated `0`.
     """
     from windbreak.reports.providers import render_provider_lines
 
-    text = render_provider_lines((_row(),), fleet=_fleet())
+    text = render_provider_lines((_row(cost_per_forecast_micros=None),), fleet=_fleet())
 
     assert "cost_per_forecast=n/a" in text
+
+
+def test_render_provider_lines_cost_per_forecast_renders_real_int() -> None:
+    """`cost_per_forecast_micros=1234` renders `cost_per_forecast=1234` --
+    the real, per-provider cost-attribution figure issue #281 adds.
+    """
+    from windbreak.reports.providers import render_provider_lines
+
+    text = render_provider_lines(
+        (_row(cost_per_forecast_micros=1_234),), fleet=_fleet()
+    )
+
+    assert "cost_per_forecast=1234" in text
+    assert "cost_per_forecast=n/a" not in text
+
+
+def test_render_provider_lines_abstain_rate_renders_n_a_when_none() -> None:
+    """`abstain_rate_ppm=None` renders `abstain_rate=n/a` -- the regression
+    pin for the `"n/a" // 10_000` crash issue #281's `_micros_or_na`-style
+    `None` sentinel makes structurally impossible: `None`, never the string
+    `"n/a"`, is the not-available marker, so it is never routed into integer
+    division.
+    """
+    from windbreak.reports.providers import render_provider_lines
+
+    text = render_provider_lines((_row(abstain_rate_ppm=None),), fleet=_fleet())
+
+    assert "abstain_rate=n/a" in text
 
 
 def test_render_provider_lines_includes_fleet_cost_lines_when_present() -> None:

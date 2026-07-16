@@ -132,11 +132,10 @@ def test_rebuild_writes_only_the_documented_read_model_files(
     Every read model is written unconditionally (empty here where no source
     events are present) -- the original three plus the three PAPER-loop read
     models issue #48 adds (`positions.json`, `equity_curve.json`,
-    `selector_decisions.json`), plus the two live-divergence read models
+    `selector_decisions.json`), the two live-divergence read models
     issue #58 wires up (`execution_quality.json`, `live_divergence.json`,
-    PR #199 review fix). This currently FAILS: `rebuild()` never calls
-    `execution_quality_read_model` / `live_divergence_read_model`, so neither
-    new file is produced at all.
+    PR #199 review fix), and the per-provider vote-cost read model issue #281
+    adds (`provider_vote_costs.json`).
     """
     db_path = tmp_path / "ledger.db"
     output_dir = tmp_path / "out"
@@ -157,6 +156,7 @@ def test_rebuild_writes_only_the_documented_read_model_files(
         "live_divergence.json",
         "mode_history.json",
         "positions.json",
+        "provider_vote_costs.json",
         "selector_decisions.json",
     ]
 
