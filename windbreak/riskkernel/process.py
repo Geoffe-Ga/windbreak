@@ -444,9 +444,11 @@ class RiskKernel:
         lazily from the registered gate plan on *every* attempt (never cached),
         so a ``GatePlanChanged`` registered between two attempts is picked up by
         the next one. The remaining evidence -- ``paper_window_days`` and the
-        rest -- stays caller-supplied and must be anchored by the evidence
-        producer to the registered plan's ``paper_clock_start`` (tracked as a
-        separate follow-up).
+        rest -- stays caller-supplied; callers must run
+        :func:`windbreak.riskkernel.evidence.anchor_gate_evidence` before
+        building evidence, which re-derives ``paper_window_days`` from the
+        registered plan's ``paper_clock_start`` (SPEC S13.6). Wiring that
+        producer into the composition root is tracked separately as issue #246.
 
         Args:
             evidence: The promotion-readiness evidence snapshot.
