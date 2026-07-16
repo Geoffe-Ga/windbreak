@@ -313,9 +313,9 @@ def test_expire_due_emits_one_reservation_released_event_per_expired_reservation
 def test_approval_pipeline_veto_reserves_nothing_and_issues_no_token() -> None:
     """A vetoed intent yields no reservation, no token, and consumes no
     ledger sequence number. A fully permissive context still vetoes today,
-    since 7 of the 24 SPEC S10.3 checks remain deliberate stubs (issues
-    #32/#34), so this exercises the real veto branch without waiting on
-    those to land.
+    since 1 of the 24 SPEC S10.3 checks remains a deliberate stub
+    (`jurisdiction_product_eligibility`), so this exercises the real veto
+    branch without waiting on it to land.
     """
     ledger = ReservationLedger(InMemoryKernelLedgerWriter())
     handle = SigningKeyHandle(_KEY_MATERIAL)
@@ -348,8 +348,9 @@ def test_approval_pipeline_success_issues_a_token_and_reserves_capital(
     the pipeline-computed `expires_at` / `max_fee_micros` /
     `kernel_sequence_number`, and records an `ApprovalTokenIssued` event.
 
-    7 of the 24 SPEC S10.3 checks remain deliberate stubs until #32/#34 land,
-    so no real context yet reaches this branch unaided; the approving
+    1 of the 24 SPEC S10.3 checks remains a deliberate stub
+    (`jurisdiction_product_eligibility`), so no real context yet reaches
+    this branch unaided; the approving
     pipeline is stubbed here, mirroring
     `tests/riskkernel/test_process_isolation.py`'s identical technique, so
     the reservation/token-issuance contract is pinned before that remaining
@@ -465,9 +466,10 @@ def test_approval_pipeline_admits_exactly_k_of_n_under_headroom_contention() -> 
     issuer = TokenIssuer(handle)
     pipeline = ApprovalPipeline(ledger, issuer, config_hash="cfg-hash-1")
 
-    # Isolate the floor invariant: 7 of the 24 SPEC S10.3 checks remain
-    # deliberate stubs (issues #32/#34) that veto unconditionally, which
-    # would otherwise mask the headroom behavior this test targets.
+    # Isolate the floor invariant: 1 of the 24 SPEC S10.3 checks remains a
+    # deliberate stub (`jurisdiction_product_eligibility`) that vetoes
+    # unconditionally, which would otherwise mask the headroom behavior this
+    # test targets.
     original_evaluate_intent = checks_module.evaluate_intent
     floor_only_checks = tuple(
         check

@@ -370,8 +370,8 @@ def test_risk_kernel_evaluate_intent_records_one_intent_vetoed_event() -> None:
     and reasons) and returns a `Decision` marked both vetoed and ledgered.
 
     A fully-permissive context (see `tests/riskkernel/conftest.py`) still
-    vetoes overall: 7 of the 24 SPEC S10.3 checks remain deliberate stubs
-    (issues #30/#31 together only promote 17 of them to real logic).
+    vetoes overall: 1 of the 24 SPEC S10.3 checks remains a deliberate stub
+    (`jurisdiction_product_eligibility`, awaiting its metadata source).
     """
     kernel = RiskKernel.for_testing()
     intent = _make_intent()
@@ -402,8 +402,8 @@ def test_risk_kernel_evaluate_intent_records_intent_approved_when_not_vetoed(
     """When the check pipeline approves an intent (no veto), the kernel ledgers
     exactly one `IntentApproved` event and never a mislabeled `IntentVetoed`.
 
-    7 of the 24 SPEC S10.3 checks remain deliberate stubs after issues #30
-    and #31 (the rest are tracked in issues #32/#34), so no real context ever
+    1 of the 24 SPEC S10.3 checks remains a deliberate stub
+    (`jurisdiction_product_eligibility`), so no real context ever
     produces a fully-approving decision yet; the approving pipeline is
     stubbed here so the audit trail's correctness is pinned before that
     remaining logic lands, not rediscovered as a ledger bug after.
