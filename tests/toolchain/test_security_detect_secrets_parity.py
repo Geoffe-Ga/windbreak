@@ -51,8 +51,12 @@ _SECURITY_SCRIPT_PATH = _REPO_ROOT / "scripts" / "security.sh"
 
 #: Repo URL substring identifying the Yelp/detect-secrets pre-commit repo,
 #: reused with `test_toolchain_pins._find_repo` rather than re-parsing
-#: `.pre-commit-config.yaml` independently.
-_DETECT_SECRETS_REPO_SUBSTRING = "detect-secrets"
+#: `.pre-commit-config.yaml` independently. The constant is deliberately named
+#: without a denylist keyword: detect-secrets' KeywordDetector matches any
+#: identifier embedding ``secret``/``key``/``token`` adjacent to a quoted value
+#: (``\w*secret\w*\s*=\s*"..."``), so a name like ``_DETECT_SECRETS_...`` would
+#: flag itself as a "Secret Keyword" finding.
+_DETECT_HOOK_REPO_SUBSTRING = "detect-secrets"
 
 #: The exact command `scripts/security.sh` must run to enforce detect-secrets
 #: identically to the pre-commit hook (same hook, same `.secrets.baseline`).
@@ -89,9 +93,9 @@ def test_detect_secrets_hook_is_baseline_enforcing() -> None:
     `test_precommit_scope.py`) rather than re-parsing the pre-commit config,
     so both test modules agree on what "the detect-secrets repo" means.
     """
-    repo = _find_repo(_DETECT_SECRETS_REPO_SUBSTRING)
+    repo = _find_repo(_DETECT_HOOK_REPO_SUBSTRING)
     assert repo is not None, (
-        f"no pre-commit repo matches {_DETECT_SECRETS_REPO_SUBSTRING!r}"
+        f"no pre-commit repo matches {_DETECT_HOOK_REPO_SUBSTRING!r}"
     )
 
     hooks = {hook["id"]: hook for hook in repo["hooks"]}
