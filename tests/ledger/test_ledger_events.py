@@ -67,6 +67,17 @@ canary battery run (fleet observability, SPEC S8.4/S16 extended per-provider):
 `tolerance_ppm`, `reported_version`, and `pinned_versions` (a list of the
 provider's pinned version strings -- plural, since a provider's pin set may
 carry more than one accepted version). Growing `EVENT_TYPES` to 29 entries.
+
+Issue #244 (RED -- `PromotionBlocked` does not exist in this module yet, so
+the import below fails collection with `ImportError: cannot import name
+'PromotionBlocked' from 'windbreak.ledger.events'`) adds the optional
+fail-closed-promotion audit event the Risk Kernel may ledger when a PAPER ->
+LIVE_MICRO promotion attempt is refused before any gate is even evaluated
+(`GatePlanUnavailableError`): `source_mode`, `target_mode`, `reason`. It
+mirrors `CanaryVerdictRecorded`'s shape exactly -- `event_type` is the literal
+class name `"PromotionBlocked"`, derived via `_derive_typed_event`, and
+`payload_schema_version` is the module-wide default (`1`). Growing
+`EVENT_TYPES` to 30 entries.
 """
 
 from __future__ import annotations
@@ -102,6 +113,7 @@ from windbreak.ledger.events import (
     ModeHeartbeat,
     OrderTransitionLedgered,
     PositionsSnapshotRecorded,
+    PromotionBlocked,
     PromotionEvaluated,
     ReconciliationHalted,
     ReconciliationHealed,
@@ -340,6 +352,7 @@ def test_event_types_registry_maps_type_name_to_class() -> None:
         "GatePlanChanged": GatePlanChanged,
         "GateComputationMismatch": GateComputationMismatch,
         "CanaryVerdictRecorded": CanaryVerdictRecorded,
+        "PromotionBlocked": PromotionBlocked,
     } == EVENT_TYPES
 
 
@@ -813,3 +826,78 @@ def test_ledger_events_module_imports_no_evaluation_package() -> None:
     tree = ast.parse(source)
 
     assert _find_evaluation_imports(tree) == ()
+
+
+# --- Issue #244: PromotionBlocked, the fail-closed-promotion audit event -----
+
+
+def test_promotion_blocked_populates_event_type_and_payload() -> None:
+    """`PromotionBlocked`'s ergonomic constructor derives the full `Event`
+    contract and assembles its payload from typed fields.
+    """
+    event = PromotionBlocked(
+        component="riskkernel",
+        source_mode="PAPER",
+        target_mode="LIVE_MICRO",
+        reason="no gate plan store wired; promotion blocked (fail-closed)",
+    )
+
+    assert event.event_type == "PromotionBlocked"
+    assert event.component == "riskkernel"
+    assert event.payload_schema_version == 1
+    assert event.payload == {
+        "source_mode": "PAPER",
+        "target_mode": "LIVE_MICRO",
+        "reason": "no gate plan store wired; promotion blocked (fail-closed)",
+    }
+
+
+def test_promotion_blocked_envelope_json_has_schema_version_one() -> None:
+    """The persisted envelope stamps `schema_version == 1`, matching the
+    module-wide default every other M0 event but `ForecastCreated` uses.
+    """
+    event = PromotionBlocked(
+        component="riskkernel",
+        source_mode="PAPER",
+        target_mode="LIVE_MICRO",
+        reason="no registered gate plan; promotion blocked (fail-closed)",
+    )
+
+    envelope = json.loads(event.envelope_json)
+
+    assert envelope["schema_version"] == 1
+    assert envelope["component"] == "riskkernel"
+    assert envelope["data"] == {
+        "source_mode": "PAPER",
+        "target_mode": "LIVE_MICRO",
+        "reason": "no registered gate plan; promotion blocked (fail-closed)",
+    }
+
+
+def test_promotion_blocked_is_frozen() -> None:
+    """`PromotionBlocked`, like every other concrete event, is immutable."""
+    event = PromotionBlocked(
+        component="riskkernel",
+        source_mode="PAPER",
+        target_mode="LIVE_MICRO",
+        reason="no gate plan store wired; promotion blocked (fail-closed)",
+    )
+
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        event.reason = "changed"  # type: ignore[misc]
+
+
+def test_event_types_registry_round_trips_promotion_blocked() -> None:
+    """A registry lookup plus persisted `data` reconstructs `PromotionBlocked`."""
+    original = PromotionBlocked(
+        component="riskkernel",
+        source_mode="PAPER",
+        target_mode="LIVE_MICRO",
+        reason="registered gate plan is unreadable; promotion blocked (fail-closed)",
+    )
+    envelope = json.loads(original.envelope_json)
+
+    rebuilt_cls = EVENT_TYPES[original.event_type]
+    rebuilt = rebuilt_cls(component=envelope["component"], **envelope["data"])
+
+    assert rebuilt == original

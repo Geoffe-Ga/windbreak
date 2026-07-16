@@ -1184,6 +1184,46 @@ class CanaryVerdictRecorded(Event):
         _derive_typed_event(self, payload)
 
 
+@dataclass(frozen=True)
+class PromotionBlocked(Event):
+    """Records a fail-closed PAPER->LIVE_MICRO promotion attempt (issue #244).
+
+    Emitted when a PAPER promotion is refused before any gate is evaluated
+    because no readable pre-registered gate plan was available (the fail-closed
+    path of issue #185, whose deliberate no-event default this event opts into
+    per follow-up #185). Like every concrete event its ``event_type`` is the
+    literal class name ``"PromotionBlocked"``, derived via
+    :func:`_derive_typed_event`, and every payload leaf is a ``str``. It is only
+    emitted when the Risk Kernel is opted in via its ``ledger_blocked_promotions``
+    flag; the default kernel fails closed silently as before.
+
+    Attributes:
+        source_mode: The mode promotion was requested from (``Mode.name``;
+            ``"PAPER"`` on the only path that emits this event).
+        target_mode: The mode promotion was toward (``Mode.name``;
+            ``"LIVE_MICRO"``), stamped from the ladder even though the live gate
+            -- and thus its ``.target`` -- could not be built.
+        reason: The human-readable fail-closed message from the raised
+            ``GatePlanUnavailableError`` (e.g. why no plan was readable).
+    """
+
+    source_mode: str
+    target_mode: str
+    reason: str
+    event_type: str = field(init=False)
+    payload_schema_version: int = field(init=False)
+    payload: dict[str, object] = field(init=False)
+
+    def __post_init__(self) -> None:
+        """Assemble the payload and derive the base ``Event`` fields."""
+        payload: dict[str, object] = {
+            "source_mode": self.source_mode,
+            "target_mode": self.target_mode,
+            "reason": self.reason,
+        }
+        _derive_typed_event(self, payload)
+
+
 #: Maps each event_type string to its class, so a persisted envelope can be
 #: reconstructed as ``EVENT_TYPES[event_type](component=..., **data)``.
 EVENT_TYPES: dict[str, type[Event]] = {
@@ -1216,4 +1256,5 @@ EVENT_TYPES: dict[str, type[Event]] = {
     "GatePlanChanged": GatePlanChanged,
     "GateComputationMismatch": GateComputationMismatch,
     "CanaryVerdictRecorded": CanaryVerdictRecorded,
+    "PromotionBlocked": PromotionBlocked,
 }
