@@ -31,12 +31,29 @@ YAML `--config` file points `ops.state_dir` at a `tmp_path` too -- so no test
 in this module ever touches the real `~/.local/share/windbreak`, where a KILL
 file dropped by a previous manual run or a concurrent test process could
 otherwise pollute this or a developer's environment.
+
+Issue #235 (replay durable kill state on `windbreak run --process riskkernel`
+startup) extends this module with the `--ledger-path` half of the story:
+`_build_risk_kernel` gains a keyword-only `ledger_store` parameter that, when
+given, persists kernel events to the real ledger (via a new
+`PersistingKernelLedgerWriter`) and replays durable override/kill state from
+it via `RiskKernel.from_events`/`KillSwitch.from_events` -- so an engaged kill
+survives a `windbreak run --process riskkernel` restart even after its
+belt-and-suspenders `KILL` file is deleted. None of this exists on the real,
+not-yet-updated `windbreak/main.py` yet: `_build_risk_kernel(config,
+ledger_store=...)` fails with `TypeError: _build_risk_kernel() got an
+unexpected keyword argument 'ledger_store'`, and every persistence/replay
+assertion below fails instead as a plain `AssertionError` against today's
+`LoggingKernelLedgerWriter`-only, replay-free behavior -- both are the
+expected Gate 1 RED state for issue #235, independent of (and in addition to)
+whatever issue #144's tests above already pin.
 """
 
 from __future__ import annotations
 
 import dataclasses
 import json
+import sqlite3
 from typing import TYPE_CHECKING
 
 import pytest
@@ -44,6 +61,8 @@ import yaml
 
 from tests.riskkernel.conftest import make_context, make_intent
 from windbreak.config import OpsConfig, RiskConfig, WindbreakConfig
+from windbreak.ledger.events import KillEngaged, KillReArmed
+from windbreak.ledger.store import SqliteLedgerStore
 from windbreak.main import _build_risk_kernel, main
 from windbreak.riskkernel.kill import KILL_FILENAME
 from windbreak.riskkernel.modes import Mode
@@ -51,6 +70,10 @@ from windbreak.riskkernel.verification import VerificationOutcome
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+#: A fixed epoch for every seeded `KillEngaged` below, so this module never
+#: depends on wall-clock time.
+_FIXED_EPOCH_S = 1_700_000_000
 
 
 def _config_with_state_dir(state_dir: Path, **overrides: object) -> WindbreakConfig:
@@ -310,3 +333,234 @@ def test_run_process_riskkernel_accepts_a_fractional_heartbeat_interval(
     )
 
     assert exit_code == 0
+
+
+# --- Persistence: kernel events reach the real ledger (issue #235) -------------
+
+
+@pytest.mark.timeout(30)
+def test_run_process_riskkernel_persists_kernel_events_to_the_real_ledger(
+    tmp_path: Path,
+) -> None:
+    """`windbreak run --process riskkernel --ledger-path P` persists the
+    kernel's own `ModeHeartbeat` events to the real ledger, landing after the
+    `ConfigLoaded` row(s) `_load_and_ledger_config` writes first -- and the
+    resulting chain verifies cleanly. This proves the running kernel now
+    writes through a real `LedgerStore` rather than only the
+    `LoggingKernelLedgerWriter` stand-in, whose events never reach disk.
+    """
+    ledger_path = tmp_path / "ledger.db"
+    config_path = tmp_path / "config.yaml"
+    _write_state_dir_config(config_path, tmp_path)
+
+    exit_code = main(
+        [
+            "run",
+            "--process",
+            "riskkernel",
+            "--ledger-path",
+            str(ledger_path),
+            "--max-beats",
+            "1",
+            "--heartbeat-interval",
+            "0",
+            "--config",
+            str(config_path),
+        ]
+    )
+
+    assert exit_code == 0
+    store = SqliteLedgerStore(ledger_path)
+    try:
+        store.verify_chain()
+        records = store.read_all()
+    finally:
+        store.close()
+    event_types = [record.event_type for record in records]
+    assert "ConfigLoaded" in event_types
+    assert "ModeHeartbeat" in event_types
+    assert event_types.index("ModeHeartbeat") > event_types.index("ConfigLoaded")
+    heartbeat_record = next(
+        record for record in records if record.event_type == "ModeHeartbeat"
+    )
+    assert heartbeat_record.component == "riskkernel"
+
+
+# --- Headline AC: a KILLED state survives a restart via ledger replay ----------
+
+
+@pytest.mark.timeout(30)
+def test_run_process_riskkernel_replays_killed_state_across_restart(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A kill engaged during run 1 (via a dropped `KILL` file) is replayed
+    from the ledger at run 2's startup, even after the `KILL` file is deleted
+    before run 2 begins: run 2's *first* heartbeat line already reports
+    `mode=KILLED heartbeat beat=1`, proving ledger replay -- not the file
+    watcher, which sees no `KILL` file on this run -- restored the kill.
+    """
+    ledger_path = tmp_path / "ledger.db"
+    config_path = tmp_path / "config.yaml"
+    _write_state_dir_config(config_path, tmp_path)
+    (tmp_path / KILL_FILENAME).write_text("", encoding="utf-8")
+
+    run_one_exit_code = main(
+        [
+            "run",
+            "--process",
+            "riskkernel",
+            "--ledger-path",
+            str(ledger_path),
+            "--max-beats",
+            "1",
+            "--heartbeat-interval",
+            "0",
+            "--config",
+            str(config_path),
+        ]
+    )
+    assert run_one_exit_code == 0
+    capsys.readouterr()  # discard run 1's output; only run 2's is asserted below
+
+    store = SqliteLedgerStore(ledger_path)
+    try:
+        run_one_event_types = [record.event_type for record in store.read_all()]
+    finally:
+        store.close()
+    assert "KillEngaged" in run_one_event_types
+
+    (tmp_path / KILL_FILENAME).unlink()
+
+    run_two_exit_code = main(
+        [
+            "run",
+            "--process",
+            "riskkernel",
+            "--ledger-path",
+            str(ledger_path),
+            "--max-beats",
+            "1",
+            "--heartbeat-interval",
+            "0",
+            "--config",
+            str(config_path),
+        ]
+    )
+
+    assert run_two_exit_code == 0
+    payloads = _json_lines(capsys.readouterr().err)
+    heartbeat_payload = next(
+        payload
+        for payload in payloads
+        if str(payload.get("msg", "")) == "mode=KILLED heartbeat beat=1"
+    )
+    assert heartbeat_payload["component"] == "riskkernel"
+
+
+# --- Rearm pair: replayed as not-killed, but the sequence is preserved ---------
+
+
+def test_build_risk_kernel_over_rearmed_history_stays_research_but_keeps_sequence(
+    tmp_path: Path,
+) -> None:
+    """A ledger seeded with a matching `KillEngaged`/`KillReArmed` pair
+    replays as *not killed*: `_build_risk_kernel(config, ledger_store=...)`
+    rebuilds a fresh-`RESEARCH` kernel. But the kill switch's
+    `active_kill_sequence` still reflects the ledgered kill (unconditionally
+    restored, per `KillSwitch.from_events`), so a later kill increments
+    monotonically rather than resetting back to 1.
+    """
+    ledger_path = tmp_path / "ledger.db"
+    seed_store = SqliteLedgerStore(ledger_path)
+    try:
+        seed_store.append(
+            KillEngaged(
+                component="riskkernel",
+                trigger="CLI",
+                kill_sequence=1,
+                epoch=_FIXED_EPOCH_S,
+            )
+        )
+        seed_store.append(KillReArmed(component="riskkernel", kill_sequence=1))
+    finally:
+        seed_store.close()
+
+    config = _config_with_state_dir(tmp_path)
+    ledger_store = SqliteLedgerStore(ledger_path)
+    try:
+        kernel, integration = _build_risk_kernel(config, ledger_store=ledger_store)
+    finally:
+        ledger_store.close()
+
+    assert kernel.mode is Mode.RESEARCH
+    assert integration.switch.active_kill_sequence == 1
+
+
+# --- Fail-closed: a tampered ledger never enters the loop -----------------------
+
+
+@pytest.mark.timeout(30)
+def test_run_process_riskkernel_fails_closed_on_a_tampered_ledger(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A ledger row tampered between two runs fails `verify_chain()` at
+    kernel-build time: `run --process riskkernel --ledger-path P` returns 1,
+    logs a `CRITICAL` `FATAL` line, and never enters the heartbeat loop --
+    zero heartbeat lines are emitted, mirroring the uncreatable-state-dir
+    fail-closed startup path above.
+    """
+    ledger_path = tmp_path / "ledger.db"
+    config_path = tmp_path / "config.yaml"
+    _write_state_dir_config(config_path, tmp_path)
+
+    seed_exit_code = main(
+        [
+            "run",
+            "--process",
+            "riskkernel",
+            "--ledger-path",
+            str(ledger_path),
+            "--max-beats",
+            "1",
+            "--heartbeat-interval",
+            "0",
+            "--config",
+            str(config_path),
+        ]
+    )
+    assert seed_exit_code == 0
+    capsys.readouterr()
+
+    connection = sqlite3.connect(ledger_path)
+    try:
+        connection.execute(
+            "UPDATE ledger SET event_hash = ? WHERE sequence_number = 1",
+            ("0" * 64,),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    exit_code = main(
+        [
+            "run",
+            "--process",
+            "riskkernel",
+            "--ledger-path",
+            str(ledger_path),
+            "--max-beats",
+            "1",
+            "--heartbeat-interval",
+            "0",
+            "--config",
+            str(config_path),
+        ]
+    )
+
+    assert exit_code == 1
+    payloads = _json_lines(capsys.readouterr().err)
+    assert any(
+        payload.get("level") == "CRITICAL" and "FATAL" in str(payload.get("msg", ""))
+        for payload in payloads
+    )
+    assert not any("heartbeat" in str(payload.get("msg", "")) for payload in payloads)

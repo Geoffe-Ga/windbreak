@@ -20,15 +20,13 @@ import json
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, cast
 
-from windbreak.ledger.events import GENESIS_PREV_HASH
+from windbreak.ledger.events import GENESIS_PREV_HASH, Event
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable
     from pathlib import Path
-
-    from windbreak.ledger.events import Event
 
 #: DDL creating the eight-column §12 ledger row if it does not yet exist.
 _CREATE_TABLE_SQL = (
@@ -126,6 +124,69 @@ class LedgerRecord:
     payload_schema_version: int
     prev_hash: str
     event_hash: str
+
+
+def events_from_records(records: Iterable[LedgerRecord]) -> tuple[Event, ...]:
+    """Reconstruct base :class:`~windbreak.ledger.events.Event` objects from rows.
+
+    The read-side companion of :meth:`SqliteLedgerStore.append`: each persisted
+    :class:`LedgerRecord` carries a canonical envelope JSON of
+    ``{"component", "data", "schema_version"}``, from which a base ``Event`` is
+    rebuilt so a restarting :class:`~windbreak.riskkernel.process.RiskKernel` or
+    :class:`~windbreak.riskkernel.kill.KillSwitch` can fold real ledger history
+    (issue #235).
+
+    The result is a materialized tuple, never a lazy generator: a folding caller
+    (e.g. ``RiskKernel.from_events``) walks the history more than once, and an
+    exhausted single-pass iterator would silently fold to nothing on the second
+    walk -- failing open on a safety-critical replay. Reconstruction is
+    fail-closed: a malformed envelope (not a mapping, or missing any of
+    ``component`` / ``data`` / ``schema_version``) raises ``ValueError`` rather
+    than fabricating a wrong event, chaining the underlying decode/lookup error
+    as its cause.
+
+    Args:
+        records: The persisted records to reconstruct events from, in order.
+
+    Returns:
+        The reconstructed events as a tuple, one per input record, in order.
+
+    Raises:
+        ValueError: If any record's envelope is malformed or missing a required
+            key (fail-closed).
+    """
+    return tuple(_event_from_record(record) for record in records)
+
+
+def _event_from_record(record: LedgerRecord) -> Event:
+    """Reconstruct one base ``Event`` from a persisted record's envelope.
+
+    Args:
+        record: The record whose ``payload_json`` envelope is rebuilt into an
+            ``Event``.
+
+    Returns:
+        The reconstructed :class:`~windbreak.ledger.events.Event`.
+
+    Raises:
+        ValueError: If the envelope is malformed (not a mapping) or missing any
+            of ``component`` / ``data`` / ``schema_version`` (fail-closed),
+            chaining the underlying error as its cause.
+    """
+    try:
+        envelope: dict[str, object] = json.loads(record.payload_json)
+        component = envelope["component"]
+        payload = envelope["data"]
+        schema_version = envelope["schema_version"]
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        msg = f"malformed ledger envelope at sequence_number={record.sequence_number}"
+        raise ValueError(msg) from exc
+    return Event(
+        event_type=record.event_type,
+        component=cast("str", component),
+        payload_schema_version=cast("int", schema_version),
+        payload=cast("dict[str, object]", payload),
+    )
 
 
 @dataclass(frozen=True)

@@ -41,9 +41,10 @@ production until a verifier is wired (tracked as issue #236), leaving the
 operator ``KILL`` file as today's live trigger; ``windbreak/riskkernel/
 process.py``'s ``main()`` (reachable only via ``python -m
 windbreak.riskkernel``, a dev-only path) still runs without kill wiring; and
-replaying an existing ``KILLED`` state from the ledger on startup is not yet
-wired into that composition (tracked as issue #235) -- until then, the on-disk
-``KILL`` file below remains the mechanism that survives a restart.
+replaying an existing ``KILLED`` state from the ledger on startup is now wired
+into that composition (issue #235) whenever ``windbreak run --process
+riskkernel`` is given a ``--ledger-path``, with the on-disk ``KILL`` file below
+kept as the belt-and-suspenders restart measure alongside it.
 
 **Durable kill state (issue #123):** kill state need not live only in process
 memory, and the ``KILL`` file need not be the sole interim restart measure. The
@@ -51,12 +52,11 @@ kill/re-arm ledger is authoritative: :func:`kill_state_in` folds a recorded
 history into a :class:`ReplayedKillState`, and :meth:`KillSwitch.from_events`
 (with :meth:`~windbreak.riskkernel.process.RiskKernel.from_events`) rebuilds a
 switch already at its restored kill sequence and, on an unrearmed history, a
-kernel already ``KILLED``. Ledger replay is thus designed to be the *primary*
-durable mechanism, with the ``KILL`` file as belt-and-suspenders -- but
-``_build_risk_kernel`` does not yet call ``from_events`` on startup (that
-composition is issue #235), so today the on-disk ``KILL`` file is what
-actually survives a ``windbreak run`` restart in production; an operator's
-``KILL`` drop is not lost, it just isn't yet replayed from the ledger.
+kernel already ``KILLED``. Ledger replay is thus the *primary* durable
+mechanism, with the ``KILL`` file as belt-and-suspenders: ``_build_risk_kernel``
+now calls ``from_events`` on startup over a supplied ledger (issue #235), so an
+engaged kill survives a ``windbreak run --process riskkernel --ledger-path``
+restart even after the operator's ``KILL`` file is deleted.
 
 Everything on this path is float-free (SPEC S6.1): epoch seconds and kill
 sequence numbers are ``int`` only.

@@ -32,6 +32,15 @@ the `INSERT` all run for real, then forces `COMMIT` *itself* to fail, pinning
 that `append` still ROLLBACKs -- rather than COMMITs -- the already-inserted
 row. A mutant swapping `append`'s except-clause `ROLLBACK` for `COMMIT` would
 persist that row and so fail this test's snapshot-equality assertion.
+
+Issue #235 (replay durable kill state on `windbreak run --process riskkernel`
+startup) adds `events_from_records`, the read-side companion this module does
+not yet define: reconstructing base `Event`s from persisted `LedgerRecord`s so
+a rebuilt `RiskKernel`/`KillSwitch` can fold real ledger history. It does not
+exist on the real, not-yet-updated `store.py` module yet, so importing it
+below fails collection with `ImportError: cannot import name
+'events_from_records' from 'windbreak.ledger.store'` -- the expected Gate 1
+RED state for issue #235.
 """
 
 from __future__ import annotations
@@ -44,12 +53,18 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from windbreak.ledger.events import GENESIS_PREV_HASH, ConfigLoaded, ModeHeartbeat
+from windbreak.ledger.events import (
+    GENESIS_PREV_HASH,
+    ConfigLoaded,
+    ModeHeartbeat,
+    canonical_json,
+)
 from windbreak.ledger.store import (
     ChainHead,
     LedgerRecord,
     SqliteLedgerStore,
     compute_event_hash,
+    events_from_records,
 )
 
 if TYPE_CHECKING:
@@ -527,3 +542,64 @@ def test_append_rolls_back_when_commit_itself_fails_after_insert(
     assert recovery_sequence == 2
     assert [record.sequence_number for record in store.read_all()] == [1, 2]
     store.verify_chain()
+
+
+# --- events_from_records: reconstructing Events from persisted rows (#235) -----
+
+
+def test_events_from_records_round_trips_a_typed_events_fields(
+    ledger_store_factory: Callable[..., SqliteLedgerStore],
+) -> None:
+    """`events_from_records` reconstructs a base `Event` whose `event_type`,
+    `component`, `payload_schema_version`, and `payload` exactly match the
+    original typed event appended through the store -- the round trip issue
+    #235's ledger-replay startup path depends on.
+    """
+    store = ledger_store_factory()
+    original = ModeHeartbeat(component="riskkernel", mode="RESEARCH", beat=1)
+    store.append(original)
+
+    events = events_from_records(store.read_all())
+
+    assert isinstance(events, tuple)
+    assert len(events) == 1
+    rebuilt = events[0]
+    assert rebuilt.event_type == original.event_type
+    assert rebuilt.component == original.component
+    assert rebuilt.payload_schema_version == original.payload_schema_version
+    assert rebuilt.payload == original.payload
+
+
+def test_events_from_records_of_an_empty_ledger_returns_an_empty_tuple(
+    ledger_store_factory: Callable[..., SqliteLedgerStore],
+) -> None:
+    """An empty ledger's records fold to an empty tuple, not `None` or a
+    list -- so a caller can iterate the result unconditionally.
+    """
+    store = ledger_store_factory()
+
+    assert events_from_records(store.read_all()) == ()
+
+
+def test_events_from_records_raises_value_error_on_an_envelope_missing_data() -> None:
+    """A record whose envelope is missing the required `"data"` key raises
+    `ValueError` -- the fail-closed contract issue #235's kill-replay startup
+    path depends on: a corrupt or malformed envelope must never silently
+    reconstruct a wrong `Event` (e.g. one with a fabricated empty payload).
+    """
+    malformed_payload_json = canonical_json(
+        {"component": "riskkernel", "schema_version": 1}
+    )
+    record = LedgerRecord(
+        sequence_number=1,
+        event_type="ModeHeartbeat",
+        created_at="2024-01-01T00:00:00.000000+00:00",
+        component="riskkernel",
+        payload_json=malformed_payload_json,
+        payload_schema_version=1,
+        prev_hash=GENESIS_PREV_HASH,
+        event_hash="a" * 64,
+    )
+
+    with pytest.raises(ValueError):
+        events_from_records([record])

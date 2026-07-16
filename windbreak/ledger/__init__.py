@@ -73,6 +73,7 @@ from windbreak.ledger.store import (
     LedgerStore,
     SqliteLedgerStore,
     compute_event_hash,
+    events_from_records,
 )
 
 __all__ = [
@@ -107,6 +108,7 @@ __all__ = [
     "anchor_head",
     "canonical_json",
     "compute_event_hash",
+    "events_from_records",
     "read_anchors",
     "rebuild",
     "rebuild_command",
