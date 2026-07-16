@@ -242,6 +242,181 @@ def test_render_weekly_report_embeds_provider_lines_verbatim_when_supplied() -> 
 
 
 # ---------------------------------------------------------------------------
+# 2c. render_weekly_report: the equity/position/decision line params
+#     (issue #255) embed verbatim under their existing #48 stub headings,
+#     mirroring the `## Providers` embed-or-fallback contract (2b above) for
+#     the three ORIGINAL stub sections instead of a fourth new one. Every
+#     call site above omits these three new keywords too, so none of the
+#     "No data yet." occurrence-count assertions in sections 1-2 change: the
+#     three stub headings already contributed exactly one "No data yet." each
+#     to those counts, and still do when their new param defaults to `None`.
+# ---------------------------------------------------------------------------
+
+
+def test_render_weekly_report_equity_lines_section_defaults_to_no_data_yet() -> None:
+    """With no `equity_lines` supplied, `## Equity vs floor` still renders the
+    shared `No data yet.` fallback -- never an error or an omitted heading.
+    """
+    from windbreak.evaluation.report import render_weekly_report
+
+    body = render_weekly_report(today=date(2024, 3, 4), evaluation=None, costs=None)
+
+    section = body.split("## Equity vs floor", 1)[1].split("## Positions", 1)[0]
+    assert "No data yet." in section
+
+
+def test_render_weekly_report_embeds_equity_lines_verbatim_when_supplied() -> None:
+    """A supplied `equity_lines` string is embedded verbatim under `## Equity
+    vs floor`, exactly like `provider_lines` is embedded under `## Providers`.
+    """
+    from windbreak.evaluation.report import render_weekly_report
+
+    equity_lines = (
+        "equity_samples=1\n"
+        "epoch_s=1700 equity_micros=11000000 floor_micros=10000000 "
+        "buffer_micros=+1000000"
+    )
+
+    body = render_weekly_report(
+        today=date(2024, 3, 4),
+        evaluation=None,
+        costs=None,
+        equity_lines=equity_lines,
+    )
+
+    section = body.split("## Equity vs floor", 1)[1].split("## Positions", 1)[0]
+    assert equity_lines in section
+    assert "No data yet." not in section
+
+
+def test_render_weekly_report_position_lines_section_defaults_to_no_data_yet() -> None:
+    """With no `position_lines` supplied, `## Positions` still renders the
+    shared `No data yet.` fallback.
+    """
+    from windbreak.evaluation.report import render_weekly_report
+
+    body = render_weekly_report(today=date(2024, 3, 4), evaluation=None, costs=None)
+
+    section = body.split("## Positions", 1)[1].split("## Decisions", 1)[0]
+    assert "No data yet." in section
+
+
+def test_render_weekly_report_embeds_position_lines_verbatim_when_supplied() -> None:
+    """A supplied `position_lines` string is embedded verbatim under
+    `## Positions`.
+    """
+    from windbreak.evaluation.report import render_weekly_report
+
+    position_lines = (
+        "snapshots=1\n"
+        "open_positions=1\n"
+        "ticker=MKT-DEEP quantity_centis=200 average_price_pips=4600"
+    )
+
+    body = render_weekly_report(
+        today=date(2024, 3, 4),
+        evaluation=None,
+        costs=None,
+        position_lines=position_lines,
+    )
+
+    section = body.split("## Positions", 1)[1].split("## Decisions", 1)[0]
+    assert position_lines in section
+    assert "No data yet." not in section
+
+
+def test_render_weekly_report_decision_lines_section_defaults_to_no_data_yet() -> None:
+    """With no `decision_lines` supplied, `## Decisions` still renders the
+    shared `No data yet.` fallback.
+    """
+    from windbreak.evaluation.report import render_weekly_report
+
+    body = render_weekly_report(today=date(2024, 3, 4), evaluation=None, costs=None)
+
+    section = body.split("## Decisions", 1)[1].split("## Evaluation", 1)[0]
+    assert "No data yet." in section
+
+
+def test_render_weekly_report_embeds_decision_lines_verbatim_when_supplied() -> None:
+    """A supplied `decision_lines` string is embedded verbatim under
+    `## Decisions`.
+    """
+    from windbreak.evaluation.report import render_weekly_report
+
+    decision_lines = (
+        "decision_events=1\n"
+        "event=SelectorDecisionRecorded subject=MKT-DEEP "
+        "reasons=net_edge_below_minimum"
+    )
+
+    body = render_weekly_report(
+        today=date(2024, 3, 4),
+        evaluation=None,
+        costs=None,
+        decision_lines=decision_lines,
+    )
+
+    section = body.split("## Decisions", 1)[1].split("## Evaluation", 1)[0]
+    assert decision_lines in section
+    assert "No data yet." not in section
+
+
+def test_render_weekly_report_equity_position_decision_lines_are_independent() -> None:
+    """The three new params are independent, not all-or-nothing: supplying
+    only `equity_lines` leaves `## Positions`/`## Decisions` on their own
+    fallback, and supplying all three lands each body under its own heading
+    with no cross-contamination between sections.
+    """
+    from windbreak.evaluation.report import render_weekly_report
+
+    today = date(2024, 3, 4)
+
+    equity_only_body = render_weekly_report(
+        today=today, evaluation=None, costs=None, equity_lines="equity_samples=0"
+    )
+    equity_section = equity_only_body.split("## Equity vs floor", 1)[1].split(
+        "## Positions", 1
+    )[0]
+    positions_section = equity_only_body.split("## Positions", 1)[1].split(
+        "## Decisions", 1
+    )[0]
+    decisions_section = equity_only_body.split("## Decisions", 1)[1].split(
+        "## Evaluation", 1
+    )[0]
+    assert "equity_samples=0" in equity_section
+    assert "No data yet." not in equity_section
+    assert "No data yet." in positions_section
+    assert "No data yet." in decisions_section
+
+    all_three_body = render_weekly_report(
+        today=today,
+        evaluation=None,
+        costs=None,
+        equity_lines="equity_samples=0",
+        position_lines="snapshots=0",
+        decision_lines="decision_events=0",
+    )
+    equity_section = all_three_body.split("## Equity vs floor", 1)[1].split(
+        "## Positions", 1
+    )[0]
+    positions_section = all_three_body.split("## Positions", 1)[1].split(
+        "## Decisions", 1
+    )[0]
+    decisions_section = all_three_body.split("## Decisions", 1)[1].split(
+        "## Evaluation", 1
+    )[0]
+    assert "equity_samples=0" in equity_section
+    assert "snapshots=0" not in equity_section
+    assert "snapshots=0" in positions_section
+    assert "decision_events=0" not in positions_section
+    assert "decision_events=0" in decisions_section
+    assert "equity_samples=0" not in decisions_section
+    assert "No data yet." not in equity_section
+    assert "No data yet." not in positions_section
+    assert "No data yet." not in decisions_section
+
+
+# ---------------------------------------------------------------------------
 # 3. generate_weekly_report: writes the dated file; ISO-week idempotence.
 # ---------------------------------------------------------------------------
 

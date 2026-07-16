@@ -626,10 +626,6 @@ def run_evaluation(*, fixture_path: Path) -> EvaluationReport:
 #: empty section read the same way.
 _NO_DATA_YET = "No data yet."
 
-#: The three #48 stub headings preserved verbatim in every weekly report; this
-#: issue does not wire their data, so each still renders :data:`_NO_DATA_YET`.
-_STUB_SECTION_HEADINGS = ("Equity vs floor", "Positions", "Decisions")
-
 
 def _render_weekly_section(heading: str, body: str) -> str:
     """Render one ``## heading`` weekly-report section with its body.
@@ -688,13 +684,19 @@ def render_weekly_report(
     evaluation: EvaluationReport | None,
     costs: CostMeter | None,
     provider_lines: str | None = None,
+    equity_lines: str | None = None,
+    position_lines: str | None = None,
+    decision_lines: str | None = None,
 ) -> str:
     """Render the weekly PAPER-loop report as markdown (pure, no I/O).
 
-    Preserves the #48 stub's dated title and its three ``No data yet.`` sections
-    (this issue does not wire that data), then appends an ``## Evaluation``
-    section (the verbatim :meth:`EvaluationReport.render_text` when ``evaluation``
-    is not ``None``, else the fallback), a ``## Cost meter`` section (the
+    Preserves the #48 stub's dated title and its three original headings
+    (``## Equity vs floor``, ``## Positions``, ``## Decisions``), each embedding
+    its pre-rendered body verbatim when supplied else the ``No data yet.``
+    fallback (issue #255, mirroring the ``## Providers`` embed-or-fallback
+    contract). It then appends an ``## Evaluation`` section (the verbatim
+    :meth:`EvaluationReport.render_text` when ``evaluation`` is not ``None``,
+    else the fallback), a ``## Cost meter`` section (the
     :class:`~windbreak.evaluation.costs.CostMeter`'s total research spend, its
     three denominator counts, and its three per-unit money fields, else the
     fallback), and a ``## Providers`` section (the pre-rendered
@@ -708,16 +710,29 @@ def render_weekly_report(
         provider_lines: The pre-rendered fleet-observability provider section
             body (from :func:`windbreak.reports.providers.render_provider_lines`)
             embedded verbatim, or ``None`` for the ``No data yet.`` fallback.
+        equity_lines: The pre-rendered ``## Equity vs floor`` body (from
+            :func:`windbreak.reports.sections.render_equity_lines`) embedded
+            verbatim, or ``None`` for the ``No data yet.`` fallback.
+        position_lines: The pre-rendered ``## Positions`` body (from
+            :func:`windbreak.reports.sections.render_position_lines`) embedded
+            verbatim, or ``None`` for the ``No data yet.`` fallback.
+        decision_lines: The pre-rendered ``## Decisions`` body (from
+            :func:`windbreak.reports.sections.render_decision_lines`) embedded
+            verbatim, or ``None`` for the ``No data yet.`` fallback.
 
     Returns:
         The rendered markdown body.
     """
     stamp = today.isoformat()
-    sections = [f"# Weekly report {stamp}"]
-    sections.extend(
-        _render_weekly_section(heading, _NO_DATA_YET)
-        for heading in _STUB_SECTION_HEADINGS
-    )
+    equity_body = _NO_DATA_YET if equity_lines is None else equity_lines
+    position_body = _NO_DATA_YET if position_lines is None else position_lines
+    decision_body = _NO_DATA_YET if decision_lines is None else decision_lines
+    sections = [
+        f"# Weekly report {stamp}",
+        _render_weekly_section("Equity vs floor", equity_body),
+        _render_weekly_section("Positions", position_body),
+        _render_weekly_section("Decisions", decision_body),
+    ]
     evaluation_body = _NO_DATA_YET if evaluation is None else evaluation.render_text()
     sections.append(_render_weekly_section("Evaluation", evaluation_body))
     cost_body = _NO_DATA_YET if costs is None else _render_cost_meter(costs)
