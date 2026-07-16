@@ -1133,6 +1133,57 @@ class GateComputationMismatch(Event):
         _derive_typed_event(self, payload)
 
 
+@dataclass(frozen=True)
+class CanaryVerdictRecorded(Event):
+    """Records one provider's canary verdict (fleet observability, issue #195).
+
+    The scheduler's ``run_canaries`` composition root appends one of these per
+    provider per canary battery run (SPEC S8.4/S16 extended per-provider), so a
+    later ledger fold surfaces each provider's live drift status. Like every
+    concrete event its ``event_type`` is the literal class name
+    ``"CanaryVerdictRecorded"``, derived via :func:`_derive_typed_event`, and
+    every payload leaf is int/str/bool/list -- never a float.
+
+    Attributes:
+        provider: The provider this verdict is for.
+        status: The verdict status
+            (``ProviderCanaryStatus.name``: ``"OK"``/``"ANSWER_DRIFT"``/
+            ``"VERSION_DRIFT"``).
+        drift_kind: The drift kind (``"answer"``, ``"version"``, or ``""`` for a
+            clean ``OK`` verdict -- never ``None``, matching this module's
+            inapplicable-string convention).
+        drift_score_ppm: The scored answer-drift distance, in ppm.
+        tolerance_ppm: The drift tolerance the score was gated against, in ppm.
+        reported_version: The forecaster version the provider reported.
+        pinned_versions: The provider's operator-pinned version strings (plural:
+            a pin set may accept more than one accepted version).
+    """
+
+    provider: str
+    status: str
+    drift_kind: str
+    drift_score_ppm: int
+    tolerance_ppm: int
+    reported_version: str
+    pinned_versions: list[str]
+    event_type: str = field(init=False)
+    payload_schema_version: int = field(init=False)
+    payload: dict[str, object] = field(init=False)
+
+    def __post_init__(self) -> None:
+        """Assemble the payload and derive the base ``Event`` fields."""
+        payload: dict[str, object] = {
+            "provider": self.provider,
+            "status": self.status,
+            "drift_kind": self.drift_kind,
+            "drift_score_ppm": self.drift_score_ppm,
+            "tolerance_ppm": self.tolerance_ppm,
+            "reported_version": self.reported_version,
+            "pinned_versions": self.pinned_versions,
+        }
+        _derive_typed_event(self, payload)
+
+
 #: Maps each event_type string to its class, so a persisted envelope can be
 #: reconstructed as ``EVENT_TYPES[event_type](component=..., **data)``.
 EVENT_TYPES: dict[str, type[Event]] = {
@@ -1164,4 +1215,5 @@ EVENT_TYPES: dict[str, type[Event]] = {
     "GatePlanRegistered": GatePlanRegistered,
     "GatePlanChanged": GatePlanChanged,
     "GateComputationMismatch": GateComputationMismatch,
+    "CanaryVerdictRecorded": CanaryVerdictRecorded,
 }
