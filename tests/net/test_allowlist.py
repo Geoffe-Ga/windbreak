@@ -78,6 +78,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from windbreak.config.schema import (
+    EnsembleMemberConfig,
     ForecastConfig,
     ModelRef,
     ResearchSettings,
@@ -283,6 +284,118 @@ def test_allowlist_from_config_forwards_the_recorder() -> None:
         allowlist.require("https://evil.example.com/steal")
 
     assert any(event.event_type == "EgressDenied" for event in recorder.events)
+
+
+# --- allowlist_from_config: vote_ensemble provider derivation (issue #240) -----
+#
+# Issue #240 documents the split between the legacy triage/promotion
+# ``ForecastConfig.ensemble`` (``ModelRef``) and the vote-stage per-member
+# ``ForecastConfig.vote_ensemble`` (``EnsembleMemberConfig``, issues #184/#191)
+# and repoints the egress allowlist to union in hosts for providers named by
+# *either* field -- additive-only, so legacy ``ensemble`` providers still
+# contribute hosts and the default config's derived host set is unchanged.
+
+
+def test_vote_ensemble_openai_member_absent_from_ensemble_admits_host() -> None:
+    """A ``vote_ensemble`` member naming a provider absent from the legacy
+    ``ensemble`` still contributes that provider's host -- the allowlist must
+    union both fields, not derive from ``ensemble`` alone.
+    """
+    default_forecast = WindbreakConfig().forecast
+    config = dataclasses.replace(
+        WindbreakConfig(),
+        forecast=dataclasses.replace(
+            default_forecast,
+            ensemble=(ModelRef("anthropic", "pinned-by-operator"),),
+            vote_ensemble=(
+                EnsembleMemberConfig("openai", "gpt-5-2025-08-07", "2024-09-30"),
+            ),
+        ),
+    )
+
+    allowlist = allowlist_from_config(config)
+
+    allowlist.require(f"https://{_OPENAI_HOST}/v1/responses")
+
+
+def test_vote_ensemble_anthropic_member_absent_from_ensemble_admits_host() -> None:
+    """Mirror of the openai case above, with the providers swapped -- guards
+    against a fix that hardcodes one specific provider name rather than
+    genuinely unioning ``vote_ensemble`` providers into the host set.
+    """
+    default_forecast = WindbreakConfig().forecast
+    config = dataclasses.replace(
+        WindbreakConfig(),
+        forecast=dataclasses.replace(
+            default_forecast,
+            ensemble=(ModelRef("openai", "pinned-by-operator"),),
+            vote_ensemble=(
+                EnsembleMemberConfig(
+                    "anthropic", "claude-sonnet-4-5-20250929", "2025-07-31"
+                ),
+            ),
+        ),
+    )
+
+    allowlist = allowlist_from_config(config)
+
+    allowlist.require(f"https://{_ANTHROPIC_HOST}/v1/messages")
+
+
+def test_vote_ensemble_unrecognized_provider_contributes_no_host() -> None:
+    """A ``vote_ensemble`` member naming a provider absent from
+    ``_FORECAST_PROVIDER_HOSTS`` contributes no host -- fail closed on an
+    unrecognized provider, exactly like the legacy ``ensemble``/``triage_model``
+    derivation.
+    """
+    default_forecast = WindbreakConfig().forecast
+    config = dataclasses.replace(
+        WindbreakConfig(),
+        forecast=dataclasses.replace(
+            default_forecast,
+            vote_ensemble=(EnsembleMemberConfig("futuresearch", "x", "y"),),
+        ),
+    )
+
+    allowlist = allowlist_from_config(config)
+
+    with pytest.raises(EgressDeniedError):
+        allowlist.require("https://futuresearch.example.com/v1/x")
+
+
+def test_allowlist_from_config_default_forecast_host_set_is_unchanged() -> None:
+    """`WindbreakConfig()`'s default forecast host set is exactly the
+    unchanged two-provider set -- proves the default configuration's derived
+    allowlist is byte-identical before and after the ``vote_ensemble`` union,
+    since the default ``vote_ensemble``'s providers (``openai``/``anthropic``)
+    are already covered by the default ``ensemble``.
+    """
+    allowlist = allowlist_from_config(WindbreakConfig())
+
+    allowlist.require(f"https://{_ANTHROPIC_HOST}/v1/messages")
+    allowlist.require(f"https://{_OPENAI_HOST}/v1/responses")
+    with pytest.raises(EgressDeniedError):
+        allowlist.require("https://evil.example.com/steal")
+
+
+def test_legacy_ensemble_still_admits_hosts_with_empty_vote_ensemble() -> None:
+    """With ``vote_ensemble`` emptied to ``()``, the legacy ``ensemble``
+    providers still contribute their hosts -- the union is additive, not a
+    replacement of the legacy derivation.
+    """
+    default_forecast = WindbreakConfig().forecast
+    config = dataclasses.replace(
+        WindbreakConfig(),
+        forecast=dataclasses.replace(
+            default_forecast,
+            ensemble=(ModelRef("anthropic", "pinned-by-operator"),),
+            vote_ensemble=(),
+        ),
+    )
+
+    allowlist = allowlist_from_config(config)
+
+    allowlist.require(f"https://{_ANTHROPIC_HOST}/v1/messages")
 
 
 # --- allowlist_from_config: live-research host derivation (issue #192) ---------
