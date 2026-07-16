@@ -40,6 +40,7 @@ from windbreak.ledger.events import (
     DemotionTriggerFired,
     Event,
     ModeHeartbeat,
+    PromotionBlocked,
     PromotionEvaluated,
     SignificanceOverrideApplied,
 )
@@ -107,6 +108,12 @@ _DEFAULT_HEARTBEAT_INTERVAL = 5
 
 #: The ceiling the default (unconfigured) kernel promotes no higher than.
 _DEFAULT_MODE_CEILING = Mode.PAPER
+
+#: The PAPER rung's sole promotion target -- the target stamped into a
+#: :class:`~windbreak.ledger.events.PromotionBlocked` event on the fail-closed
+#: path, where the live gate (and thus its ``.target``) could not be built. A
+#: drift-guard test asserts it equals ``modes._next_rung(Mode.PAPER)``.
+_PAPER_PROMOTION_TARGET = Mode.LIVE_MICRO
 
 #: Demotion destinations reachable via the ordinary safety transition (the
 #: rest -- ladder demotions -- go through ``demote_one_rung`` instead).
@@ -281,6 +288,7 @@ class RiskKernel:
         clock: Callable[[], int] | None = None,
         gate_plan_store: LedgerStore | None = None,
         kill_integration: KillIntegration | None = None,
+        ledger_blocked_promotions: bool = False,
     ) -> None:
         """Initialize the kernel.
 
@@ -303,9 +311,18 @@ class RiskKernel:
                 #35), or ``None`` to run without kill wiring. When present, its
                 watcher is polled each beat and its monitor is fed each
                 verification outcome.
+            ledger_blocked_promotions: When ``True``, a PAPER promotion that
+                fails closed because no readable gate plan is available records
+                exactly one
+                :class:`~windbreak.ledger.events.PromotionBlocked` audit event
+                before re-raising
+                :class:`~windbreak.riskkernel.promotion.GatePlanUnavailableError`.
+                Defaults to ``False``, preserving the deliberate no-event
+                fail-closed behavior of issue #185.
         """
         self._ledger_writer = ledger_writer
         self._kill_integration = kill_integration
+        self._ledger_blocked_promotions = ledger_blocked_promotions
         self._mode_machine = (
             mode_machine
             if mode_machine is not None
@@ -340,6 +357,7 @@ class RiskKernel:
         verifier: ReadOnlyVerifier | None = None,
         gate_plan_store: LedgerStore | None = None,
         kill_integration: KillIntegration | None = None,
+        ledger_blocked_promotions: bool = False,
     ) -> RiskKernel:
         """Rebuild a kernel, replaying durable override and kill state.
 
@@ -380,6 +398,11 @@ class RiskKernel:
                 (issue #235), or ``None`` to rebuild without kill wiring -- so a
                 rebuilt kernel's kill polling survives a restart alongside its
                 replayed mode.
+            ledger_blocked_promotions: Forwarded verbatim to :meth:`__init__`;
+                when ``True`` the rebuilt kernel records one
+                :class:`~windbreak.ledger.events.PromotionBlocked` audit event
+                on a fail-closed PAPER promotion before re-raising. Defaults to
+                ``False`` (issue #244).
 
         Returns:
             A :class:`RiskKernel` whose override cap and kill state reflect
@@ -392,6 +415,7 @@ class RiskKernel:
             verifier=verifier,
             gate_plan_store=gate_plan_store,
             kill_integration=kill_integration,
+            ledger_blocked_promotions=ledger_blocked_promotions,
         )
         kernel._override_applied = override_applied_in(event_history)
         if (
@@ -464,15 +488,24 @@ class RiskKernel:
                 event is recorded in this case.
             GatePlanUnavailableError: On a PAPER promotion when no readable
                 registered gate plan is available (no store wired, no
-                registration, or a corrupt/tampered one). No event is recorded
-                and the mode is left unchanged (fail-closed).
+                registration, or a corrupt/tampered one). The mode is left
+                unchanged (fail-closed). By default no event is recorded; when
+                the kernel was constructed with ``ledger_blocked_promotions=True``
+                exactly one :class:`~windbreak.ledger.events.PromotionBlocked`
+                event IS recorded first, before the error propagates (the mode
+                is still left unchanged).
             ModeCeilingExceededError: If the promotion cleared (on its merits or
                 via the override) but an active ceiling blocks the target rung.
                 The ``PromotionEvaluated`` event is still recorded first, and the
                 mode is left unchanged.
         """
         current = self._mode_machine.mode
-        gate = self._gate_for(current)
+        try:
+            gate = self._gate_for(current)
+        except GatePlanUnavailableError as err:
+            if self._ledger_blocked_promotions:
+                self._record_promotion_blocked(current.name, str(err))
+            raise
         decision = evaluate_promotion(gate, evidence)
         override_bypassed = _override_promotes(gate, decision, self._override_applied)
         self._ledger_writer.record(
@@ -491,6 +524,29 @@ class RiskKernel:
                 effective_ceiling=self.mode_ceiling_effective
             )
         return decision
+
+    def _record_promotion_blocked(self, source_mode: str, reason: str) -> None:
+        """Record one fail-closed PAPER-promotion audit event (issue #244).
+
+        The single :class:`~windbreak.ledger.events.PromotionBlocked` write the
+        opt-in ``ledger_blocked_promotions`` path emits before re-raising. The
+        target is always the ladder's fixed PAPER rung target
+        (:data:`_PAPER_PROMOTION_TARGET`), stamped from module constants because
+        the live gate -- and thus its own ``.target`` -- could not be built.
+
+        Args:
+            source_mode: The mode promotion was requested from (``Mode.name``).
+            reason: The fail-closed message from the raised
+                ``GatePlanUnavailableError``.
+        """
+        self._ledger_writer.record(
+            PromotionBlocked(
+                component=_COMPONENT,
+                source_mode=source_mode,
+                target_mode=_PAPER_PROMOTION_TARGET.name,
+                reason=reason,
+            )
+        )
 
     def _gate_for(self, current: Mode) -> PromotionGate:
         """Select the promotion gate for ``current``, failing closed as required.
