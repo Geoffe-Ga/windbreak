@@ -32,8 +32,10 @@ from windbreak.config import (
 from windbreak.drills.catalog import DRILL_NAMES
 from windbreak.drills.context import bind_paper_context, bind_production_context
 from windbreak.ledger import (
+    ChainIntegrityError,
     SqliteLedgerStore,
     anchor_command,
+    events_from_records,
     rebuild_command,
     verify_command,
 )
@@ -48,8 +50,9 @@ if TYPE_CHECKING:
 
     from windbreak.config import ConfigLoadEvent, ScreenerConfig, WindbreakConfig
     from windbreak.dashboard.app import DashboardStatus
+    from windbreak.ledger import Event, LedgerStore
     from windbreak.riskkernel.kill import KillIntegration
-    from windbreak.riskkernel.process import RiskKernel
+    from windbreak.riskkernel.process import KernelLedgerWriter, RiskKernel
 
 #: Operating mode reported in every heartbeat line. Matches the RESEARCH state
 #: of the SPEC mode machine; windbreak ships research-only for now.
@@ -1194,7 +1197,7 @@ def _run_heartbeat(args: argparse.Namespace) -> int:
 
 
 def _build_risk_kernel(
-    config: WindbreakConfig,
+    config: WindbreakConfig, *, ledger_store: LedgerStore | None = None
 ) -> tuple[RiskKernel, KillIntegration]:
     """Compose a live :class:`RiskKernel` wired to its :class:`KillIntegration`.
 
@@ -1207,6 +1210,19 @@ def _build_risk_kernel(
     the exact defect this wiring closes -- so the single-machine invariant is
     load-bearing, not incidental.
 
+    With a ``ledger_store`` the kernel persists its events to the real
+    hash-chained ledger and replays durable kill state from it at startup (issue
+    #235): the store's chain is verified fail-closed up front, its records are
+    reconstructed into an event history, and both the switch and the kernel are
+    rebuilt over that history through a single composition path (an empty history
+    -- the no-``ledger_store`` case -- is equivalent to a fresh build). The
+    replay *order* is load-bearing:
+    :meth:`~windbreak.riskkernel.kill.KillSwitch.from_events` restores only the
+    kill counter and never transitions, then
+    :meth:`~windbreak.riskkernel.process.RiskKernel.from_events` drives the one
+    shared machine to ``KILLED`` on an unrearmed history -- so the two never race
+    to transition the single machine.
+
     The kernel imports are local (mirroring :func:`_run_drill` /
     :func:`_build_paper_on_beat`) so the RESEARCH heartbeat path never imports
     the kernel eagerly. ``ops.state_dir`` is created up front, fail-closed: a
@@ -1218,6 +1234,9 @@ def _build_risk_kernel(
             file protocol, ``mode_ceiling`` caps the shared machine, and
             ``risk.kill_after_consecutive_mismatches`` sets the auto-kill
             threshold.
+        ledger_store: The append-only ledger the kernel persists to and replays
+            durable kill state from (issue #235), or ``None`` to run against a
+            log-only writer with no replay (an empty history).
 
     Returns:
         The composed kernel and the kill integration it shares, so a caller can
@@ -1225,6 +1244,8 @@ def _build_risk_kernel(
 
     Raises:
         OSError: If ``ops.state_dir`` cannot be created (fail-closed startup).
+        ChainIntegrityError: If a supplied ``ledger_store``'s hash chain fails
+            verification (fail-closed replay).
     """
     from windbreak.riskkernel.kill import (
         KillFileWatcher,
@@ -1233,13 +1254,24 @@ def _build_risk_kernel(
         ReconciliationMismatchMonitor,
     )
     from windbreak.riskkernel.modes import Mode, ModeStateMachine
-    from windbreak.riskkernel.process import LoggingKernelLedgerWriter, RiskKernel
+    from windbreak.riskkernel.process import (
+        LoggingKernelLedgerWriter,
+        PersistingKernelLedgerWriter,
+        RiskKernel,
+    )
 
     state_dir = Path(config.ops.state_dir).expanduser()
     state_dir.mkdir(parents=True, exist_ok=True)
     machine = ModeStateMachine(mode_ceiling=Mode.from_config(config.mode_ceiling))
-    writer = LoggingKernelLedgerWriter()
-    switch = KillSwitch(
+    if ledger_store is not None:
+        ledger_store.verify_chain()
+        history: tuple[Event, ...] = events_from_records(ledger_store.read_all())
+        writer: KernelLedgerWriter = PersistingKernelLedgerWriter(ledger_store)
+    else:
+        writer = LoggingKernelLedgerWriter()
+        history = ()
+    switch = KillSwitch.from_events(
+        history,
         machine,
         writer,
         AlertDispatcher(sinks=[], ledger_writer=LoggingLedgerWriter()),
@@ -1250,7 +1282,9 @@ def _build_risk_kernel(
         switch, threshold=config.risk.kill_after_consecutive_mismatches
     )
     integration = KillIntegration(switch=switch, watcher=watcher, monitor=monitor)
-    kernel = RiskKernel(writer, mode_machine=machine, kill_integration=integration)
+    kernel = RiskKernel.from_events(
+        history, writer, mode_machine=machine, kill_integration=integration
+    )
     return kernel, integration
 
 
@@ -1277,17 +1311,24 @@ def _run_riskkernel(args: argparse.Namespace) -> int:
 
     Reuses :func:`_load_and_ledger_config`'s config-load front half, then builds
     the kernel and its kill integration via :func:`_build_risk_kernel` -- catching
-    an uncreatable state dir (``OSError``) or a bad mode ceiling (``ValueError``)
-    as a fatal error that logs ``FATAL`` and returns 1 *before* the loop is
-    entered, so a fail-closed startup emits no heartbeat. This is the routing
-    divergence (issue #144) from the RESEARCH heartbeat loop the other
-    ``--process`` choices run: it drives a real :class:`RiskKernel` whose file
-    watcher polls ``ops.state_dir`` for a ``KILL`` file each beat.
+    an uncreatable state dir (``OSError``), a bad mode ceiling (``ValueError``),
+    or a tampered ledger (``ChainIntegrityError``) as a fatal error that logs
+    ``FATAL`` and returns 1 *before* the loop is entered, so a fail-closed startup
+    emits no heartbeat. This is the routing divergence (issue #144) from the
+    RESEARCH heartbeat loop the other ``--process`` choices run: it drives a real
+    :class:`RiskKernel` whose file watcher polls ``ops.state_dir`` for a ``KILL``
+    file each beat.
+
+    With ``--ledger-path`` the kernel is built over a real
+    :class:`~windbreak.ledger.store.SqliteLedgerStore` so its events persist and a
+    durable ``KILLED`` state is replayed at startup (issue #235). The store is
+    closed in a ``finally`` -- even when the build fails closed -- so a later
+    reopen (the next run's replay) is never blocked by a lingering handle.
 
     Args:
         args: Parsed ``run`` arguments carrying ``config``, ``process`` (always
-            ``riskkernel`` when routed here), ``heartbeat_interval``, and
-            ``max_beats``.
+            ``riskkernel`` when routed here), ``heartbeat_interval``,
+            ``max_beats``, and ``ledger_path``.
 
     Returns:
         The process exit code (0 on a clean shutdown, 1 on a fatal config or
@@ -1296,9 +1337,43 @@ def _run_riskkernel(args: argparse.Namespace) -> int:
     config = _load_and_ledger_config(args)
     if config is None:
         return 1
+    store = (
+        SqliteLedgerStore(args.ledger_path) if args.ledger_path is not None else None
+    )
     try:
-        kernel, _integration = _build_risk_kernel(config)
-    except (OSError, ValueError) as exc:
+        return _drive_risk_kernel(args, config, ledger_store=store)
+    finally:
+        if store is not None:
+            store.close()
+
+
+def _drive_risk_kernel(
+    args: argparse.Namespace,
+    config: WindbreakConfig,
+    *,
+    ledger_store: LedgerStore | None,
+) -> int:
+    """Build the kernel over ``ledger_store`` and drive its bounded loop.
+
+    The inner half of :func:`_run_riskkernel`, split out so the store's
+    open/close lifecycle stays a single ``try``/``finally`` there while this
+    function owns the fail-closed build and the run. A build that raises
+    (uncreatable state dir, bad ceiling, or a tampered ledger chain) logs
+    ``FATAL`` and returns 1 before the loop is entered, emitting no heartbeat.
+
+    Args:
+        args: Parsed ``run`` arguments carrying ``process``, ``max_beats``, and
+            ``heartbeat_interval``.
+        config: The loaded configuration the kernel is composed from.
+        ledger_store: The ledger the kernel persists to and replays from, or
+            ``None`` for the log-only, replay-free path.
+
+    Returns:
+        The process exit code (0 on a clean shutdown, 1 on a fatal build error).
+    """
+    try:
+        kernel, _integration = _build_risk_kernel(config, ledger_store=ledger_store)
+    except (OSError, ValueError, ChainIntegrityError) as exc:
         _LOGGER.critical("FATAL: %s", exc)
         return 1
     state = ShutdownState()

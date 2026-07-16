@@ -229,6 +229,33 @@ class InMemoryKernelLedgerWriter:
         self.events.append(event)
 
 
+class PersistingKernelLedgerWriter:
+    """A :class:`KernelLedgerWriter` that persists events to a real ledger.
+
+    The production writer :class:`LoggingKernelLedgerWriter` stood in for: it
+    wraps a :class:`~windbreak.ledger.store.LedgerStore` and appends every
+    recorded kernel event to the append-only, hash-chained ledger (issue #235),
+    so the kernel's own events survive a process restart and its durable kill
+    state can be replayed at the next startup rather than only logged and lost.
+    """
+
+    def __init__(self, store: LedgerStore) -> None:
+        """Wrap the ledger store every recorded event is appended to.
+
+        Args:
+            store: The append-only, hash-chained ledger events are persisted to.
+        """
+        self._store = store
+
+    def record(self, event: Event) -> None:
+        """Append a kernel event to the wrapped ledger store.
+
+        Args:
+            event: The event to persist.
+        """
+        self._store.append(event)
+
+
 class RiskKernel:
     """The Risk Kernel process: heartbeat loop and ledgered veto evaluation.
 
@@ -311,6 +338,7 @@ class RiskKernel:
         *,
         mode_machine: ModeStateMachine | None = None,
         gate_plan_store: LedgerStore | None = None,
+        kill_integration: KillIntegration | None = None,
     ) -> RiskKernel:
         """Rebuild a kernel, replaying durable override and kill state.
 
@@ -337,6 +365,10 @@ class RiskKernel:
             mode_machine: The operating-mode state machine to adopt.
             gate_plan_store: The ledger the rebuilt kernel reads its PAPER gate
                 plan from at promotion time (issue #185), or ``None``.
+            kill_integration: The kill switch and its trigger adapters to wire
+                (issue #235), or ``None`` to rebuild without kill wiring -- so a
+                rebuilt kernel's kill polling survives a restart alongside its
+                replayed mode.
 
         Returns:
             A :class:`RiskKernel` whose override cap and kill state reflect
@@ -347,6 +379,7 @@ class RiskKernel:
             ledger_writer,
             mode_machine=mode_machine,
             gate_plan_store=gate_plan_store,
+            kill_integration=kill_integration,
         )
         kernel._override_applied = override_applied_in(event_history)
         if (
