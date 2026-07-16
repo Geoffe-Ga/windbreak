@@ -687,21 +687,27 @@ def render_weekly_report(
     today: date,
     evaluation: EvaluationReport | None,
     costs: CostMeter | None,
+    provider_lines: str | None = None,
 ) -> str:
     """Render the weekly PAPER-loop report as markdown (pure, no I/O).
 
     Preserves the #48 stub's dated title and its three ``No data yet.`` sections
     (this issue does not wire that data), then appends an ``## Evaluation``
     section (the verbatim :meth:`EvaluationReport.render_text` when ``evaluation``
-    is not ``None``, else the fallback) and a ``## Cost meter`` section (the
+    is not ``None``, else the fallback), a ``## Cost meter`` section (the
     :class:`~windbreak.evaluation.costs.CostMeter`'s total research spend, its
     three denominator counts, and its three per-unit money fields, else the
-    fallback).
+    fallback), and a ``## Providers`` section (the pre-rendered
+    ``provider_lines`` body embedded verbatim when supplied, else the fallback --
+    issue #195, mirroring the ``## Evaluation`` embed-or-fallback contract).
 
     Args:
         today: The report date, stamped into the title.
         evaluation: The evaluation report to embed, or ``None`` for no data.
         costs: The cost meter to embed, or ``None`` for no data.
+        provider_lines: The pre-rendered fleet-observability provider section
+            body (from :func:`windbreak.reports.providers.render_provider_lines`)
+            embedded verbatim, or ``None`` for the ``No data yet.`` fallback.
 
     Returns:
         The rendered markdown body.
@@ -716,6 +722,8 @@ def render_weekly_report(
     sections.append(_render_weekly_section("Evaluation", evaluation_body))
     cost_body = _NO_DATA_YET if costs is None else _render_cost_meter(costs)
     sections.append(_render_weekly_section("Cost meter", cost_body))
+    providers_body = _NO_DATA_YET if provider_lines is None else provider_lines
+    sections.append(_render_weekly_section("Providers", providers_body))
     return "\n\n".join(sections) + "\n"
 
 

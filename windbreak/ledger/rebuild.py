@@ -1,13 +1,16 @@
 """Fold the ledger into derived read models (SPEC S5.1, issue #13).
 
 ``rebuild`` is a pure projection over a verified ledger: it verifies the
-hash chain, then folds the records in sequence order into eight byte-stable
+hash chain, then folds the records in sequence order into ten byte-stable
 read-model files -- ``config_versions.json`` (the ``ConfigLoaded`` rows),
 ``mode_history.json`` (the ``ModeHeartbeat`` rows), ``gateway_events.json``
 (the chronological Order Gateway / crash-recovery events, issue #40), the
 three PAPER-loop projections ``positions.json`` / ``equity_curve.json`` /
-``selector_decisions.json`` (issue #48), and the two live-divergence
-projections ``execution_quality.json`` / ``live_divergence.json`` (issue #58).
+``selector_decisions.json`` (issue #48), the two live-divergence
+projections ``execution_quality.json`` / ``live_divergence.json`` (issue #58),
+and the two fleet-observability projections ``canary_status.json`` (the
+latest-per-provider ``CanaryVerdictRecorded``) / ``forecasts.json`` (every
+``ForecastCreated`` row, issue #195).
 ``AlertEmitted`` and any unrecognized event types are skipped. Because
 verification runs first, a corrupt ledger raises :class:`ChainIntegrityError`
 instead of producing a plausible-but-wrong projection.
@@ -258,6 +261,69 @@ def execution_quality_read_model(
     ]
 
 
+#: Read-model filename holding the latest-per-provider canary-verdict
+#: projection (issue #195).
+_CANARY_STATUS_FILENAME = "canary_status.json"
+
+#: Read-model filename holding every ``ForecastCreated`` row, in ledger order
+#: (issue #195), for the weekly-report/dashboard fleet-cost/abstention fold.
+_FORECASTS_FILENAME = "forecasts.json"
+
+_CANARY_VERDICT_RECORDED = "CanaryVerdictRecorded"
+_FORECAST_CREATED = "ForecastCreated"
+
+
+def canary_status_read_model(
+    records: list[LedgerRecord],
+) -> list[dict[str, object]]:
+    """Project the LATEST ``CanaryVerdictRecorded`` per provider (issue #195).
+
+    Folds the ledger keeping only each provider's most recently ledgered
+    verdict, at that provider's first-seen list position -- exactly a Python
+    dict's own "reassign the value in place, keep the original key position"
+    semantics, the simplest literal "latest wins" contract. An empty list when
+    no such event has ever been ledgered.
+
+    Args:
+        records: The verified ledger records, in sequence order.
+
+    Returns:
+        One ``{seq, created_at, event_type, data}`` entry per provider, holding
+        that provider's latest verdict, in first-seen order.
+    """
+    latest: dict[object, dict[str, object]] = {}
+    for record in records:
+        if record.event_type != _CANARY_VERDICT_RECORDED:
+            continue
+        data = json.loads(record.payload_json)["data"]
+        latest[data["provider"]] = {
+            "seq": record.sequence_number,
+            "created_at": record.created_at,
+            "event_type": record.event_type,
+            "data": data,
+        }
+    return list(latest.values())
+
+
+def forecasts_read_model(records: list[LedgerRecord]) -> list[dict[str, object]]:
+    """Project every ``ForecastCreated`` row, in ledger order (issue #195).
+
+    Feeds the weekly-report/dashboard fleet cost-per-forecast and
+    abstention-rate fold.
+
+    Args:
+        records: The verified ledger records, in sequence order.
+
+    Returns:
+        One ``{seq, created_at, event_type, data}`` entry per forecast.
+    """
+    return [
+        _gateway_projection(record)
+        for record in records
+        if record.event_type == _FORECAST_CREATED
+    ]
+
+
 def live_divergence_read_model(
     records: list[LedgerRecord],
 ) -> list[dict[str, object]]:
@@ -295,14 +361,16 @@ def _write_read_model(path: Path, rows: list[dict[str, object]]) -> None:
 
 
 def rebuild(ledger_path: Path, output_dir: Path) -> None:
-    """Verify the ledger and fold it into the eight read-model files.
+    """Verify the ledger and fold it into the ten read-model files.
 
     Writes ``config_versions.json``, ``mode_history.json``,
     ``gateway_events.json``, the three PAPER-loop projections
     (``positions.json``, ``equity_curve.json``, ``selector_decisions.json``,
-    issue #48), and the two live-divergence projections
-    (``execution_quality.json``, ``live_divergence.json``, issue #58); each is
-    written unconditionally, empty where its source events are absent.
+    issue #48), the two live-divergence projections
+    (``execution_quality.json``, ``live_divergence.json``, issue #58), and the
+    two fleet-observability projections (``canary_status.json``,
+    ``forecasts.json``, issue #195); each is written unconditionally, empty
+    where its source events are absent.
 
     Args:
         ledger_path: Path to the SQLite ledger database.
@@ -363,6 +431,13 @@ def rebuild(ledger_path: Path, output_dir: Path) -> None:
     _write_read_model(
         output_dir.joinpath(_LIVE_DIVERGENCE_FILENAME),
         live_divergence_read_model(records),
+    )
+    _write_read_model(
+        output_dir.joinpath(_CANARY_STATUS_FILENAME),
+        canary_status_read_model(records),
+    )
+    _write_read_model(
+        output_dir.joinpath(_FORECASTS_FILENAME), forecasts_read_model(records)
     )
 
 

@@ -56,6 +56,17 @@ four str identity fields, matching `GatePlan.canonical_dict()`) plus
 `GatePlanChanged`) -- so `EVENT_TYPES[t](component=..., **envelope["data"])`
 round-trips by construction, with no separate `plan_dict` wrapper key ever
 appearing in the persisted payload. `GateComputationMismatch` moves verbatim.
+
+Issue #195 (RED -- `CanaryVerdictRecorded` does not exist in this module yet,
+so the import below fails collection with `ImportError: cannot import name
+'CanaryVerdictRecorded' from 'windbreak.ledger.events'`) adds the M0 event the
+scheduler's `run_canaries` composition root appends one of per provider per
+canary battery run (fleet observability, SPEC S8.4/S16 extended per-provider):
+`provider`, `status` (`ProviderCanaryStatus.name`), `drift_kind` (`"answer"`,
+`"version"`, or `""` for a clean `OK` verdict), `drift_score_ppm`,
+`tolerance_ppm`, `reported_version`, and `pinned_versions` (a list of the
+provider's pinned version strings -- plural, since a provider's pin set may
+carry more than one accepted version). Growing `EVENT_TYPES` to 29 entries.
 """
 
 from __future__ import annotations
@@ -73,6 +84,7 @@ from windbreak.ledger.events import (
     EVENT_TYPES,
     GENESIS_PREV_HASH,
     AlertEmitted,
+    CanaryVerdictRecorded,
     CancelAllDirective,
     ConfigLoaded,
     DemotionTriggerFired,
@@ -327,6 +339,7 @@ def test_event_types_registry_maps_type_name_to_class() -> None:
         "GatePlanRegistered": GatePlanRegistered,
         "GatePlanChanged": GatePlanChanged,
         "GateComputationMismatch": GateComputationMismatch,
+        "CanaryVerdictRecorded": CanaryVerdictRecorded,
     } == EVENT_TYPES
 
 
@@ -634,6 +647,124 @@ def test_gate_plan_changed_payload_is_exactly_the_flattened_plan_dict() -> None:
     }
     assert "plan_dict" not in envelope["data"]
     assert envelope["schema_version"] == 1
+
+
+# --- Issue #195: CanaryVerdictRecorded, the per-provider canary-verdict event -
+
+
+def test_canary_verdict_recorded_populates_event_type_and_payload() -> None:
+    """`CanaryVerdictRecorded`'s ergonomic constructor derives the full
+    `Event` contract and assembles its payload from typed fields.
+    """
+    event = CanaryVerdictRecorded(
+        component="scheduler",
+        provider="futuresearch",
+        status="ANSWER_DRIFT",
+        drift_kind="answer",
+        drift_score_ppm=90_000,
+        tolerance_ppm=50_000,
+        reported_version="fs-2.0",
+        pinned_versions=["fs-2.0"],
+    )
+
+    assert event.event_type == "CanaryVerdictRecorded"
+    assert event.component == "scheduler"
+    assert event.payload_schema_version == 1
+    assert event.payload == {
+        "provider": "futuresearch",
+        "status": "ANSWER_DRIFT",
+        "drift_kind": "answer",
+        "drift_score_ppm": 90_000,
+        "tolerance_ppm": 50_000,
+        "reported_version": "fs-2.0",
+        "pinned_versions": ["fs-2.0"],
+    }
+
+
+def test_canary_verdict_recorded_accepts_a_clean_ok_verdict_with_empty_drift_kind() -> (
+    None
+):
+    """A clean `OK` verdict is representable: `drift_kind=""` (never `None`),
+    matching the payload-leaf convention every other event in this module
+    uses for an "inapplicable" string field.
+    """
+    event = CanaryVerdictRecorded(
+        component="scheduler",
+        provider="anthropic",
+        status="OK",
+        drift_kind="",
+        drift_score_ppm=0,
+        tolerance_ppm=50_000,
+        reported_version="claude-1",
+        pinned_versions=["claude-1"],
+    )
+
+    assert event.payload["drift_kind"] == ""
+    assert event.payload["status"] == "OK"
+
+
+def test_event_types_registry_round_trips_canary_verdict_recorded() -> None:
+    """A registry lookup plus persisted `data` reconstructs `CanaryVerdictRecorded`."""
+    original = CanaryVerdictRecorded(
+        component="scheduler",
+        provider="futuresearch",
+        status="VERSION_DRIFT",
+        drift_kind="version",
+        drift_score_ppm=0,
+        tolerance_ppm=50_000,
+        reported_version="fs-2.1",
+        pinned_versions=["fs-2.0"],
+    )
+    envelope = json.loads(original.envelope_json)
+
+    rebuilt_cls = EVENT_TYPES[original.event_type]
+    rebuilt = rebuilt_cls(component=envelope["component"], **envelope["data"])
+
+    assert rebuilt == original
+
+
+def test_canary_verdict_recorded_envelope_json_has_json_safe_leaves() -> None:
+    """The persisted envelope's `data` carries only int/str/bool/list leaves,
+    never a float -- the package-wide no-float convention.
+    """
+    event = CanaryVerdictRecorded(
+        component="scheduler",
+        provider="futuresearch",
+        status="ANSWER_DRIFT",
+        drift_kind="answer",
+        drift_score_ppm=90_000,
+        tolerance_ppm=50_000,
+        reported_version="fs-2.0",
+        pinned_versions=["fs-2.0", "fs-2.1"],
+    )
+
+    envelope = json.loads(event.envelope_json)
+    data = envelope["data"]
+
+    assert isinstance(data["provider"], str)
+    assert isinstance(data["status"], str)
+    assert isinstance(data["drift_kind"], str)
+    assert type(data["drift_score_ppm"]) is int
+    assert type(data["tolerance_ppm"]) is int
+    assert isinstance(data["reported_version"], str)
+    assert all(isinstance(version, str) for version in data["pinned_versions"])
+
+
+def test_canary_verdict_recorded_is_frozen() -> None:
+    """`CanaryVerdictRecorded`, like every other concrete event, is immutable."""
+    event = CanaryVerdictRecorded(
+        component="scheduler",
+        provider="futuresearch",
+        status="OK",
+        drift_kind="",
+        drift_score_ppm=0,
+        tolerance_ppm=50_000,
+        reported_version="fs-2.0",
+        pinned_versions=["fs-2.0"],
+    )
+
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        event.provider = "changed"  # type: ignore[misc]
 
 
 def _find_evaluation_imports(tree: ast.AST) -> tuple[str, ...]:

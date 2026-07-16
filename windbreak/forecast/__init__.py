@@ -36,6 +36,7 @@ from windbreak.forecast.canary import (
     CanaryQuestion,
     CanaryRunResult,
     InMemoryCanaryLedger,
+    parse_observed_ppm,
     run_canary_set,
     score_canary_run,
 )
@@ -204,6 +205,7 @@ __all__ = [
     "forecast_group",
     "forecast_record_to_payload",
     "is_live_eligible",
+    "parse_observed_ppm",
     "report_research_costs",
     "run_canary_set",
     "run_pipeline",
