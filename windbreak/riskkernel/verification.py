@@ -168,10 +168,6 @@ _CASH_SEED_EVENT_TYPES: frozenset[str] = frozenset(
     }
 )
 
-#: The ledger ``event_type`` whose presence anywhere in a startup history forces
-#: the open-order expectation empty -- a kill cancelled every resting order.
-_CANCEL_ALL_EVENT_TYPE = "CancelAllDirective"
-
 #: The ledger ``event_type`` whose latest rows seed the position baseline.
 _POSITIONS_SNAPSHOT_EVENT_TYPE = "PositionsSnapshotRecorded"
 
@@ -274,12 +270,30 @@ def _seed_open_order_ids(
 ) -> frozenset[str]:
     """Return the open-order-id baseline seeded from history, else the connector.
 
-    Any ``CancelAllDirective`` in history means a kill cancelled every resting
-    order, so nothing is expected to remain -- the expectation is empty
-    regardless of what the connector still reports. Absent one, the connector's
-    currently reported resting-order ids are the fallback: venue order ids are
-    never ledgered (an ``OrderTransitionLedgered`` carries only its
-    client_order_id), so the ledger cannot reconstruct them.
+    Empty *only* while the history ends KILLED and unrearmed: a kill cancels
+    every resting order (recording a ``CancelAllDirective`` alongside its
+    ``KillEngaged``), so while that kill has no matching later ``KillReArmed``
+    nothing is expected to remain resting -- the expectation is empty regardless
+    of what the connector still reports. The killed-vs-rearmed decision reuses
+    the kernel's one canonical, fail-closed kill fold
+    (:func:`~windbreak.riskkernel.kill.kill_state_in`, whose ``.killed`` is the
+    exact durable fact that drives the kernel to ``KILLED`` on replay), so the
+    open-order expectation and the replayed mode can never disagree.
+
+    Once that kill is re-armed (or the history never killed), the expectation
+    falls back to the connector's currently reported resting-order ids. This is
+    load-bearing: a *past* kill -- including a routine kill/re-arm drill -- must
+    never permanently zero the expectation, or every legitimately-resting order
+    after the re-arm would be a false-positive breach for the life of the
+    ledger (and could spuriously auto-kill a correctly-operating kernel via the
+    reconciliation-mismatch monitor). Venue order ids are never ledgered (an
+    ``OrderTransitionLedgered`` carries only its client_order_id), so the
+    connector is the only source of the live resting-order id set.
+
+    The :func:`~windbreak.riskkernel.kill.kill_state_in` import is deferred to
+    call time because :mod:`windbreak.riskkernel.kill` imports this module at
+    runtime (for :class:`VerificationOutcome`); a module-level import here would
+    close that cycle.
 
     Args:
         events: The startup event history, oldest first.
@@ -288,7 +302,9 @@ def _seed_open_order_ids(
     Returns:
         The expected resting-order id set.
     """
-    if any(event.event_type == _CANCEL_ALL_EVENT_TYPE for event in events):
+    from windbreak.riskkernel.kill import kill_state_in
+
+    if kill_state_in(events).killed:
         return frozenset()
     return frozenset(order.id for order in connector.get_open_orders())
 
@@ -317,12 +333,19 @@ class LedgerExpectationSource:
       and available-cash movements are not ledgered with amounts.
     * **positions** (ledger-seeded): the rows of the last
       ``PositionsSnapshotRecorded`` event. Fallback: the connector's positions.
-    * **open orders** (startup-connector-captured): empty when history carries
-      any ``CancelAllDirective`` (a kill cancelled everything), else the
-      connector's resting-order ids. Open orders can never be ledger-*seeded*
-      positively: venue order ids are never ledgered
-      (``OrderTransitionLedgered`` carries only the client_order_id), so the
-      ledger cannot name the resting orders a restart should expect.
+    * **open orders** (startup-connector-captured): empty only while the history
+      ends KILLED and unrearmed (a ``KillEngaged`` -- whose kill cancelled every
+      resting order -- with no matching later ``KillReArmed``), otherwise the
+      connector's resting-order ids. The killed-vs-rearmed decision reuses the
+      kernel's one canonical kill fold
+      (:func:`~windbreak.riskkernel.kill.kill_state_in`), so it can never
+      disagree with the mode the kernel replays to; scoping it to the *current*
+      kill (not any historical one) is what stops a past kill or routine
+      kill/re-arm drill from permanently zeroing the expectation and turning
+      every later legitimately-resting order into a false-positive breach. Open
+      orders can never be ledger-*seeded* positively: venue order ids are never
+      ledgered (``OrderTransitionLedgered`` carries only the client_order_id),
+      so the ledger cannot name the resting orders a restart should expect.
 
     Bounded cross-restart residual: because the cash seed is the last non-breach
     verification cash, a within-tolerance drift persisted by a prior run's last

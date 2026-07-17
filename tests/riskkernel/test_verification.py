@@ -56,6 +56,8 @@ from windbreak.ledger.events import (
     CancelAllDirective,
     ConfigLoaded,
     Event,
+    KillEngaged,
+    KillReArmed,
     PositionsSnapshotRecorded,
 )
 from windbreak.numeric.types import ContractCentis, MoneyMicros, PricePips
@@ -837,9 +839,12 @@ def test_every_verification_event_payload_is_int_str_or_bool_never_float() -> No
 #   * positions: the rows of the LAST `PositionsSnapshotRecorded` event,
 #     mapped `{ticker: ContractCentis(quantity_centis)}`; else
 #     `{p.ticker: p.quantity for p in connector.get_positions()}`.
-#   * open orders: `frozenset()` if `history` contains ANY
-#     `CancelAllDirective` (a kill cancelled everything); else
-#     `frozenset(o.id for o in connector.get_open_orders())`.
+#   * open orders: `frozenset()` only while the history ends KILLED and
+#     unrearmed (`kill_state_in(history).killed` -- a `KillEngaged` with no
+#     matching later `KillReArmed`, whose kill cancelled everything); once
+#     re-armed (or never killed) it falls back to
+#     `frozenset(o.id for o in connector.get_open_orders())`, so a past kill or
+#     kill drill never permanently zeroes the expectation.
 #
 # Every dimension falls back independently, and -- exactly like the source it
 # replaces -- the projection happens exactly once, at construction: a later
@@ -1100,12 +1105,12 @@ def test_ledger_expectation_source_positions_seed_from_the_last_snapshot() -> No
     }
 
 
-def test_ledger_expectation_source_open_orders_empty_on_any_cancel_all_directive() -> (
-    None
-):
-    """Any `CancelAllDirective` in `history` expects zero open orders --
-    `frozenset()` -- even when the connector still reports resting orders: a
-    kill cancelled everything, so nothing is expected to remain."""
+def test_ledger_expectation_source_open_orders_empty_while_killed_unrearmed() -> None:
+    """A history ending in an unrearmed kill (a `KillEngaged` with no matching
+    later `KillReArmed`, alongside its `CancelAllDirective`) expects zero open
+    orders -- `frozenset()` -- even when the connector still reports resting
+    orders: the kill cancelled everything and has not been re-armed, so nothing
+    is expected to remain resting on the venue."""
     connector = _MutableBalanceConnector(
         available=MoneyMicros(1),
         open_orders=(
@@ -1118,15 +1123,62 @@ def test_ledger_expectation_source_open_orders_empty_on_any_cancel_all_directive
             ),
         ),
     )
-    history = [CancelAllDirective(component="riskkernel", scope="all_open_orders")]
+    history = [
+        KillEngaged(
+            component="riskkernel", trigger="CLI", kill_sequence=1, epoch=1_700_000_000
+        ),
+        CancelAllDirective(component="riskkernel", scope="all_open_orders"),
+    ]
 
     source = LedgerExpectationSource(history, connector)
 
     assert source.get_expectations().expected_open_order_ids == frozenset()
 
 
+def test_ledger_expectation_source_open_orders_fall_back_after_rearm() -> None:
+    """A history whose last kill has been re-armed (`KillEngaged` -> its
+    `CancelAllDirective` -> a matching `KillReArmed`) is no longer killed, so the
+    open-order expectation falls back to the connector's *live* resting orders
+    rather than staying empty. This is the post-kill/re-arm regression guard: a
+    once-fired kill (or a routine kill drill) must NOT permanently zero the
+    open-order expectation, which would make every later legitimately-resting
+    order a false-positive breach for the life of the ledger."""
+    connector = _MutableBalanceConnector(
+        available=MoneyMicros(1),
+        open_orders=(
+            OpenOrder(
+                id="rearmed-resting-1",
+                ticker="KXFED-24DEC",
+                side="yes",
+                price=PricePips(5000),
+                quantity=ContractCentis(10),
+            ),
+            OpenOrder(
+                id="rearmed-resting-2",
+                ticker="KXFED-24DEC",
+                side="no",
+                price=PricePips(4000),
+                quantity=ContractCentis(20),
+            ),
+        ),
+    )
+    history = [
+        KillEngaged(
+            component="riskkernel", trigger="CLI", kill_sequence=1, epoch=1_700_000_000
+        ),
+        CancelAllDirective(component="riskkernel", scope="all_open_orders"),
+        KillReArmed(component="riskkernel", kill_sequence=1),
+    ]
+
+    source = LedgerExpectationSource(history, connector)
+
+    assert source.get_expectations().expected_open_order_ids == frozenset(
+        {"rearmed-resting-1", "rearmed-resting-2"}
+    )
+
+
 def test_cancel_all_directive_breaches_when_venue_still_shows_resting_orders() -> None:
-    """Wired into a real `ReadOnlyVerifier`, a `CancelAllDirective` history's
+    """Wired into a real `ReadOnlyVerifier`, an unrearmed kill history's
     zero-open-order expectation breaches against a venue that still reports a
     resting order: the balance and position dimensions are read straight off
     the same connector on both the expectation and the observation side (a
@@ -1152,7 +1204,12 @@ def test_cancel_all_directive_breaches_when_venue_still_shows_resting_orders() -
             ),
         ),
     )
-    history = [CancelAllDirective(component="riskkernel", scope="all_open_orders")]
+    history = [
+        KillEngaged(
+            component="riskkernel", trigger="CLI", kill_sequence=1, epoch=1_700_000_000
+        ),
+        CancelAllDirective(component="riskkernel", scope="all_open_orders"),
+    ]
     source = LedgerExpectationSource(history, connector)
     ledger_writer = InMemoryKernelLedgerWriter()
     sink = _RecordingSink()
