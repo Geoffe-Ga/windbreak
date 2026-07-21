@@ -4,7 +4,7 @@ description: "One parallel worker of the Ralph fleet. Select to drive a SINGLE a
 level: 1
 phase: Build
 tools: Read,Write,Edit,Grep,Glob,Bash,Task
-model: opus
+model: fable
 delegates_to: [ralph-chief-architect, ralph-test-specialist, ralph-implementation-specialist, ralph-security-specialist, ralph-performance-specialist, ralph-documentation-specialist, ralph-dependency-review-specialist, ralph-code-review-orchestrator]
 receives_from: []
 ---
